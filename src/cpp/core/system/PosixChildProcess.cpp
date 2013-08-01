@@ -23,6 +23,10 @@
 #include <util.h>
 #include <sys/ttycom.h>
 #include <sys/ioctl.h>
+#elif defined(__FreeBSD__)
+#include <sys/ioctl.h>
+#include <termios.h>
+#include <libutil.h>
 #else
 #include <pty.h>
 #include <asm/ioctls.h>

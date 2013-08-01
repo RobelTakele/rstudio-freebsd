@@ -36,6 +36,9 @@
 
 #ifdef __APPLE__
 #include <mach-o/dyld.h>
+#elif defined(__FreeBSD__)
+#include <sys/types.h>
+#include <sys/sysctl.h>
 #endif
 
 #include <boost/thread.hpp>
@@ -632,6 +635,19 @@ Error executablePath(int argc, char * const argv[],
    // set it
    executablePath = std::string(&(buffer[0]));
 
+#elif defined(__FreeBSD__)
+
+   // get length of absolute pathname of current process's executable
+   const int mib[4] = {CTL_KERN, KERN_PROC, KERN_PROC_PATHNAME, -1};
+   size_t len;
+   sysctl(mib, 4, NULL, &len, NULL, 0);
+
+   std::vector<char> pathname(len);
+
+   // get absolute pathname of process's executable
+   sysctl(mib, 4, &(pathname[0]), &len, NULL, 0);
+
+   executablePath = std::string(&(pathname[0]));
 
 #elif defined(HAVE_PROCSELF)
 
