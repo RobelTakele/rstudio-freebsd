@@ -15,7 +15,7 @@ elseif(APPLE)
 
    add_subdirectory(osx)
 
-elseif(UNIX)
+elseif(${CMAKE_SYSTEM_NAME} MATCHES "Linux")
 
    add_subdirectory(linux)
 

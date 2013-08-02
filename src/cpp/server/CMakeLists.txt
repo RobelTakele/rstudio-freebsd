@@ -96,7 +96,7 @@ configure_file(${CMAKE_CURRENT_SOURCE_DIR}/server-config.h.in
                ${CMAKE_CURRENT_BINARY_DIR}/server-config.h)
 
 # required on Fedora for AppArmor-related code to compile
-if(NOT APPLE)
+IF(${CMAKE_SYSTEM_NAME} MATCHES "Linux")
    find_library(DL_LIBRARIES dl)
 endif()
 

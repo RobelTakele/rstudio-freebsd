@@ -136,6 +136,7 @@ if (UNIX)
       find_library(UTIL_LIBRARIES util)
       find_library(UUID_LIBRARIES uuid)
       find_library(RT_LIBRARIES rt)
+      find_library(INOTIFY_LIBRARIES inotify) # non-Linux systems
    endif()
    find_package(ZLIB REQUIRED QUIET)
 
@@ -152,6 +153,7 @@ if (UNIX)
       ${RT_LIBRARIES}
       ${ZLIB_LIBRARIES}
       ${CORE_SERVICES_LIBRARY}
+      ${INOTIFY_LIBRARIES}
    )
 
    if(RSTUDIO_SERVER)
@@ -246,6 +248,11 @@ if(RSTUDIO_ADDINS_PATH)
    endif()
 endif()
 
+# e2fsprogs-uuid not in FreeBSD base system
+find_path(UUID_INCLUDE_PATH uuid/uuid.h)
+if(UUID_INCLUDE_PATH)
+    list(APPEND CORE_INCLUDE_DIRS ${UUID_INCLUDE_PATH})
+endif()
 
 # include directories
 include_directories(
