@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env sh
 
 #
 # install-boost
@@ -22,6 +22,7 @@ INSTALL_DIR=`pwd`
 
 # determine platform
 PLATFORM=`uname`
+alias sudo=$(command -v sudo) # null string if sudo does not exist
 
 # vars
 BOOST_VERSION_NUMBER=1.50.0
@@ -35,15 +36,13 @@ if ! test -e $BOOST_DIR
 then
    # download boost
    BOOST_URL=http://sourceforge.net/projects/boost/files/boost/$BOOST_VERSION_NUMBER/$BOOST_TAR/download?use_mirror=autoselect
-   if [ "$PLATFORM" == "Darwin" ]
-   then
-      curl -L $BOOST_URL > $BOOST_TAR
-   else
-      wget $BOOST_URL -O $BOOST_TAR
-   fi
-   
-   # remove existing boost installation
-   sudo rm -rf $BOOST_DIR
+   # use first command found
+   case $(command -v curl || command -v fetch || command -v wget) in
+     *curl)  curl -L $BOOST_URL > $BOOST_TAR ;;
+     *fetch) fetch -o $BOOST_TAR $BOOST_URL ;;
+     *wget)  wget -O $BOOST_TAR $BOOST_URL ;;
+     *)      echo 'ERROR: need curl, fetch, or wget' 1>&2; exit 1 ;;
+   esac
   
    # untar source (remove existing)
    sudo rm -rf $BOOST_BUILD_DIR

@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env sh
 
 #
 # install-dictionaries
@@ -20,18 +20,15 @@ set -e
 # install dir
 INSTALL_DIR=`pwd`
 
-# determine platform
-PLATFORM=`uname`
-
-# use curl or wget as appropriate
+# use curl, fetch, or wget
 download()
 {
-  if [ "$PLATFORM" == "Darwin" ]
-  then
-    curl -L https://s3.amazonaws.com/rstudio-dictionaries/$1 > $1
-  else
-    wget https://s3.amazonaws.com/rstudio-dictionaries/$1 -O $1
-  fi
+  case $(command -v curl || command -v fetch || command -v wget) in
+    *curl)  curl -LO https://s3.amazonaws.com/rstudio-dictionaries/$1 ;;
+    *fetch) fetch https://s3.amazonaws.com/rstudio-dictionaries/$1 ;;
+    *wget)  wget -O $1 https://s3.amazonaws.com/rstudio-dictionaries/$1 ;;
+    *)      echo 'ERROR: need curl, fetch, or wget' 1>&2; exit 1 ;;
+  esac
 }
 
 # download and extract the dictionaries if necessary
