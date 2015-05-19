@@ -35,6 +35,7 @@
 #include <core/http/Request.hpp>
 #include <core/http/Response.hpp>
 #include <core/http/ResponseParser.hpp>
+#include <core/http/Socket.hpp>
 #include <core/http/SocketUtils.hpp>
 #include <core/http/ConnectionRetryProfile.hpp>
 
@@ -61,6 +62,7 @@ typedef boost::function<void(const core::Error&)> ErrorHandler;
 template <typename SocketService>
 class AsyncClient :
    public boost::enable_shared_from_this<AsyncClient<SocketService> >,
+   public Socket,
    boost::noncopyable
 {
 public:
@@ -113,10 +115,28 @@ public:
       errorHandler_ = ErrorHandler();
    }
 
+   // satisfy lower-level http::Socket interface (used when the client
+   // is upgraded to a websocket connection and no longer conforms to
+   // the request/response protocol used by the class in the ordinary
+   // course of business)
+
+   virtual void asyncReadSome(boost::asio::mutable_buffers_1 buffer,
+                              Handler handler)
+   {
+      socket().async_read_some(buffer, handler);
+   }
+
+   virtual void asyncWrite(
+                     const std::vector<boost::asio::const_buffer>& buffers,
+                     Handler handler)
+   {
+      boost::asio::async_write(socket(), buffers, handler);
+   }
+
    void close()
    {
       Error error = closeSocket(socket().lowest_layer());
-      if (error)
+      if (error && !core::http::isConnectionTerminatedError(error))
          logError(error);
    }
 
@@ -131,8 +151,14 @@ protected:
       // retry if necessary, otherwise just forward the error to
       // customary error handling scheme
 
-      if (!retryConnectionIfRequired(connectionError))
-         handleError(connectionError);
+      Error otherError;
+      if (!retryConnectionIfRequired(connectionError, &otherError))
+      {
+         if (otherError)
+            handleError(otherError);
+         else
+            handleError(connectionError);
+      }
    }
 
    // asynchronously write the request (called by subclasses after
@@ -179,7 +205,8 @@ private:
    virtual void connectAndWriteRequest() = 0;
 
 
-   bool retryConnectionIfRequired(const Error& connectionError)
+   bool retryConnectionIfRequired(const Error& connectionError,
+                                  Error* pOtherError)
    {
       // retry if this is a connection unavailable error and the
       // caller has provided a connection retry profile
@@ -195,7 +222,15 @@ private:
                   connectionRetryContext_.profile.maxWait;
 
             if (connectionRetryContext_.profile.recoveryFunction)
-               connectionRetryContext_.profile.recoveryFunction();
+            {
+               Error error = connectionRetryContext_.profile
+                                      .recoveryFunction(request_);
+               if (error)
+               {
+                  *pOtherError = error;
+                  return false;
+               }
+            }
          }
 
          // if we aren't alrady past the maximum wait time then
@@ -345,6 +380,11 @@ private:
       return false;
    }
 
+   virtual bool keepConnectionAlive()
+   {
+      return false;
+   }
+
    void handleReadHeaders(const boost::system::error_code& ec)
    {
       try
@@ -401,7 +441,8 @@ private:
 
    void closeAndRespond()
    {
-      close();
+      if (!keepConnectionAlive())
+         close();
 
       if (responseHandler_)
          responseHandler_(response_);

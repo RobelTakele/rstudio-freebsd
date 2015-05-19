@@ -20,8 +20,11 @@ import com.google.gwt.core.client.JsArray;
 import com.google.gwt.dom.client.Style;
 import com.google.gwt.event.dom.client.ClickEvent;
 import com.google.gwt.event.dom.client.ClickHandler;
+import com.google.gwt.event.logical.shared.ValueChangeEvent;
+import com.google.gwt.event.logical.shared.ValueChangeHandler;
 import com.google.gwt.uibinder.client.UiBinder;
 import com.google.gwt.uibinder.client.UiField;
+import com.google.gwt.user.client.ui.CheckBox;
 import com.google.gwt.user.client.ui.HTML;
 import com.google.gwt.user.client.ui.HTMLPanel;
 import com.google.gwt.user.client.ui.Label;
@@ -32,7 +35,6 @@ import com.google.gwt.user.client.ui.Widget;
 import org.rstudio.core.client.theme.res.ThemeResources;
 import org.rstudio.core.client.theme.res.ThemeStyles;
 import org.rstudio.studio.client.workbench.views.environment.model.CallFrame;
-import org.rstudio.studio.client.workbench.views.environment.view.EnvironmentObjects.Observer;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -47,9 +49,11 @@ public class CallFramePanel extends ResizeComposite
    {
       void minimizeCallFramePanel();
       void restoreCallFramePanel();
+      boolean getShowInternalFunctions();
+      void setShowInternalFunctions(boolean hide);
    }
    
-   public CallFramePanel(Observer observer, CallFramePanelHost panelHost)
+   public CallFramePanel(EnvironmentObjectsObserver observer, CallFramePanelHost panelHost)
    {
       final ThemeStyles globalStyles = ThemeResources.INSTANCE.themeStyles();
       panelHost_ = panelHost;
@@ -83,6 +87,34 @@ public class CallFramePanel extends ResizeComposite
       
       callFramePanelHeader.addStyleName(globalStyles.windowframe());
       callFramePanelHeader.add(tracebackTitle);
+      CheckBox showInternals = new CheckBox("Show internals");
+      showInternals.setValue(panelHost_.getShowInternalFunctions());
+      showInternals.addValueChangeHandler(
+            new ValueChangeHandler<Boolean>()
+            {
+               @Override
+               public void onValueChange(ValueChangeEvent<Boolean> event)
+               {
+                  panelHost_.setShowInternalFunctions(event.getValue());
+                  // Ignore the function on the top of the stack; we always
+                  // want to show it since it's the execution point
+                  for (int i = 1; i < callFrameItems_.size(); i++) 
+                  {
+                     CallFrameItem item = callFrameItems_.get(i);
+                     if (!item.isNavigable() && !item.isHidden())
+                     {
+                        item.setVisible(event.getValue());
+                     }
+                  }
+               }
+            }
+      );
+      showInternals.setStylePrimaryName(style.toggleHide());
+            
+      callFramePanelHeader.add(showInternals);
+      callFramePanelHeader.setWidgetRightWidth(
+                     showInternals, 28, Style.Unit.PX, 
+                                    30, Style.Unit.PCT);
       callFramePanelHeader.add(minimize);
       callFramePanelHeader.setWidgetRightWidth(minimize, 14, Style.Unit.PX, 
                                                          14, Style.Unit.PX);
@@ -95,31 +127,37 @@ public class CallFramePanel extends ResizeComposite
    {
       clearCallFrames();
       
-      // walk backwards through the call frames so we can figure out when 
-      // user code was first encountered on the callstack. 
-      boolean encounteredUserCode = false;
+      // Check to see whether every function on the stack is internal. 
+      // If it is, the traceback window may appear empty, so show everything
+      // to give the user some context.
+      boolean allInternal = true;
+      int idxSourceEquiv = Integer.MAX_VALUE;
+
+      for (int idx = 0; idx < frameList.length(); idx++)
+      {
+         CallFrame frame = frameList.get(idx);
+         if (frame.isNavigable()) {
+            allInternal = false;
+         }
+         if (frame.isSourceEquiv())
+            idxSourceEquiv = idx;
+      }
+      
       for (int idx = frameList.length() - 1; idx >= 0; idx--)
       {
          CallFrame frame = frameList.get(idx);
-         
-         // hide the portion of the callstack containing our source-for-debug
-         // functions
-         if (frame.getFunctionName().contains(".rs.executeDebugSource") ||
-             frame.getFileName().contains("SessionBreakpoints.R"))
-         {
-            continue;
-         }
-         
-         if (CallFrameItem.isNavigableFilename(frame.getFileName())) 
-         {
-            encounteredUserCode = true;
-         }
-         // hide the frame if it isn't the top frame and we haven't yet 
-         // encountered user code
+         // Always show the first frame, since that's where execution is 
+         // actually halted. From the remaining frames, show them if they are
+         // "navigable" (user) frames, or if the user has elected to show all
+         // frames.
          CallFrameItem item = new CallFrameItem(
                frame, 
                observer_, 
-               !encounteredUserCode && idx > 0);
+               frame.isHidden() ||
+                  (!panelHost_.getShowInternalFunctions() && 
+                     ((!frame.isNavigable()) || idx > idxSourceEquiv) &&
+                     !allInternal &&
+                     idx > 0));
          if (contextDepth == frame.getContextDepth())
          {
             item.setActive();
@@ -133,7 +171,6 @@ public class CallFramePanel extends ResizeComposite
       {
          callFramePanel.add(item);
       }
-      
    }
 
    public void updateLineNumber(int newLineNumber)
@@ -161,14 +198,11 @@ public class CallFramePanel extends ResizeComposite
       return isMinimized_;
    }
 
-   @UiField
-   HTMLPanel callFramePanel;
-   @UiField
-   CallFramePanelStyle style;
-   @UiField
-   LayoutPanel callFramePanelHeader;
+   @UiField HTMLPanel callFramePanel;
+   @UiField CallFramePanelStyle style;
+   @UiField LayoutPanel callFramePanelHeader;
    
-   Observer observer_;
+   EnvironmentObjectsObserver observer_;
    CallFramePanelHost panelHost_;
    ArrayList<CallFrameItem> callFrameItems_;
    boolean isMinimized_ = false;

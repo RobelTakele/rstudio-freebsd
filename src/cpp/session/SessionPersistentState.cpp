@@ -104,4 +104,25 @@ void PersistentState::setAbend(bool abend)
    }
 }
 
+std::string PersistentState::activeEnvironmentName() const
+{
+   return settings_.get("activeEnvironmentName", "R_GlobalEnv");
+}
+
+void PersistentState::setActiveEnvironmentName(std::string environmentName)
+{
+   settings_.set("activeEnvironmentName", environmentName);
+}
+
+std::string PersistentState::getStoredHash(const std::string& hashName) const
+{
+   return settings_.get(hashName + "Hash", "");
+}
+
+void PersistentState::setStoredHash(const std::string& hashName, 
+                                    const std::string& hashValue)
+{
+   settings_.set(hashName + "Hash", hashValue);
+}
+
 } // namespace session

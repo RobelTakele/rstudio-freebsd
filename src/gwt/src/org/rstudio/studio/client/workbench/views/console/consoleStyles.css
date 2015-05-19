@@ -23,6 +23,7 @@
    outline: none;
    border: none;
    white-space: pre-wrap !important;
+   word-break: break-all;
    margin: 0;
    -webkit-user-select: text;
 }
@@ -41,6 +42,7 @@
 
 .console .prompt {
    white-space: pre;
+   -webkit-user-select: text;
 }
 
 .completionPopup {
@@ -112,4 +114,12 @@
    background: #f0f0f4;
    font-size: 9px;
    padding: 3px;
+}
+
+.paddedOutput {
+	box-sizing: border-box;
+	-moz-box-sizing: border-box;
+	-webkit-box-sizing: border-box;
+	width: 100%;
+	padding: 6px;
 }

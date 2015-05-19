@@ -47,6 +47,15 @@ public:
    bool hadAbend();
    void setAbend(bool abend);
 
+   // active environment
+   std::string activeEnvironmentName() const;
+   void setActiveEnvironmentName(std::string environmentName);
+
+   // resolved hashes (for Packrat libraries and lockfiles)
+   std::string getStoredHash(const std::string& hashName) const;
+   void setStoredHash(const std::string& hashName, 
+                      const std::string& hashValue);
+
    // get underlying settings
    core::Settings& settings() { return settings_; }
 

@@ -36,6 +36,7 @@
 #include <core/system/PosixSystem.hpp>
 #include <core/system/FileMode.hpp>
 
+#include <server/ServerOptions.hpp>
 
 namespace server {
 namespace auth {
@@ -183,7 +184,13 @@ void set(const std::string& name,
          const std::string& path,
          http::Response* pResponse)
 {
-   set(name, value, request, validDuration, boost::none, path, pResponse);
+   secure_cookie::set(name,
+                      value,
+                      request,
+                      validDuration,
+                      boost::none,
+                      path,
+                      pResponse);
 }
 
 void set(const std::string& name,
@@ -229,7 +236,11 @@ Error initialize()
    // determine path to use for secure cookie key file
    FilePath secureCookieKeyPath;
    if (core::system::effectiveUserIsRoot())
-      secureCookieKeyPath = FilePath("/var/lib/rstudio-server/secure-cookie-key");
+   {
+      secureCookieKeyPath = FilePath("/etc/rstudio/secure-cookie-key");
+      if (!secureCookieKeyPath.exists())
+         secureCookieKeyPath = FilePath("/var/lib/rstudio-server/secure-cookie-key");
+   }
    else
       secureCookieKeyPath = FilePath("/tmp/rstudio-server/secure-cookie-key");
 

@@ -102,13 +102,14 @@ Error parseString(const std::string& str, SEXP* pSEXP, sexp::Protect* pProtect)
    }
 }
 
-Error evaluateExpressions(SEXP expr, 
-                          SEXP env, 
-                          SEXP* pSEXP,
-                          sexp::Protect* pProtect)   
+// evaluate expressions without altering the error handler (use with caution--
+// a user-supplied error handler may be invoked if the expression raises
+// an error!)
+Error evaluateExpressionsUnsafe(SEXP expr,
+                                SEXP env,
+                                SEXP* pSEXP,
+                                sexp::Protect* pProtect)
 {
-   // disable custom error handlers while we execute code
-   DisableErrorHandlerScope disableErrorHandler;
 
    int er=0;
    int i=0,l;
@@ -117,6 +118,7 @@ Error evaluateExpressions(SEXP expr,
    // and return only the last one
    if (TYPEOF(expr)==EXPRSXP) 
    {
+      DisableDebugScope disableStepInto(env);
       l = LENGTH(expr);
       while (i<l) 
       {
@@ -127,6 +129,7 @@ Error evaluateExpressions(SEXP expr,
    // evaluate single expression
    else
    {
+      DisableDebugScope disableStepInto(R_GlobalEnv);
       *pSEXP = R_tryEval(expr, R_GlobalEnv, &er);
    }
    
@@ -150,6 +153,17 @@ Error evaluateExpressions(SEXP expr,
    }
 }
    
+Error evaluateExpressions(SEXP expr,
+                          SEXP env,
+                          SEXP* pSEXP,
+                          sexp::Protect* pProtect)
+{
+   // disable custom error handlers while we execute code
+   DisableErrorHandlerScope disableErrorHandler;
+
+   return evaluateExpressionsUnsafe(expr, env, pSEXP, pProtect);
+}
+
 Error evaluateExpressions(SEXP expr, SEXP* pSEXP, sexp::Protect* pProtect)
 {
    return evaluateExpressions(expr, R_GlobalEnv, pSEXP, pProtect);
@@ -179,6 +193,7 @@ Error executeSafely(boost::function<void()> function)
 {
    // disable custom error handlers while we execute code
    DisableErrorHandlerScope disableErrorHandler;
+   DisableDebugScope disableStepInto(R_GlobalEnv);
 
    Rboolean success = R_ToplevelExec(topLevelExec, (void*)&function);
    if (!success)
@@ -195,6 +210,7 @@ core::Error executeSafely(boost::function<SEXP()> function, SEXP* pSEXP)
 {
    // disable custom error handlers while we execute code
    DisableErrorHandlerScope disableErrorHandler;
+   DisableDebugScope disableStepInto(R_GlobalEnv);
 
    SEXPTopLevelExecContext context ;
    context.function = function ;
@@ -258,6 +274,12 @@ Error evaluateString(const std::string& str,
    return Success();
 }
    
+bool atTopLevelContext() 
+{
+   return getGlobalContext() != NULL &&
+          getGlobalContext()->callflag == CTXT_TOPLEVEL;
+}
+
 RFunction::RFunction(SEXP functionSEXP)
 {
    functionSEXP_ = functionSEXP;
@@ -299,12 +321,16 @@ void RFunction::commonInit(const std::string& functionName)
       rProtect_.add(functionSEXP_);
 }
    
-   
-Error RFunction::call(SEXP evalNS)
+Error RFunction::callUnsafe()
+{
+   return call(R_GlobalEnv, false);
+}
+
+Error RFunction::call(SEXP evalNS, bool safely)
 {
    sexp::Protect rProtect;
    SEXP ignoredResultSEXP ;
-   return call(evalNS, &ignoredResultSEXP, &rProtect);  
+   return call(evalNS, safely, &ignoredResultSEXP, &rProtect);
 }
 
 Error RFunction::call(SEXP* pResultSEXP, sexp::Protect* pProtect)
@@ -313,6 +339,12 @@ Error RFunction::call(SEXP* pResultSEXP, sexp::Protect* pProtect)
 }
    
 Error RFunction::call(SEXP evalNS, SEXP* pResultSEXP, sexp::Protect* pProtect)
+{
+   return call(evalNS, true, pResultSEXP, pProtect);
+}
+
+Error RFunction::call(SEXP evalNS, bool safely, SEXP* pResultSEXP,
+                      sexp::Protect* pProtect)
 {
    // verify the function
    if (functionSEXP_ == R_UnboundValue)
@@ -344,7 +376,9 @@ Error RFunction::call(SEXP evalNS, SEXP* pResultSEXP, sexp::Protect* pProtect)
    }
    
    // call the function
-   Error error = evaluateExpressions(callSEXP, evalNS, pResultSEXP, pProtect);  
+   Error error = safely ?
+            evaluateExpressions(callSEXP, evalNS, pResultSEXP, pProtect) :
+            evaluateExpressionsUnsafe(callSEXP, evalNS, pResultSEXP, pProtect);
    if (error)
       return error;
    
@@ -415,6 +449,12 @@ void warning(const std::string& warning)
    Rf_warning(warning.c_str());
 }
 
+void message(const std::string& message)
+{
+   Error error = r::exec::RFunction("message", message).call();
+   if (error)
+      LOG_ERROR(error);
+}
 
 bool interruptsPending()
 {
@@ -474,6 +514,37 @@ IgnoreInterruptsScope::~IgnoreInterruptsScope()
    {
    }
 }
+
+DisableDebugScope::DisableDebugScope(SEXP env): 
+   rdebug_(0), 
+   env_(NULL)
+{
+   // nothing to do if no environment 
+   if (env == NULL) {
+      return;
+   }
+
+   // check to see whether there's a debug flag set on this environment
+   rdebug_ = RDEBUG(env);
+
+   // if there is, turn it off and save the old flag for restoration
+   if (rdebug_ != 0) 
+   {
+      SET_RDEBUG(env, 0);
+      env_ = env;
+   } 
+}
+
+DisableDebugScope::~DisableDebugScope()
+{
+   // if we disabled debugging and debugging didn't end during the command 
+   // evaluation, restore debugging
+   if (env_ != NULL && !atTopLevelContext()) 
+   {
+      SET_RDEBUG(env_, rdebug_);
+   }
+}
+
 
 } // namespace exec   
 } // namespace r

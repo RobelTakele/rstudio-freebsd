@@ -42,7 +42,6 @@ MainWindow::MainWindow(QUrl url) :
       GwtWindow(false, false, url, NULL),
       menuCallback_(this),
       gwtCallback_(this, this),
-      updateChecker_(this),
       pSessionLauncher_(NULL),
       pCurrentSessionProcess_(NULL)
 {
@@ -70,6 +69,7 @@ MainWindow::MainWindow(QUrl url) :
    pMainMenuStub->addMenu(QString::fromUtf8("Plots"));
    pMainMenuStub->addMenu(QString::fromUtf8("Session"));
    pMainMenuStub->addMenu(QString::fromUtf8("Build"));
+   pMainMenuStub->addMenu(QString::fromUtf8("Debug"));
    pMainMenuStub->addMenu(QString::fromUtf8("Tools"));
    pMainMenuStub->addMenu(QString::fromUtf8("Help"));
    setMenuBar(pMainMenuStub);
@@ -80,6 +80,8 @@ MainWindow::MainWindow(QUrl url) :
            this, SLOT(invokeCommand(QString)));
    connect(&menuCallback_, SIGNAL(manageCommand(QString,QAction*)),
            this, SLOT(manageCommand(QString,QAction*)));
+   connect(&menuCallback_, SIGNAL(manageCommandVisibility(QString,QAction*)),
+           this, SLOT(manageCommandVisibility(QString,QAction*)));
 
    connect(&menuCallback_, SIGNAL(zoomIn()), this, SLOT(zoomIn()));
    connect(&menuCallback_, SIGNAL(zoomOut()), this, SLOT(zoomOut()));
@@ -167,9 +169,6 @@ void MainWindow::onWorkbenchInitialized()
       setWindowTitle(QString::fromAscii("RStudio"));
 
    avoidMoveCursorIfNecessary();
-
-   // check for updates
-   updateChecker_.performCheck(false);
 }
 
 void MainWindow::resetMargins()
@@ -205,8 +204,8 @@ void MainWindow::quit()
 void MainWindow::onJavaScriptWindowObjectCleared()
 {
    double zoomLevel = options().zoomLevel();
-   if (zoomLevel != webView()->zoomFactor())
-      webView()->setZoomFactor(zoomLevel);
+   if (zoomLevel != webView()->dpiAwareZoomFactor())
+      webView()->setDpiAwareZoomFactor(zoomLevel);
 
    webView()->page()->mainFrame()->addToJavaScriptWindowObject(
          QString::fromAscii("desktop"),
@@ -257,6 +256,20 @@ void MainWindow::manageCommand(QString cmdId, QAction* action)
          QString::fromAscii("window.desktopHooks.isCommandEnabled('") + cmdId + QString::fromAscii("')")).toBool());
    action->setText(pMainFrame->evaluateJavaScript(
          QString::fromAscii("window.desktopHooks.getCommandLabel('") + cmdId + QString::fromAscii("')")).toString());
+   if (action->isCheckable())
+   {
+      action->setChecked(pMainFrame->evaluateJavaScript(
+         QString::fromAscii("window.desktopHooks.isCommandChecked('") + cmdId + QString::fromAscii("')")).toBool());
+   }
+}
+
+// a faster version of the above that just checks and sets the command's
+// visibility state (to trigger visibility of menus containing the command)
+void MainWindow::manageCommandVisibility(QString cmdId, QAction* action)
+{
+   QWebFrame* pMainFrame = webView()->page()->mainFrame();
+   action->setVisible(pMainFrame->evaluateJavaScript(
+         QString::fromAscii("window.desktopHooks.isCommandVisible('") + cmdId + QString::fromAscii("')")).toBool());
 }
 
 void MainWindow::evaluateJavaScript(QString jsCode)
@@ -308,11 +321,6 @@ void MainWindow::openFileInRStudio(QString path)
 
    webView()->page()->mainFrame()->evaluateJavaScript(
          QString::fromAscii("window.desktopHooks.openFile(\"") + path + QString::fromAscii("\")"));
-}
-
-void MainWindow::checkForUpdates()
-{
-   updateChecker_.performCheck(true);
 }
 
 void MainWindow::onPdfViewerClosed(QString pdfPath)

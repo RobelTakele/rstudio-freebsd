@@ -73,6 +73,11 @@ bool isRetina(QMainWindow* pMainWindow)
    return false;
 }
 
+bool isOSXMavericks()
+{
+   return false;
+}
+
 void enableFullscreenMode(QMainWindow* pMainWindow, bool primary)
 {
 
@@ -173,6 +178,19 @@ void showInfo(QWidget* parent, const QString& title, const QString& text)
    showMessageBox(QMessageBox::Information, parent, title, text);
 }
 
+void showFileError(const QString& action,
+                   const QString& file,
+                   const QString& error)
+{
+   QString msg = QString::fromUtf8("Error ") + action +
+                 QString::fromUtf8(" ") + file +
+                 QString::fromUtf8(" - ") + error;
+   showMessageBox(QMessageBox::Critical,
+                  NULL,
+                  QString::fromUtf8("File Error"),
+                  msg);
+}
+
 void launchProjectInNewInstance(QString projectFilename)
 {
    // launch the new instance
@@ -195,6 +213,29 @@ bool isFixedWidthFont(const QFont& font)
          return false;
    }
    return true;
+}
+
+double getDpiZoomScaling()
+{
+   double dpiZoomScaling = 1.0;
+#ifdef _WIN32
+   // On Windows, check for high DPI; if present, scale the zoom factors
+   // accordingly.
+   HDC defaultDC = GetDC(NULL);
+   int dpi = GetDeviceCaps(defaultDC, LOGPIXELSX);
+   if (dpi >= 192)
+   {
+      // Corresponds to 200% scaling (introduced in Windows 8.1)
+      dpiZoomScaling = 1.5;
+   }
+   else if (dpi >= 144)
+   {
+      // Corresponds to 150% scaling
+      dpiZoomScaling = 1.2;
+   }
+   ReleaseDC(NULL, defaultDC);
+#endif
+   return dpiZoomScaling;
 }
 
 #ifdef _WIN32

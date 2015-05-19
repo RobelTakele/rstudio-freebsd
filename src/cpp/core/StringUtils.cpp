@@ -59,7 +59,7 @@ void convertLineEndings(std::string* pStr, LineEnding type)
       return;
    }
 
-   *pStr = boost::regex_replace(*pStr, boost::regex("\\r?\\n|\\xE2\\x80[\\xA8\\xA9]"), replacement);
+   *pStr = boost::regex_replace(*pStr, boost::regex("\\r?\\n|\\r|\\xE2\\x80[\\xA8\\xA9]"), replacement);
 }
 
 std::string utf8ToSystem(const std::string& str,
@@ -178,17 +178,18 @@ std::string escape(std::string specialChars,
 std::string htmlEscape(const std::string& str, bool isAttributeValue)
 {
    std::string escapes = isAttributeValue ?
-                         "<>&'\"\r\n" :
-                         "<>&" ;
+                         "<>&'\"/\r\n" :
+                         "<>&'\"/" ;
 
    std::map<char, std::string> subs;
    subs['<'] = "&lt;";
    subs['>'] = "&gt;";
    subs['&'] = "&amp;";
+   subs['\''] = "&#x27;";
+   subs['"'] = "&quot;";
+   subs['/'] = "&#x2F;";
    if (isAttributeValue)
    {
-      subs['\''] = "&#39;";
-      subs['"'] = "&quot;";
       subs['\r'] = "&#13;";
       subs['\n'] = "&#10;";
    }
@@ -293,7 +294,10 @@ bool isalpha(wchar_t c)
 
 bool isalnum(wchar_t c)
 {
-   static std::vector<bool> lookup = initAlnumLookupTable();
+   static std::vector<bool> lookup;
+   if (lookup.empty())
+      lookup = initAlnumLookupTable();
+
    if (c > 0xFFFF)
       return false; // This function only supports BMP
    return lookup.at(c);
@@ -341,6 +345,17 @@ void trimLeadingLines(int maxLines, std::string* pLines)
          }
       }
    }
+}
+
+void stripQuotes(std::string* pStr)
+{
+   if (pStr->length() > 0 && (pStr->at(0) == '\'' || pStr->at(0) == '"'))
+      *pStr = pStr->substr(1);
+
+   int len = pStr->length();
+
+   if (len > 0 && (pStr->at(len-1) == '\'' || pStr->at(len-1) == '"'))
+      *pStr = pStr->substr(0, len -1);
 }
 
 } // namespace string_utils

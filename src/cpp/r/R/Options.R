@@ -19,6 +19,26 @@ options(browser = function(url)
    .Call("rs_browseURL", url) ;
 })
 
+# default viewer option if not already set
+if (is.null(getOption("viewer"))) {
+   options(viewer = function(url, height = NULL)
+   {
+      if (!is.character(url) || (length(url) != 1))
+         stop("url must be a single element character vector.", call. = FALSE)
+      
+      if (identical(height, "maximize"))
+         height <- -1
+
+      if (!is.null(height) && (!is.numeric(height) || (length(height) != 1)))
+         stop("height must be a single element numeric vector or 'maximize'.", call. = FALSE)
+      
+      invisible(.Call("rs_viewer", url, height))  
+   })
+}
+
+# provide restart function
+options(restart = .rs.restartR)
+
 # custom pager implementation
 options(pager = .rs.pager)
 
@@ -31,10 +51,12 @@ options(max.print = 10000)
 # set RStudio as the GUI
 local({
    platform = .Platform
-   platform$GUI = "RStudio"
-   unlockBinding(".Platform", asNamespace("base"))
-   assign(".Platform", platform, inherits=TRUE)
-   lockBinding(".Platform", asNamespace("base"))
+   if (platform$GUI != "RStudio") {
+      platform$GUI = "RStudio"
+      unlockBinding(".Platform", asNamespace("base"))
+      assign(".Platform", platform, inherits=TRUE)
+      lockBinding(".Platform", asNamespace("base"))
+   }
 })
 
 # set default x display (see below for comment on why we need to do this)

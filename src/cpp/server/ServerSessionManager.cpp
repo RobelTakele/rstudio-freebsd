@@ -13,7 +13,7 @@
  *
  */
 
-#include "ServerSessionManager.hpp"
+#include <server/ServerSessionManager.hpp>
 
 #include <vector>
 
@@ -32,6 +32,7 @@
 
 #include <server/ServerOptions.hpp>
 
+#include <server/ServerErrorCategory.hpp>
 
 #include <server/auth/ServerValidateUser.hpp>
 
@@ -95,12 +96,6 @@ core::system::ProcessConfig sessionProcessConfig(
 
 void onProcessExit(const std::string& username, PidType pid)
 {
-   using namespace monitor;
-   client().logEvent(Event(kSessionScope,
-                           kSessionExitEvent,
-                           "",
-                           username,
-                           pid));
 }
 
 } // anonymous namespace
@@ -121,17 +116,6 @@ SessionManager::SessionManager()
 Error SessionManager::launchSession(const std::string& username)
 {
    using namespace boost::posix_time;
-
-   // last ditch user validation -- an invalid user should very rarely
-   // get to this point since we pre-emptively validate on client_init
-   if (!server::auth::validateUser(username))
-   {
-      Error error = systemError(boost::system::errc::permission_denied,
-                                ERROR_LOCATION);
-      error.addProperty("username", username);
-      return error;
-   }
-
    LOCK_MUTEX(launchesMutex_)
    {
       // check whether we already have a launch pending
@@ -167,6 +151,12 @@ Error SessionManager::launchSession(const std::string& username)
    profile.executablePath = server::options().rsessionPath();
    profile.config = sessionProcessConfig(username);
 
+   // pass the profile to any filters we have
+   BOOST_FOREACH(SessionLaunchProfileFilter f, sessionLaunchProfileFilters_)
+   {
+      f(&profile);
+   }
+
    // launch the session
    Error error = sessionLaunchFunction_(profile);
    if (error)
@@ -177,6 +167,7 @@ Error SessionManager::launchSession(const std::string& username)
 
    return Success();
 }
+
 
 // default session launcher -- does the launch then tracks the pid
 // for later reaping
@@ -209,6 +200,12 @@ void SessionManager::setSessionLaunchFunction(
                            const SessionLaunchFunction& launchFunction)
 {
    sessionLaunchFunction_ = launchFunction;
+}
+
+void SessionManager::addSessionLaunchProfileFilter(
+                              const SessionLaunchProfileFilter& filter)
+{
+   sessionLaunchProfileFilters_.push_back(filter);
 }
 
 void SessionManager::removePendingLaunch(const std::string& username)

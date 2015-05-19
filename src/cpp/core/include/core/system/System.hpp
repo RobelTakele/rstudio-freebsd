@@ -56,6 +56,9 @@ enum LogLevel
 
 // portable realPath
 Error realPath(const FilePath& filePath, FilePath* pRealPath);
+bool realPathsEqual(const FilePath& a, const FilePath& b);
+
+void addToSystemPath(const FilePath& path, bool prepend = false);
 
 #ifndef _WIN32
 Error closeAllFileDescriptors();
@@ -64,8 +67,6 @@ void closeStdFileDescriptors();
 void attachStdFileDescriptorsToDevNull();
 void setStandardStreamsToDevNull();
 Error realPath(const std::string& path, FilePath* pRealPath);
-void addToSystemPath(const FilePath& path, bool prepend = false);
-
 
 // Handles EINTR retrying. Only for use with functions that return -1 on
 // error and set errno.
@@ -247,11 +248,15 @@ std::string generateShortenedUuid();
 
 PidType currentProcessId();
 
-Error executablePath(int argc, char * const argv[],
+Error executablePath(int argc, const char * argv[],
                      FilePath* pExecutablePath);
 
+Error executablePath(const char * argv0,
+                     FilePath* pExecutablePath);
+
+
 Error installPath(const std::string& relativeToExecutable,
-                  int argc, char * const argv[],
+                  const char * argv0,
                   FilePath* pInstallationPath);
 
 void fixupExecutablePath(FilePath* pExePath);

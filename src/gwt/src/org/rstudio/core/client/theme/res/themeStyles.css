@@ -4,6 +4,7 @@
 @external fixedWidthFont;
 @external ace_editor, ace_text-layer, ace_gutter, ace_gutter-layer, ace_gutter-cell;
 @external ace_breakpoint, ace_inactive-breakpoint, ace_pending-breakpoint, ace_executing-line;
+@external ace_sb;
 @external cueText;
 @external search;
 @external highlight, disabled;
@@ -103,6 +104,8 @@
 @url INACTIVEBREAKPOINT inactiveBreakpoint;
 @url PENDINGBREAKPOINT pendingBreakpoint;
 @url EXECUTINGLINE executingLine;
+
+@url MACCHECK macCheck;
 
 body.windows, body.macintosh, body.linux {}
 
@@ -243,6 +246,11 @@ pre {
 	background-image: EXECUTINGLINE;
 }
 
+.ace_sb
+{
+	z-index: 6;
+}
+
 .gwt-MenuBar {
    cursor: default;
 }
@@ -341,6 +349,7 @@ pre {
 
 .gwt-SuggestBoxPopup {
    z-index: 1002;	
+   cursor: default;
 }
 
 .gwt-DialogBox .dialogTopLeft, .miniDialogPopupPanel .popupTopLeft {
@@ -470,6 +479,24 @@ pre {
 
 .windowframe-exclusive .minimize {
    display: none;
+}
+
+.windowframe {
+   -webkit-font-smoothing: subpixel-antialiased;
+}
+
+/* on the Mac specifically, keeping the ACE input textarea on the same z-index
+ * as the text causes rendering problems in Safari (see case 4093), and lifting
+ * it above the text causes it to intercept unwanted events (e.g. clicks for
+ * double-click), so send it beneath the text. */
+.macintosh #rstudio_source_text_editor.ace_editor > textarea {
+   z-index: -5;
+}
+
+/* the opposite must be done for the console due to the z-indices of the
+ * elements it contains */
+.macintosh #rstudio_console_input.ace_editor > textarea {
+   z-index: 5;
 }
 
 .C  { background-color: white; }
@@ -998,7 +1025,7 @@ body.ubuntu_mono .searchBox {
    cursor: pointer;
 }
 
-@sprite tr.environmentDataFrameRow td+td {
+@sprite td.environmentDataFrameCol {
    gwt-image: 'zoomDataset';
    background-position: right center; 
 }
@@ -1109,9 +1136,47 @@ body.ubuntu_mono .searchBox {
 }
 
 .presentationNavigatorLabel {
-  max-width: 200px;
   white-space: nowrap;  
   text-overflow: ellipsis;
   overflow: hidden;
+}
+
+.notResizable {
+  resize: none;
+}
+
+.macintosh .gwt-CheckBox input[type="checkbox"] {
+  -webkit-appearance: none;
+  -webkit-border-radius: 3px;
+  outline: none;
+  width: 13px;
+  height: 13px;
+  border: 1px solid #b0b0b0;
+  background: #ffffff;
+  vertical-align: middle;
+  margin: 3px;
+}
+
+.macintosh .gwt-CheckBox input[type="checkbox"]:focus,
+.macintosh .gwt-CheckBox input[type="checkbox"]:active {
+  border-color: #707070;
+}
+
+.macintosh .gwt-CheckBox input[type="checkbox"]:checked {
+  position: relative;
+}
+
+.macintosh .gwt-CheckBox input[type="checkbox"]:checked:before {
+  content: '';
+  display: block;
+  position: absolute;
+  top: 0px; 
+  left: 0px;
+  width: 13px;
+  height: 13px;
+  background: MACCHECK;
+  background-repeat: no-repeat;
+  background-position-x: 1px;
+  background-position-y: 1px;
 }
 

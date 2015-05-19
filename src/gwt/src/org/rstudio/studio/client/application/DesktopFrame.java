@@ -14,10 +14,8 @@
  */
 package org.rstudio.studio.client.application;
 
-import com.google.gwt.core.client.JsArrayString;
 import org.rstudio.core.client.js.BaseExpression;
 import org.rstudio.core.client.js.JavaScriptPassthrough;
-import org.rstudio.core.client.js.JsObject;
 
 /**
  * This is an interface straight through to a C++ object that lives
@@ -26,6 +24,7 @@ import org.rstudio.core.client.js.JsObject;
 @BaseExpression("$wnd.desktop")
 public interface DesktopFrame extends JavaScriptPassthrough
 {
+   boolean isCocoa();
    void browseUrl(String url);
    String getOpenFileName(String caption, String dir, String filter);
    String getSaveFileName(String caption, 
@@ -42,13 +41,29 @@ public interface DesktopFrame extends JavaScriptPassthrough
    void onWorkbenchInitialized(String scratchDir);
    void showFolder(String path);
    void showFile(String path);
+   void showWordDoc(String path);
+   void showPDF(String path, int pdfPage);
+   void prepareShowWordDoc();
    void openMinimalWindow(String name, String url, int width, int height);
+   void activateMinimalWindow(String name);
    void activateSatelliteWindow(String name);
    void prepareForSatelliteWindow(String name, int width, int height);
+   
+   // interface for plot export where coordinates are specified relative to
+   // the iframe where the image is located within
    void copyImageToClipboard(int clientLeft,
                              int clientTop,
                              int clientWidth,
                              int clientHeight);
+   
+   void copyPageRegionToClipboard(int left, int top, int width, int height);
+   
+   void exportPageRegionToFile(String targetPath, 
+                               String format, 
+                               int left, 
+                               int top, 
+                               int width, 
+                               int height);
    
    boolean supportsClipboardMetafile();
 
@@ -59,7 +74,7 @@ public interface DesktopFrame extends JavaScriptPassthrough
                       int defaultButton,
                       int cancelButton);
 
-   JsObject promptForText(String title,
+   String promptForText(String title,
                         String label,
                         String initialValue,
                         boolean usePasswordMask,
@@ -69,7 +84,6 @@ public interface DesktopFrame extends JavaScriptPassthrough
                         int selectionStart,
                         int selectionLength, String okButtonCaption);
 
-   void checkForUpdates();
    void showAboutDialog();
    void bringMainFrameToFront();
 
@@ -95,13 +109,18 @@ public interface DesktopFrame extends JavaScriptPassthrough
                      String workingDirectory,
                      String extraPathEntries);
 
-   JsArrayString getFontList(boolean fixedWidthOnly);
+   String getFixedWidthFontList();
    String getFixedWidthFont();
    void setFixedWidthFont(String font);
    
-   JsArrayString getZoomLevels();
+   String getZoomLevels();
    double getZoomLevel();
    void setZoomLevel(double zoomLevel);
+   
+   // mac-specific zoom calls
+   void macZoomActualSize();
+   void macZoomIn();
+   void macZoomOut();
    
    String getDesktopSynctexViewer();
    
@@ -117,4 +136,17 @@ public interface DesktopFrame extends JavaScriptPassthrough
    void showKeyboardShortcutHelp();
    
    void reloadZoomWindow();
+   
+   void setViewerUrl(String url);
+   void reloadViewerZoomWindow(String url);
+   
+   boolean isOSXMavericks();
+
+   String getScrollingCompensationType();
+   
+   void setBusy(boolean busy);
+   
+   void setWindowTitle(String title);
+   
+   void installRtools(String version, String installerPath);
 }

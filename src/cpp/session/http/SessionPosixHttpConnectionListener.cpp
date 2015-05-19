@@ -22,6 +22,7 @@
 #include <session/SessionOptions.hpp>
 #include <session/SessionLocalStreams.hpp>
 
+#include "SessionTcpIpHttpConnectionListener.hpp"
 #include "SessionLocalStreamHttpConnectionListener.hpp"
 
 using namespace core ;
@@ -43,23 +44,44 @@ void initializeHttpConnectionListener()
 
    if (options.programMode() == kSessionProgramModeDesktop)
    {
-      FilePath streamPath(core::system::getenv("RS_LOCAL_PEER"));
-      s_pHttpConnectionListener = new LocalStreamHttpConnectionListener(
+      std::string localPeer = core::system::getenv("RS_LOCAL_PEER");
+      if (!localPeer.empty())
+      {
+         FilePath streamPath(localPeer);
+         s_pHttpConnectionListener = new LocalStreamHttpConnectionListener(
                                            streamPath,
                                            core::system::UserReadWriteMode,
                                            options.sharedSecret(),
                                            -1);
+      }
+      else
+      {
+         s_pHttpConnectionListener = new TcpIpHttpConnectionListener(
+                                            options.wwwAddress(),
+                                            options.wwwPort(),
+                                            options.sharedSecret());
+      }
    }
    else // mode == "server"
    {
-      // create listener based on options
-      std::string userIdentity = options.userIdentity();
-      FilePath localStreamPath = local_streams::streamPath(userIdentity);
-      s_pHttpConnectionListener = new LocalStreamHttpConnectionListener(
-                                           localStreamPath,
-                                           core::system::EveryoneReadWriteMode,
-                                           "", // no shared secret
-                                           options.limitRpcClientUid());
+      if (session::options().standalone())
+      {
+         s_pHttpConnectionListener = new TcpIpHttpConnectionListener(
+                                            options.wwwAddress(),
+                                            options.wwwPort(),
+                                            ""); // no shared secret
+      }
+      else
+      {
+         // create listener based on options
+         std::string userIdentity = options.userIdentity();
+         FilePath localStreamPath = local_streams::streamPath(userIdentity);
+         s_pHttpConnectionListener = new LocalStreamHttpConnectionListener(
+                                          localStreamPath,
+                                          core::system::EveryoneReadWriteMode,
+                                          "", // no shared secret
+                                          options.limitRpcClientUid());
+      }
    }
 }
 

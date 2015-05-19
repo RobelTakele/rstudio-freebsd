@@ -30,7 +30,6 @@
 #include <r/RExec.hpp>
 #include <r/RErrorCategory.hpp>
 
-
 // clean out global definitions of TRUE and FALSE so we can
 // use the Rboolean variations of them
 #undef TRUE
@@ -77,6 +76,9 @@ SEXP findNamespace(const std::string& name)
    if (name.empty())
        return R_UnboundValue;
    
+   // case 4071: namespace look up executes R code that can trip the debugger
+   DisableDebugScope disableStepInto(R_GlobalEnv);
+
    return R_FindNamespace(Rf_mkString(name.c_str()));
 }
    
@@ -92,7 +94,7 @@ void listEnvironment(SEXP env,
    // we don't acutally return this list to the caller
    SEXP envVarsSEXP;
    Protect rProtect(envVarsSEXP = R_lsInternal(env, includeAll ? TRUE : FALSE));
-   
+
    // get variables
    std::vector<std::string> vars;
    Error error = r::sexp::extract(envVarsSEXP, &vars);
@@ -105,7 +107,13 @@ void listEnvironment(SEXP env,
    // populate pVariables
    BOOST_FOREACH(const std::string& var, vars)
    {
-      SEXP varSEXP = Rf_findVar(Rf_install(var.c_str()), env);
+      SEXP varSEXP = R_NilValue;
+      // Merely calling Rf_findVar on an active binding will fire the binding.
+      // Don't try to get the SEXP for the variable in this case; leave the
+      // value as nil.
+      if (!isActiveBinding(var, env))
+         varSEXP = Rf_findVar(Rf_install(var.c_str()), env);
+
       if (varSEXP != R_UnboundValue) // should never be unbound
       {
          pProtect->add(varSEXP);
@@ -117,6 +125,11 @@ void listEnvironment(SEXP env,
                   "Unexpected R_UnboundValue returned from R_lsInternal");
       }
    }
+}
+
+bool isActiveBinding(const std::string& name, const SEXP env)
+{
+   return R_BindingIsActive(Rf_install(name.c_str()), env);
 }
 
 SEXP findVar(const std::string &name, const SEXP env)
@@ -225,6 +238,61 @@ SEXP getAttrib(SEXP object, SEXP attrib)
 SEXP getAttrib(SEXP object, const std::string& attrib)
 {
    return getAttrib(object, Rf_install(attrib.c_str()));
+}
+
+SEXP setAttrib(SEXP object, const std::string& attrib, SEXP val)
+{
+   return Rf_setAttrib(object, Rf_install(attrib.c_str()), val);
+}
+
+SEXP makeWeakRef(SEXP key, SEXP val, R_CFinalizer_t fun, Rboolean onexit)
+{
+   return R_MakeWeakRefC(key, val, fun, onexit);
+}
+
+void registerFinalizer(SEXP s, R_CFinalizer_t fun)
+{
+   R_RegisterCFinalizer(s, fun);
+}
+
+SEXP makeExternalPtr(void* ptr, R_CFinalizer_t fun, Protect* pProtect)
+{
+   SEXP s = R_MakeExternalPtr(ptr, R_NilValue, R_NilValue);
+   if (pProtect)
+      pProtect->add(s);
+   registerFinalizer(s, fun);
+   return s;
+}
+
+void* getExternalPtrAddr(SEXP extptr)
+{
+   return R_ExternalPtrAddr(extptr);
+}
+
+void clearExternalPtr(SEXP extptr)
+{
+   R_ClearExternalPtr(extptr);
+}
+
+core::Error getNamedListSEXP(SEXP listSEXP,
+                             const std::string& name,
+                             SEXP* pValueSEXP)
+{
+   int valueIndex = indexOfElementNamed(listSEXP, name);
+
+   if (valueIndex != -1)
+   {
+      // get the appropriate value
+      *pValueSEXP = VECTOR_ELT(listSEXP, valueIndex);
+      return core::Success();
+   }
+   else
+   {
+      // otherwise an error
+      core::Error error(r::errc::ListElementNotFoundError, ERROR_LOCATION);
+      error.addProperty("element", name);
+      return error;
+   }
 }
 
 Error extract(SEXP valueSEXP, int* pInt)

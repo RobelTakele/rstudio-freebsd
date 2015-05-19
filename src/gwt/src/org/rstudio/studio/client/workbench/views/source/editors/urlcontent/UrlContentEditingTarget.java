@@ -29,6 +29,7 @@ import org.rstudio.core.client.Debug;
 import org.rstudio.core.client.command.AppCommand;
 import org.rstudio.core.client.command.CommandBinder;
 import org.rstudio.core.client.command.Handler;
+import org.rstudio.core.client.events.EnsureHeightHandler;
 import org.rstudio.core.client.events.EnsureVisibleHandler;
 import org.rstudio.core.client.files.FileSystemContext;
 import org.rstudio.studio.client.application.events.EventBus;
@@ -37,6 +38,7 @@ import org.rstudio.studio.client.common.ReadOnlyValue;
 import org.rstudio.studio.client.common.Value;
 import org.rstudio.studio.client.common.filetypes.FileIconResources;
 import org.rstudio.studio.client.common.filetypes.FileType;
+import org.rstudio.studio.client.common.filetypes.TextFileType;
 import org.rstudio.studio.client.server.ServerError;
 import org.rstudio.studio.client.server.ServerRequestCallback;
 import org.rstudio.studio.client.workbench.commands.Commands;
@@ -78,6 +80,17 @@ public class UrlContentEditingTarget implements EditingTarget
       return doc_.getId();
    }
 
+   @Override
+   public void adaptToExtendedFileType(String extendedType)
+   {
+   }
+
+   @Override
+   public String getExtendedFileType()
+   {
+      return null;
+   }
+
    public HasValue<String> getName()
    {
       String title = getContentTitle();
@@ -103,6 +116,13 @@ public class UrlContentEditingTarget implements EditingTarget
    {
       return FileIconResources.INSTANCE.iconText();
    }
+   
+   @Override
+   public TextFileType getTextFileType()
+   {
+      return null;
+   }
+
 
    public String getTabTooltip()
    {
@@ -125,7 +145,7 @@ public class UrlContentEditingTarget implements EditingTarget
    
    
    @Override
-   public void verifyPrerequisites()
+   public void verifyCppPrerequisites()
    {
    }
       
@@ -221,6 +241,11 @@ public class UrlContentEditingTarget implements EditingTarget
    {
    }
    
+   @Override
+   public void ensureCursorVisible()
+   {
+   }
+   
    @Override 
    public boolean isAtSourceRow(SourcePosition position)
    {
@@ -281,6 +306,11 @@ public class UrlContentEditingTarget implements EditingTarget
       return dirtyState().getValue();
    }
    
+   @Override
+   public void forceSaveCommandActive()
+   {
+   }
+   
    public void save(Command onCompleted)
    {
       onCompleted.execute();
@@ -335,6 +365,16 @@ public class UrlContentEditingTarget implements EditingTarget
          }
       };
    }
+   
+   public HandlerRegistration addEnsureHeightHandler(EnsureHeightHandler handler)
+   {
+      return new HandlerRegistration()
+      {
+         public void removeHandler()
+         {
+         }
+      };
+   }
 
    public HandlerRegistration addCloseHandler(
          CloseHandler<Void> voidCloseHandler)
@@ -363,6 +403,4 @@ public class UrlContentEditingTarget implements EditingTarget
    private HandlerRegistration commandReg_;
 
    private static final MyBinder binder_ = GWT.create(MyBinder.class);
-
-  
 }

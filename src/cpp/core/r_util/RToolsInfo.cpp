@@ -20,6 +20,7 @@
 #include <boost/algorithm/string.hpp>
 
 #include <core/Log.hpp>
+#include <core/http/URL.hpp>
 #include <core/StringUtils.hpp>
 
 #include <core/system/RegistryKey.hpp>
@@ -95,6 +96,13 @@ RToolsInfo::RToolsInfo(const std::string& name, const FilePath& installPath)
       relativePathEntries.push_back("bin");
       relativePathEntries.push_back("gcc-4.6.3/bin");
    }
+   else if (name == "3.2")
+   {
+      versionMin = "3.1.0";
+      versionMax = "3.2.99";
+      relativePathEntries.push_back("bin");
+      relativePathEntries.push_back("gcc-4.6.3/bin");
+   }
 
    // build version predicate and path list if we can
    if (!versionMin.empty())
@@ -107,6 +115,15 @@ RToolsInfo::RToolsInfo(const std::string& name, const FilePath& installPath)
          pathEntries_.push_back(installPath_.childPath(relativePath));
       }
    }
+}
+
+std::string RToolsInfo::url(const std::string& repos) const
+{
+   // strip period from name
+   std::string ver = boost::algorithm::replace_all_copy(name(), ".", "");
+   std::string url = core::http::URL::complete(
+                        repos, "bin/windows/Rtools/Rtools" + ver + ".exe");
+   return url;
 }
 
 std::ostream& operator<<(std::ostream& os, const RToolsInfo& info)

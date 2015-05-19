@@ -476,7 +476,7 @@ Error initialize()
    // set default repository if requested
    if (!s_options.rCRANRepos.empty())
    {
-      error = r::exec::RFunction(".rs.setCRANRepos",
+      error = r::exec::RFunction(".rs.setCRANReposAtStartup",
                                  s_options.rCRANRepos).call();
       if (error)
          return error;
@@ -496,9 +496,13 @@ Error initialize()
    // server specific R options options
    if (s_options.serverMode)
    {
+#ifndef __APPLE__
       FilePath serverOptionsFilePath =  s_options.rSourcePath.complete(
                                                          "ServerOptions.R");
       return r::sourceManager().sourceLocal(serverOptionsFilePath);
+#else
+      return Success();
+#endif
    }
    else
    {
@@ -524,7 +528,12 @@ void rSuicide(const std::string& msg)
 
 void rSuicide(const Error& error)
 {
-   rSuicide(core::log::errorAsLogEntry(error));
+   // provide error message if the error was unexpected
+   std::string msg;
+   if (!error.expected())
+      msg = core::log::errorAsLogEntry(error);
+
+   rSuicide(msg);
 }
 
 // forward declare win32 quit handler and provide string based quit
@@ -621,6 +630,13 @@ bool consoleInputHook(const std::string& prompt,
    }
 }
 
+bool isInjectedBrowserCommand(const std::string& cmd)
+{
+   return browserContextActive() &&
+          (cmd == "c" || cmd == "Q" || cmd == "n" || cmd == "s" || cmd == "f");
+}
+
+
 int RReadConsole (const char *pmt,
                   CONSOLE_BUFFER_CHAR* buf,
                   int buflen,
@@ -649,8 +665,9 @@ int RReadConsole (const char *pmt,
             if (initError)
                error = initError;
 
-            // log the error
-            LOG_ERROR(error);
+            // log the error if it was unexpected
+            if (!error.expected())
+               LOG_ERROR(error);
             
             // terminate the session (use suicide so that no special
             // termination code runs -- i.e. call to setAbnormalEnd(false)
@@ -707,7 +724,7 @@ int RReadConsole (const char *pmt,
             // we add the user's input rather than any tranformed input we
             // created as a result of a shell escape
             consoleActions().add(kConsoleActionInput, consoleInput.text);
-            if (addToHistory)
+            if (addToHistory && !isInjectedBrowserCommand(consoleInput.text))
                consoleHistory().add(consoleInput.text);
 
             // call console input hook and interrupt if the hook tells us to
@@ -727,11 +744,19 @@ int RReadConsole (const char *pmt,
          return 0; // terminate
       }
    }
-   catch(r::exec::InterruptException)
+   catch(r::exec::InterruptException&)
    {
-      // this will result in a longjmp
+      // set interrupts pending
       r::exec::setInterruptsPending(true);
+
+      // only issue an interrupt when not on Windows -- let the regular
+      // event loop handle interrupts there. note that this will longjmp
+#ifndef _WIN32
       r::exec::checkUserInterrupt();
+#endif
+
+      // return success
+      return 1;
    }
    catch(const std::exception& e)
    {
@@ -926,9 +951,11 @@ SEXP rs_browseURL(SEXP urlSEXP)
       std::string filePrefix("file://");
       if (URL.find(filePrefix) == 0)
       {
-         // also look for more complete prefix
+         // also look for file:///c: style urls on windows
+#ifdef _WIN32
          if (URL.find(filePrefix + "/") == 0)
              filePrefix = filePrefix + "/";
+#endif
 
          // transform into FilePath
          std::string path = URL.substr(filePrefix.length());
@@ -1369,7 +1396,9 @@ Error run(const ROptions& options, const RCallbacks& callbacks)
    else
    {
       loadInitFile = !s_suspendedSessionPath.exists()
-                     || options.rProfileOnResume;
+                     || options.rProfileOnResume
+                     || r::session::state::packratModeEnabled(
+                                                s_suspendedSessionPath);
    }
 
    // quiet for resume cases
@@ -1467,7 +1496,8 @@ bool isSuspendable(const std::string& currentPrompt)
 bool suspend(const RSuspendOptions& options,
              const FilePath& suspendedSessionPath,
              bool disableSaveCompression,
-             bool force)
+             bool force,
+             int status = EXIT_SUCCESS)
 {
    // validate that force == true if disableSaveCompression is specified
    // this is because save compression is disabled and the previous options
@@ -1510,7 +1540,7 @@ bool suspend(const RSuspendOptions& options,
    
       // clean up but don't save workspace or runLast because we have
       // been suspended
-      RCleanUp(SA_NOSAVE, 0, FALSE);
+      RCleanUp(SA_NOSAVE, status, FALSE);
       
       // keep compiler happy (this line will never execute)
       return true;
@@ -1532,7 +1562,8 @@ void suspendForRestart(const RSuspendOptions& options)
            RestartContext::createSessionStatePath(s_options.scopedScratchPath,
                                                   s_options.sessionPort),
            true,  // disable save compression
-           true); // force suspend
+           true,  // force suspend
+           EX_CONTINUE);
 }
 
 // set save action
@@ -1573,7 +1604,7 @@ bool browserContextActive()
    return Rf_countContexts(CTXT_BROWSER, 1) > 0;
 }
    
-void quit(bool saveWorkspace)
+void quit(bool saveWorkspace, int status)
 {
    // invoke quit
    std::string save = saveWorkspace ? "yes" : "no";
@@ -1586,7 +1617,7 @@ void quit(bool saveWorkspace)
       LOG_ERROR_MESSAGE(quitErr);
    }
  #else
-   Error error = r::exec::RFunction("q", save, 0, true).call();
+   Error error = r::exec::RFunction("q", save, status, true).call();
    if (error)
    {
       REprintf((r::endUserErrorMessage(error) + "\n").c_str());
@@ -1600,6 +1631,11 @@ namespace utils {
 bool isR3()
 {
    return s_isR3;
+}
+
+bool isPackratModeOn()
+{
+   return !core::system::getenv("R_PACKRAT_MODE").empty();
 }
 
 bool isDefaultPrompt(const std::string& prompt)

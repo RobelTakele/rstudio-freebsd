@@ -20,12 +20,15 @@ import org.rstudio.studio.client.common.compilepdf.model.CompilePdfServerOperati
 import org.rstudio.studio.client.common.console.ConsoleProcess;
 import org.rstudio.studio.client.common.crypto.CryptoServerOperations;
 import org.rstudio.studio.client.common.debugging.DebuggingServerOperations;
+import org.rstudio.studio.client.common.dependencies.model.DependencyServerOperations;
 import org.rstudio.studio.client.common.mirrors.model.MirrorsServerOperations;
 import org.rstudio.studio.client.common.spelling.model.SpellingServerOperations;
 import org.rstudio.studio.client.common.synctex.model.SynctexServerOperations;
 import org.rstudio.studio.client.common.vcs.GitServerOperations;
 import org.rstudio.studio.client.common.vcs.SVNServerOperations;
+import org.rstudio.studio.client.packrat.model.PackratServerOperations;
 import org.rstudio.studio.client.projects.model.ProjectsServerOperations;
+import org.rstudio.studio.client.rmarkdown.model.RMarkdownServerOperations;
 import org.rstudio.studio.client.server.ServerRequestCallback;
 import org.rstudio.studio.client.server.Void;
 import org.rstudio.studio.client.workbench.codesearch.model.CodeSearchServerOperations;
@@ -43,7 +46,9 @@ import org.rstudio.studio.client.workbench.views.history.model.HistoryServerOper
 import org.rstudio.studio.client.workbench.views.packages.model.PackagesServerOperations;
 import org.rstudio.studio.client.workbench.views.plots.model.PlotsServerOperations;
 import org.rstudio.studio.client.workbench.views.presentation.model.PresentationServerOperations;
+import org.rstudio.studio.client.workbench.views.source.editors.profiler.model.ProfilerServerOperations;
 import org.rstudio.studio.client.workbench.views.source.model.SourceServerOperations;
+import org.rstudio.studio.client.workbench.views.viewer.model.ViewerServerOperations;
 import org.rstudio.studio.client.workbench.views.environment.model.EnvironmentServerOperations;
 
 public interface WorkbenchServerOperations extends ConsoleServerOperations,
@@ -71,7 +76,13 @@ public interface WorkbenchServerOperations extends ConsoleServerOperations,
                                                    BuildServerOperations,
                                                    PresentationServerOperations,
                                                    EnvironmentServerOperations,
-                                                   DebuggingServerOperations
+                                                   DebuggingServerOperations,
+                                                   MetaServerOperations,
+                                                   ViewerServerOperations,
+                                                   ProfilerServerOperations,
+                                                   RMarkdownServerOperations,
+                                                   DependencyServerOperations,
+                                                   PackratServerOperations
 {   
    void initializeForMainWorkbench();
    void disconnect();

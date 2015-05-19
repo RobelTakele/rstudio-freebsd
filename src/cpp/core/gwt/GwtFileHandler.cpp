@@ -92,6 +92,7 @@ FilePath requestedFile(const std::string& wwwLocalPath,
 void handleFileRequest(const std::string& wwwLocalPath,
                        const std::string& baseUri,
                        core::http::UriFilterFunction mainPageFilter,
+                       const std::string& initJs,
                        bool useEmulatedStack,
                        const http::Request& request, 
                        http::Response* pResponse)
@@ -112,8 +113,7 @@ void handleFileRequest(const std::string& wwwLocalPath,
    // request for a URI not within our location scope
    if (uri.find(baseUri) != 0)
    {
-      pResponse->setError(http::status::NotFound, 
-                          request.uri() + " not found");
+      pResponse->setNotFoundError(request.uri());
       return;
    }
    
@@ -144,8 +144,7 @@ void handleFileRequest(const std::string& wwwLocalPath,
    FilePath filePath = requestedFile(wwwLocalPath, relativePath);
    if (filePath.empty())
    {
-      pResponse->setError(http::status::NotFound, 
-                          request.uri() + " not found");
+      pResponse->setNotFoundError(request.uri());
       return;
    }
    
@@ -171,6 +170,12 @@ void handleFileRequest(const std::string& wwwLocalPath,
                          (request.queryParamValue("emulatedStack") == "1");
       vars["compiler_stack_mode"] = useEmulatedStack ? "emulated" : "native";
 
+      // check for initJs
+      if (!initJs.empty())
+         vars["head_tags"] = "<script>" + initJs + "</script>";
+      else
+         vars["head_tags"] = std::string();
+
       // return the page
       pResponse->setNoCacheHeaders();
       pResponse->setFile(filePath, request, text::TemplateFilter(vars));
@@ -192,12 +197,14 @@ http::UriHandlerFunction fileHandlerFunction(
                                        const std::string& wwwLocalPath,
                                        const std::string& baseUri,
                                        http::UriFilterFunction mainPageFilter,
+                                       const std::string& initJs,
                                        bool useEmulatedStack)
 {
    return boost::bind(handleFileRequest,
                       wwwLocalPath,
                       baseUri,
                       mainPageFilter,
+                      initJs,
                       useEmulatedStack,
                       _1,
                       _2);

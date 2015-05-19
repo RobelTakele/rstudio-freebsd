@@ -138,6 +138,8 @@ public:
 
    core::json::Object uiPrefs() const;
 
+   core::json::Array openDocs() const;
+
    // current build options (note that these are not synchronized
    // accross processes!)
    const RProjectBuildOptions& buildOptions() const
@@ -167,6 +169,7 @@ public:
                                const FileMonitorCallbacks& cb);
 
 public:
+   static core::r_util::RProjectBuildDefaults buildDefaults();
    static core::r_util::RProjectConfig defaultConfig();
 
 private:

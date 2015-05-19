@@ -115,7 +115,8 @@ public class WebApplicationHeader extends Composite implements ApplicationHeader
              
          AppCommand closeSourceDoc = commands.closeSourceDoc();
          closeSourceDoc.setShortcut(new KeyboardShortcut(modifiers, 'W'));
-         ShortcutManager.INSTANCE.register(modifiers, 'W', closeSourceDoc);
+         ShortcutManager.INSTANCE.register(
+               modifiers, 'W', closeSourceDoc, "", "");
       }
       
       // main menu
@@ -157,7 +158,7 @@ public class WebApplicationHeader extends Composite implements ApplicationHeader
             SessionInfo sessionInfo = session.getSessionInfo();
             
             // only show the user identity if we are in server mode
-           if (sessionInfo.getMode().equals(SessionInfo.SERVER_MODE))
+           if (sessionInfo.getShowIdentity())
                initCommandsPanel(sessionInfo);
             
             // complete toolbar initialization
@@ -225,6 +226,7 @@ public class WebApplicationHeader extends Composite implements ApplicationHeader
    
 
    private native final void suppressBrowserForwardBack() /*-{
+      try {
       var outerWindow = $wnd.parent;
       if (outerWindow.addEventListener) {
          var handler = function(evt) {
@@ -236,6 +238,7 @@ public class WebApplicationHeader extends Composite implements ApplicationHeader
          outerWindow.addEventListener('keydown', handler, false);
          $wnd.addEventListener('keydown', handler, false);
       }
+      } catch(err) {}
    }-*/;
 
    private void advertiseEditingShortcuts(final GlobalDisplay display,

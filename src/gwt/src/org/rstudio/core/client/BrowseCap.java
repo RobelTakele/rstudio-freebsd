@@ -60,9 +60,19 @@ public class BrowseCap
    
    public boolean hasWindowFind()
    {
-      return true;
+      return !isInternetExplorer();
    }
-
+   
+   public boolean isInternetExplorer()
+   {
+      return isUserAgent("trident");
+   }
+    
+   public boolean isInternetExplorer10()
+   {
+      return false;
+   }
+   
    public static boolean hasMetaKey()
    {
       return isMacintosh();
@@ -76,6 +86,11 @@ public class BrowseCap
    public static boolean isMacintoshDesktop()
    {
       return Desktop.isDesktop() && isMacintosh();
+   }
+   
+   public static boolean isCocoaDesktop()
+   {
+      return Desktop.isDesktop() && Desktop.getFrame().isCocoa();
    }
    
    public static boolean isWindows()

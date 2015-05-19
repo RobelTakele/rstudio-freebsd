@@ -47,16 +47,19 @@
 #include <server/ServerOptions.hpp>
 #include <server/ServerUriHandlers.hpp>
 #include <server/ServerScheduler.hpp>
+#include <server/ServerSessionProxy.hpp>
+#include <server/ServerSessionManager.hpp>
+#include <server/ServerProcessSupervisor.hpp>
 
 #include "ServerAddins.hpp"
 #include "ServerAppArmor.hpp"
 #include "ServerBrowser.hpp"
+#include "ServerEval.hpp"
 #include "ServerInit.hpp"
+#include "ServerMeta.hpp"
 #include "ServerOffline.hpp"
 #include "ServerPAMAuth.hpp"
-#include "ServerSessionProxy.hpp"
 #include "ServerREnvironment.hpp"
-#include "ServerSessionManager.hpp"
 
 using namespace core ;
 using namespace server;
@@ -77,7 +80,8 @@ namespace {
 bool mainPageFilter(const core::http::Request& request,
                     core::http::Response* pResponse)
 {
-   return server::browser::supportedBrowserFilter(request, pResponse) &&
+   return server::eval::expirationFilter(request, pResponse) &&
+          server::browser::supportedBrowserFilter(request, pResponse) &&
           auth::handler::mainPageFilter(request, pResponse);
 }
 
@@ -85,9 +89,15 @@ bool mainPageFilter(const core::http::Request& request,
 http::UriHandlerFunction blockingFileHandler()
 {
    Options& options = server::options();
+
+   // determine initJs (none for now)
+   std::string initJs;
+
+   // return file
    return gwt::fileHandlerFunction(options.wwwLocalPath(),
                                    "/",
                                    mainPageFilter,
+                                   initJs,
                                    options.wwwUseEmulatedStack());
 }
 
@@ -130,6 +140,8 @@ Error httpServerInit()
 
    // set server options
    s_pHttpServer->setAbortOnResourceError(true);
+   s_pHttpServer->setScheduledCommandInterval(
+                                    boost::posix_time::milliseconds(500));
 
    // initialize
    return server::httpServerInit(s_pHttpServer.get());
@@ -154,6 +166,7 @@ void httpServerAddHandlers()
    uri_handlers::add("/view_pdf", secureAsyncHttpHandler(proxyContentRequest));
    uri_handlers::add("/agreement", secureAsyncHttpHandler(proxyContentRequest));
    uri_handlers::add("/presentation", secureAsyncHttpHandler(proxyContentRequest));
+   uri_handlers::add("/pdf_js", secureAsyncHttpHandler(proxyContentRequest));
 
    // content handlers which might be accessed outside the context of the
    // workbench get secure + authentication when required
@@ -163,9 +176,17 @@ void httpServerAddHandlers()
    uri_handlers::add("/session", secureAsyncHttpHandler(proxyContentRequest, true));
    uri_handlers::add("/docs", secureAsyncHttpHandler(secureAsyncFileHandler(), true));
    uri_handlers::add("/html_preview", secureAsyncHttpHandler(proxyContentRequest, true));
+   uri_handlers::add("/rmd_output", secureAsyncHttpHandler(proxyContentRequest, true));
+
+   // proxy localhost if requested
+   if (server::options().wwwProxyLocalhost())
+      uri_handlers::add("/p/", secureAsyncHttpHandler(proxyLocalhostRequest, true));
 
    // establish logging handler
    uri_handlers::addBlocking("/log", secureJsonRpcHandler(gwt::handleLogRequest));
+
+   // establish meta
+   uri_handlers::addBlocking("/meta", secureJsonRpcHandler(meta::handleMetaRequest));
 
    // establish progress handler
    FilePath wwwPath(server::options().wwwLocalPath());
@@ -327,16 +348,22 @@ int main(int argc, char * const argv[])
       const char * const kProgramIdentity = "rserver";
       initializeSystemLog(kProgramIdentity, core::system::kLogLevelWarning);
 
-      // ignore SIGPIPE
-      Error error = core::system::ignoreSignal(core::system::SigPipe);
-      if (error)
-         LOG_ERROR(error);
+      // ignore SIGPIPE (don't log error because we should never call
+      // syslog prior to daemonizing)
+      core::system::ignoreSignal(core::system::SigPipe);
 
       // read program options 
+      std::ostringstream osWarnings;
       Options& options = server::options();
-      ProgramStatus status = options.read(argc, argv); 
+      ProgramStatus status = options.read(argc, argv, osWarnings);
+      std::string optionsWarnings = osWarnings.str();
       if ( status.exit() )
+      {
+         if (!optionsWarnings.empty())
+            program_options::reportWarnings(optionsWarnings, ERROR_LOCATION);
+
          return status.exitCode() ;
+      }
       
       // daemonize if requested
       if (options.serverDaemonize())
@@ -352,6 +379,11 @@ int main(int argc, char * const argv[])
          // set file creation mask to 022 (might have inherted 0 from init)
          setUMask(core::system::OthersNoWriteMask);
       }
+
+      // wait until now to output options warnings (we need to wait for our
+      // first call to logging functions until after daemonization)
+      if (!optionsWarnings.empty())
+         program_options::reportWarnings(optionsWarnings, ERROR_LOCATION);
 
       // detect R environment variables (calls R (and this forks) so must
       // happen after daemonize so that upstart script can correctly track us
@@ -373,7 +405,7 @@ int main(int argc, char * const argv[])
       }
 
       // set working directory
-      error = FilePath(options.serverWorkingDir()).makeCurrentPath();
+      Error error = FilePath(options.serverWorkingDir()).makeCurrentPath();
       if (error)
          return core::system::exitFailure(error, ERROR_LOCATION);
 
@@ -392,6 +424,12 @@ int main(int argc, char * const argv[])
 
       // initialize http server
       error = httpServerInit();
+      if (error)
+         return core::system::exitFailure(error, ERROR_LOCATION);
+
+      // initialize the process supervisor (needs to happen post http server
+      // init for access to the scheduled command list)
+      error = process_supervisor::initialize();
       if (error)
          return core::system::exitFailure(error, ERROR_LOCATION);
 
@@ -441,7 +479,10 @@ int main(int argc, char * const argv[])
       if (options.serverAppArmorEnabled())
       {
          error = app_armor::enforceRestricted();
-         if (error)
+
+         // log error unless it's path not found (which indicates that
+         // libapparmor isn't installed on this system)
+         if (error && !isPathNotFoundError(error))
             LOG_ERROR(error);
       }
 

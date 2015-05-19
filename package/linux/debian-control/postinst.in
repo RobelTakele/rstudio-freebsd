@@ -5,12 +5,21 @@ set +e
 
 # add rserver user account
 sudo useradd -r rstudio-server
+sudo groupadd -r rstudio-server
 
 # create softlink to admin script in /usr/sbin
 sudo ln -f -s ${CMAKE_INSTALL_PREFIX}/bin/rstudio-server /usr/sbin/rstudio-server
 
-# create config directory
+# create config directory and default config files
 sudo mkdir -p /etc/rstudio
+if ! test -f /etc/rstudio/rserver.conf
+then
+  sudo sh -c "printf '# Server Configuration File\n\n' > /etc/rstudio/rserver.conf"
+fi
+if ! test -f /etc/rstudio/rsession.conf
+then
+  sudo sh -c "echo '# R Session Configuration File\n\n' > /etc/rstudio/rsession.conf"
+fi
 
 # create var directories
 sudo mkdir -p /var/run/rstudio-server
@@ -23,7 +32,6 @@ sudo mkdir -p /var/lib/rstudio-server/proxy
 
 # write installed indicator then force suspend active sessions
 # (so that the new client is never paired against the old server)
-sudo mkdir -p /etc/rstudio
 sudo sh -c "echo `date +%s` > /var/lib/rstudio-server/installed"
 sudo rstudio-server force-suspend-all
 

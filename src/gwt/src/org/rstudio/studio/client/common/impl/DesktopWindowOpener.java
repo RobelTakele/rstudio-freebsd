@@ -14,7 +14,6 @@
  */
 package org.rstudio.studio.client.common.impl;
 
-import org.rstudio.core.client.regex.Pattern;
 import org.rstudio.studio.client.application.Desktop;
 import org.rstudio.studio.client.common.GlobalDisplay;
 import org.rstudio.studio.client.common.GlobalDisplay.NewWindowOptions;
@@ -28,15 +27,9 @@ public class DesktopWindowOpener extends WebWindowOpener
    public void openWindow(GlobalDisplay globalDisplay,
                           String url,
                           NewWindowOptions options)
-   {
-     
-      
-      // inspect the url
-      boolean hasProto = Pattern.create("^([a-zA-Z]+:)").match(url, 0) != null;
-      boolean isAppUrl = url.startsWith(GWT.getHostPageBaseURL());
-      
+   {  
       // open externally if we have a protocol and aren't an app url
-      if (hasProto && !isAppUrl)
+      if (hasProtocol(url) && !isAppUrl(url))
       {
          Desktop.getFrame().browseUrl(url);
 
@@ -46,7 +39,7 @@ public class DesktopWindowOpener extends WebWindowOpener
       {
          // if this is a relative url then prepend the host page base
          // url (so Qt correctly navigates)
-         if (!hasProto)
+         if (!hasProtocol(url))
          {
             if (url.startsWith("/"))
                url = url.substring(1);
@@ -77,11 +70,12 @@ public class DesktopWindowOpener extends WebWindowOpener
    public void openSatelliteWindow(GlobalDisplay globalDisplay,
                                    String mode,
                                    int width,
-                                   int height)
+                                   int height, 
+                                   NewWindowOptions options)
    {  
       String windowName = SatelliteUtils.getSatelliteWindowName(mode);
       Desktop.getFrame().prepareForSatelliteWindow(windowName, width, height);
-      super.openSatelliteWindow(globalDisplay, mode, width, height);
+      super.openSatelliteWindow(globalDisplay, mode, width, height, options);
    }
    
    @Override

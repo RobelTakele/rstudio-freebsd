@@ -17,13 +17,21 @@ project (SESSION)
 
 add_subdirectory(workers)
 
-# verify that install-dictionaries and install-mathjax have been run
+# verify that install-dictionaries, install-mathjax, install-pandoc,
+# and install-rmarkdown have been run
 if(NOT EXISTS "${RSTUDIO_DEPENDENCIES_DIR}/common/dictionaries")
   message(FATAL_ERROR "Dictionaries not found (re-run install-dependencies script to install)")
 endif()
-if(NOT EXISTS "${RSTUDIO_DEPENDENCIES_DIR}/common/mathjax")
-  message(FATAL_ERROR "Mathjax not found (re-run install-dependencies script to install)")
+if(NOT EXISTS "${RSTUDIO_DEPENDENCIES_DIR}/common/mathjax-23")
+  message(FATAL_ERROR "Mathjax 2.3 not found (re-run install-dependencies script to install)")
 endif()
+if(NOT EXISTS "${RSTUDIO_DEPENDENCIES_DIR}/common/pandoc")
+  message(FATAL_ERROR "pandoc not found (re-run install-dependencies script to install)")
+endif()
+if(NOT EXISTS "${RSTUDIO_DEPENDENCIES_DIR}/common/shinyapps")
+  message(FATAL_ERROR "shinyapps package not found (re-run install-dependencies script to install)")
+endif()
+
 
 # include files
 file(GLOB_RECURSE SESSION_HEADER_FILES "*.h*")
@@ -31,12 +39,15 @@ file(GLOB_RECURSE SESSION_HEADER_FILES "*.h*")
 
 # source files
 set (SESSION_SOURCE_FILES
+   SessionAsyncRProcess.cpp
    SessionClientEvent.cpp
    SessionClientEventQueue.cpp
    SessionClientEventService.cpp
+   SessionConsoleProcess.cpp
    SessionContentUrls.cpp
    SessionSSH.cpp
    SessionMain.cpp
+   SessionMainOverlay.cpp
    SessionModuleContext.cpp
    SessionOptions.cpp
    SessionOptionsOverlay.cpp
@@ -48,14 +59,16 @@ set (SESSION_SOURCE_FILES
    SessionWorkerContext.cpp
    http/SessionHttpConnectionQueue.cpp
    http/SessionHttpConnectionUtils.cpp
+   modules/SessionAbout.cpp
    modules/SessionAgreement.cpp
    modules/SessionAskPass.cpp
    modules/SessionAuthoring.cpp
    modules/SessionBreakpoints.cpp
    modules/SessionCodeSearch.cpp
    modules/SessionConsole.cpp
-   modules/SessionConsoleProcess.cpp
+   modules/SessionDependencies.cpp
    modules/SessionDirty.cpp
+   modules/SessionErrors.cpp
    modules/SessionFiles.cpp
    modules/SessionFilesListingMonitor.cpp
    modules/SessionFilesQuotas.cpp
@@ -63,22 +76,28 @@ set (SESSION_SOURCE_FILES
    modules/SessionGit.cpp
    modules/SessionHelp.cpp
    modules/SessionHistory.cpp
+   modules/SessionHistoryArchive.cpp
    modules/SessionHTMLPreview.cpp
    modules/SessionLimits.cpp
    modules/SessionLists.cpp
    modules/SessionPackages.cpp
+   modules/SessionPackrat.cpp
    modules/SessionPath.cpp
    modules/SessionPlots.cpp
+   modules/SessionProfiler.cpp
+   modules/SessionRHooks.cpp
    modules/SessionRPubs.cpp
+   modules/SessionShinyApps.cpp
+   modules/SessionShinyViewer.cpp
    modules/SessionSource.cpp
    modules/SessionSpelling.cpp
    modules/SessionSVN.cpp
+   modules/SessionUpdates.cpp
    modules/SessionVCS.cpp
    modules/SessionWorkbench.cpp
    modules/build/SessionBuild.cpp
    modules/build/SessionBuildEnvironment.cpp
    modules/build/SessionBuildErrors.cpp
-   modules/build/SessionBuildUtils.cpp
    modules/build/SessionSourceCpp.cpp
    modules/data/SessionData.cpp
    modules/data/DataViewer.cpp
@@ -96,6 +115,9 @@ set (SESSION_SOURCE_FILES
    modules/presentation/SlideQuizRenderer.cpp
    modules/presentation/SlideRenderer.cpp
    modules/presentation/SlideRequestHandler.cpp
+   modules/rmarkdown/SessionRMarkdown.cpp
+   modules/rmarkdown/RMarkdownPresentation.cpp
+   modules/shiny/SessionShiny.cpp
    modules/tex/SessionCompilePdf.cpp
    modules/tex/SessionCompilePdfSupervisor.cpp
    modules/tex/SessionPdfLatex.cpp
@@ -106,8 +128,11 @@ set (SESSION_SOURCE_FILES
    modules/tex/SessionViewPdf.cpp
    modules/vcs/SessionVCSCore.cpp
    modules/vcs/SessionVCSUtils.cpp
+   modules/viewer/SessionViewer.cpp
+   modules/viewer/ViewerHistory.cpp
    projects/SessionProjects.cpp
    projects/SessionProjectContext.cpp
+   projects/SessionProjectFirstRun.cpp
    ${CMAKE_CURRENT_BINARY_DIR}/SessionAddins.cpp
 )
 
@@ -121,9 +146,15 @@ if(UNIX)
          modules/SessionCrypto.cpp
       )
    endif()
+   if(APPLE)
+      set(SESSION_SOURCE_FILES ${SESSION_SOURCE_FILES}
+         SessionModuleContext.mm
+      )
+   endif()
 else()
    set(SESSION_SOURCE_FILES ${SESSION_SOURCE_FILES}
       http/SessionWin32HttpConnectionListener.cpp
+      modules/build/SessionInstallRtools.cpp
    )
 endif()
 
@@ -169,8 +200,8 @@ if(RSTUDIO_ADDINS_PATH)
 endif()
 
 # config file
-configure_file(${CMAKE_CURRENT_SOURCE_DIR}/config.h.in
-               ${CMAKE_CURRENT_BINARY_DIR}/config.h)
+configure_file(${CMAKE_CURRENT_SOURCE_DIR}/session-config.h.in
+               ${CMAKE_CURRENT_BINARY_DIR}/session-config.h)
 
 # always configure the addins bootstrap file
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/SessionAddins.cpp.in
@@ -183,6 +214,10 @@ foreach(SESSION_R_FILE ${SESSION_R_FILES})
                   "${CMAKE_CURRENT_BINARY_DIR}/modules/R/${R_FILE_NAME}"
                   COPYONLY)
 endforeach()
+
+# configure the NOTICE file into the resources directory
+configure_file(${CMAKE_CURRENT_SOURCE_DIR}/../../../NOTICE
+               ${CMAKE_CURRENT_SOURCE_DIR}/resources COPYONLY)
 
 # set include directories
 include_directories(
@@ -247,6 +282,7 @@ target_link_libraries(rsession
    rstudio-r
    rstudio-session-workers
    ${SESSION_SYSTEM_LIBRARIES}
+   ${LIBR_LIBRARIES}
 )
 
 # configure and install r-ldpaths script
@@ -284,20 +320,38 @@ if (NOT RSTUDIO_SESSION_WIN64)
    # presentation
    install(DIRECTORY "resources/presentation"
            DESTINATION ${RSTUDIO_INSTALL_SUPPORTING}/resources)
+   # notice
+   install(FILES "resources/NOTICE"
+           DESTINATION ${RSTUDIO_INSTALL_SUPPORTING}/resources)
 
    # R scripts
    file(GLOB R_MODULE_SRC_FILES "${CMAKE_CURRENT_BINARY_DIR}/modules/R/*.R")
    install(FILES ${R_MODULE_SRC_FILES}
            DESTINATION ${RSTUDIO_INSTALL_SUPPORTING}/R/modules)
 
-
    # install hunspell dictionaries
    install(DIRECTORY "${RSTUDIO_DEPENDENCIES_DIR}/common/dictionaries"
            DESTINATION "${RSTUDIO_INSTALL_SUPPORTING}/resources")
 
    # install mathjax for local html preview
-   install(DIRECTORY "${RSTUDIO_DEPENDENCIES_DIR}/common/mathjax"
+   install(DIRECTORY "${RSTUDIO_DEPENDENCIES_DIR}/common/mathjax-23"
            DESTINATION "${RSTUDIO_INSTALL_SUPPORTING}/resources")
+
+   # install pandoc
+   set(PANDOC_BIN "${RSTUDIO_DEPENDENCIES_DIR}/common/pandoc/1.13.1")
+   file(GLOB PANDOC_FILES "${PANDOC_BIN}/pandoc*")
+   install(FILES ${PANDOC_FILES}
+           PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE
+           DESTINATION  ${RSTUDIO_INSTALL_BIN}/pandoc)
+
+   # install shinyapps package
+   file(GLOB SHINYAPPS_PACKAGE "${RSTUDIO_DEPENDENCIES_DIR}/common/shinyapps*.tar.gz")
+   install(FILES ${SHINYAPPS_PACKAGE}
+           DESTINATION ${RSTUDIO_INSTALL_SUPPORTING}/R/packages)
+
+   # install PDF.js
+   install(DIRECTORY "resources/pdfjs"
+           DESTINATION ${RSTUDIO_INSTALL_SUPPORTING}/resources)
 
    # install 64 bit binaries if we are on win64
    if(WIN32)
@@ -322,7 +376,7 @@ if (NOT RSTUDIO_SESSION_WIN64)
               DESTINATION  ${RSTUDIO_INSTALL_BIN})
 
 
-      install(PROGRAMS "${RSTUDIO_WINDOWS_DEPENDENCIES_DIR}/sumatra/2.1.1/SumatraPDF.exe"
+      install(PROGRAMS "${RSTUDIO_WINDOWS_DEPENDENCIES_DIR}/sumatra/2.4/SumatraPDF.exe"
               DESTINATION  "${RSTUDIO_INSTALL_BIN}/sumatra")
       install(FILES resources/sumatrapdfrestrict.ini
                DESTINATION  "${RSTUDIO_INSTALL_BIN}/sumatra")
@@ -336,4 +390,7 @@ if(RSTUDIO_SESSION_WIN64)
            DESTINATION ${RSTUDIO_INSTALL_BIN})
 endif()
 
-
+# add overlay if it exists
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/CMakeOverlay.txt")
+   include(CMakeOverlay.txt)
+endif()

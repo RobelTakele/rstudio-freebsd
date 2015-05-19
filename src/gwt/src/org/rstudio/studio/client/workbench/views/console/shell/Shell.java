@@ -22,14 +22,19 @@ import com.google.gwt.core.client.Scheduler.ScheduledCommand;
 import com.google.gwt.event.dom.client.*;
 import com.google.gwt.user.client.Command;
 import com.google.inject.Inject;
+
+import org.rstudio.core.client.BrowseCap;
 import org.rstudio.core.client.CommandWithArg;
+import org.rstudio.core.client.StringUtil;
 import org.rstudio.core.client.command.CommandBinder;
 import org.rstudio.core.client.command.Handler;
 import org.rstudio.core.client.command.KeyboardShortcut;
 import org.rstudio.core.client.jsonrpc.RpcObjectList;
 import org.rstudio.studio.client.application.events.EventBus;
 import org.rstudio.studio.client.common.CommandLineHistory;
-import org.rstudio.studio.client.common.GlobalDisplay;
+import org.rstudio.studio.client.common.debugging.ErrorManager;
+import org.rstudio.studio.client.common.debugging.events.UnhandledErrorEvent;
+import org.rstudio.studio.client.common.debugging.model.ErrorHandlerType;
 import org.rstudio.studio.client.common.shell.ShellDisplay;
 import org.rstudio.studio.client.server.ServerError;
 import org.rstudio.studio.client.server.ServerRequestCallback;
@@ -65,7 +70,9 @@ public class Shell implements ConsoleInputHandler,
                               ConsoleRestartRCompletedEvent.Handler,
                               ConsoleExecutePendingInputEvent.Handler,
                               SendToConsoleHandler,
-                              DebugModeChangedEvent.Handler
+                              DebugModeChangedEvent.Handler,
+                              RunCommandWithDebugEvent.Handler,
+                              UnhandledErrorEvent.Handler
 {
    static interface Binder extends CommandBinder<Commands, Shell>
    {
@@ -83,9 +90,9 @@ public class Shell implements ConsoleInputHandler,
                 EventBus eventBus,
                 Display display,
                 Session session,
-                GlobalDisplay globalDisplay,
                 Commands commands,
-                UIPrefs uiPrefs)
+                UIPrefs uiPrefs, 
+                ErrorManager errorManager)
    {
       super() ;
 
@@ -94,10 +101,12 @@ public class Shell implements ConsoleInputHandler,
       server_ = server ;
       eventBus_ = eventBus ;
       view_ = display ;
-      globalDisplay_ = globalDisplay;
       commands_ = commands;
+      errorManager_ = errorManager;
       input_ = view_.getInputEditorDisplay() ;
       historyManager_ = new CommandLineHistory(input_);
+      browseHistoryManager_ = new CommandLineHistory(input_);
+      prefs_ = uiPrefs;
 
       inputAnimator_ = new ShellInputAnimator(view_.getInputEditorDisplay());
       
@@ -123,6 +132,8 @@ public class Shell implements ConsoleInputHandler,
       eventBus.addHandler(ConsoleExecutePendingInputEvent.TYPE, this);
       eventBus.addHandler(SendToConsoleEvent.TYPE, this);
       eventBus.addHandler(DebugModeChangedEvent.TYPE, this);
+      eventBus.addHandler(RunCommandWithDebugEvent.TYPE, this);
+      eventBus.addHandler(UnhandledErrorEvent.TYPE, this);
       
       final CompletionManager completionManager
                   = new RCompletionManager(view_.getInputEditorDisplay(),
@@ -234,9 +245,21 @@ public class Shell implements ConsoleInputHandler,
       view_.consoleWriteOutput(event.getOutput()) ;
    }
 
-   public void onConsoleWriteError(ConsoleWriteErrorEvent event)
+   public void onConsoleWriteError(final ConsoleWriteErrorEvent event)
    {
-      view_.consoleWriteError(event.getError()) ;
+      view_.consoleWriteError(event.getError());
+   }
+   
+   public void onUnhandledError(UnhandledErrorEvent event)
+   {
+      if (!debugging_)
+      {
+         view_.consoleWriteExtendedError(
+               event.getError().getErrorMessage(),
+               event.getError(), 
+               prefs_.autoExpandErrorTracebacks().getValue(),
+               getHistoryEntry(0));
+      }
    }
    
    public void onConsoleWriteInput(ConsoleWriteInputEvent event)
@@ -270,7 +293,7 @@ public class Shell implements ConsoleInputHandler,
       }
 
       addToHistory_ = addToHistory;
-      historyManager_.resetPosition();
+      resetHistoryPosition();
       lastPromptText_ = prompt ;
 
       if (restoreFocus_)
@@ -298,7 +321,7 @@ public class Shell implements ConsoleInputHandler,
    {
       String commandText = view_.processCommandEntry() ;
       if (addToHistory_ && (commandText.length() > 0))
-         historyManager_.addToHistory(commandText);
+         addToHistory(commandText);
 
       // fire event 
       eventBus_.fireEvent(new ConsoleInputEvent(commandText));
@@ -308,13 +331,20 @@ public class Shell implements ConsoleInputHandler,
    {  
       final InputEditorDisplay display = view_.getInputEditorDisplay();
       
+      // get anything already at the console
+      final String previousInput = StringUtil.notNull(display.getText());
+      
       // define code block we execute at finish
       Command finishSendToConsole = new Command() {
          @Override
          public void execute()
          {
             if (event.shouldExecute())
+            {
                processCommandEntry();
+               if (previousInput.length() > 0)
+                  display.setText(previousInput);
+            }
             
             if (!event.shouldExecute() || event.shouldFocus())
             {
@@ -365,6 +395,30 @@ public class Shell implements ConsoleInputHandler,
       {
          view_.ensureInputVisible();
       }
+      debugging_ = event.debugging();
+   }
+   
+   @Override
+   public void onRunCommandWithDebug(final RunCommandWithDebugEvent event)
+   {
+      // Invoked from the "Rerun with Debug" command in the ConsoleError widget.
+      errorManager_.setDebugSessionHandlerType(
+            ErrorHandlerType.ERRORS_BREAK,
+            new ServerRequestCallback<Void>()
+            {
+               @Override
+               public void onResponseReceived(Void v)
+               {
+                  eventBus_.fireEvent(new SendToConsoleEvent(
+                        event.getCommand(), true));
+               }
+               
+               @Override
+               public void onError(ServerError error)
+               {
+                  // if we failed to set debug mode, don't rerun the command
+               }
+            }); 
    }
 
    private final class InputKeyDownHandler implements KeyDownHandler,
@@ -431,16 +485,7 @@ public class Shell implements ConsoleInputHandler,
                if (view_.isPromptEmpty())
                {
                   // interrupt server
-                  server_.interrupt(new VoidServerRequestCallback() {
-                     @Override
-                     public void onError(ServerError error)
-                     {
-                        super.onError(error);
-                        globalDisplay_.showErrorMessage(
-                              "Error Interrupting Server",
-                              error.getUserMessage());
-                     }
-                  });
+                  server_.interrupt(new VoidServerRequestCallback());
                }
                else
                {
@@ -476,6 +521,21 @@ public class Shell implements ConsoleInputHandler,
                      break;
                }
             }
+            else if (
+                  (BrowseCap.hasMetaKey() && 
+                   (mod == (KeyboardShortcut.META + KeyboardShortcut.SHIFT))) ||
+                  (!BrowseCap.hasMetaKey() && 
+                   (mod == (KeyboardShortcut.CTRL + KeyboardShortcut.SHIFT))))
+            {
+               switch (keyCode)
+               {
+                  case KeyCodes.KEY_M:
+                     event.preventDefault();
+                     event.stopPropagation();
+                     input_.replaceSelection(" %>% ", true);
+                     break;
+               }
+            }
          }
       }
 
@@ -495,10 +555,41 @@ public class Shell implements ConsoleInputHandler,
       @SuppressWarnings("unused")
       private boolean lastKeyCodeWasZero_;
    }
+   
+   private boolean isBrowsePrompt()
+   {
+      return lastPromptText_ != null && (lastPromptText_.startsWith("Browse"));
+   }
+   
+   private void resetHistoryPosition()
+   {
+      historyManager_.resetPosition();
+      browseHistoryManager_.resetPosition();
+   }
+   
+   private void addToHistory(String commandText)
+   {
+      if (isBrowsePrompt())
+         browseHistoryManager_.addToHistory(commandText);
+      else
+         historyManager_.addToHistory(commandText);
+   }
+   
+   private String getHistoryEntry(int offset)
+   {
+      if (isBrowsePrompt())
+         return browseHistoryManager_.getHistoryEntry(offset);
+      else
+         return historyManager_.getHistoryEntry(offset);
+   }
 
    private void navigateHistory(int offset)
    {
-      historyManager_.navigateHistory(offset);
+      if (isBrowsePrompt())
+         browseHistoryManager_.navigateHistory(offset);
+      else
+         historyManager_.navigateHistory(offset);
+      
       view_.ensureInputVisible();
    }
 
@@ -513,6 +604,7 @@ public class Shell implements ConsoleInputHandler,
       for (int i = 0; i < history.length(); i++)
          historyList.add(history.get(i));
       historyManager_.setHistory(historyList);
+      browseHistoryManager_.resetPosition();
    }
 
    public void onBeforeUnselected()
@@ -534,16 +626,18 @@ public class Shell implements ConsoleInputHandler,
    private final ConsoleServerOperations server_ ;
    private final EventBus eventBus_ ;
    private final Display view_ ;
-   private final GlobalDisplay globalDisplay_;
    private final Commands commands_;
+   private final ErrorManager errorManager_;
    private final InputEditorDisplay input_ ;
    private final ArrayList<KeyDownPreviewHandler> keyDownPreviewHandlers_ ;
    private final ArrayList<KeyPressPreviewHandler> keyPressPreviewHandlers_ ;
    // indicates whether the next command should be added to history
    private boolean addToHistory_ ;
    private String lastPromptText_ ;
+   private final UIPrefs prefs_;
 
    private final CommandLineHistory historyManager_;
+   private final CommandLineHistory browseHistoryManager_;
    
    private final ShellInputAnimator inputAnimator_;
 
@@ -553,4 +647,5 @@ public class Shell implements ConsoleInputHandler,
    private static final String STATE_INPUT = "input";
 
    private boolean restoreFocus_ = true;
+   private boolean debugging_ = false;
 }

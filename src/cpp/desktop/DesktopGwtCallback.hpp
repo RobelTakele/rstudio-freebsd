@@ -21,6 +21,10 @@
 
 #include "DesktopGwtCallbackOwner.hpp"
 
+#ifdef Q_OS_WIN32
+#include "DesktopWordViewer.hpp"
+#endif
+
 namespace desktop {
 
 class MainWindow;
@@ -37,14 +41,9 @@ enum PendingQuit {
 class GwtCallback : public QObject
 {
    Q_OBJECT
-   Q_PROPERTY(QString proportionalFont READ proportionalFont)
-   Q_PROPERTY(QString fixedWidthFont READ fixedWidthFont)
 
 public:
    GwtCallback(MainWindow* pMainWindow, GwtCallbackOwner* pOwner);
-
-   QString proportionalFont();
-   QString fixedWidthFont();
 
    int collectPendingQuitRequest();
 
@@ -52,6 +51,9 @@ signals:
    void workbenchInitialized();
 
 public slots:
+   QString proportionalFont();
+   QString fixedWidthFont();
+   bool isCocoa();
    void browseUrl(QString url);
    QString getOpenFileName(const QString& caption,
                            const QString& dir,
@@ -71,6 +73,9 @@ public slots:
    void onWorkbenchInitialized(QString scratchPath);
    void showFolder(QString path);
    void showFile(QString path);
+   void showWordDoc(QString path);
+   void showPDF(QString path, int pdfPage);
+   void prepareShowWordDoc();
 
    QString getRVersion();
    QString chooseRVersion();
@@ -79,12 +84,22 @@ public slots:
    bool isRetina();
 
    void openMinimalWindow(QString name, QString url, int width, int height);
+   void activateMinimalWindow(QString name);
    void activateSatelliteWindow(QString name);
    void prepareForSatelliteWindow(QString name, int width, int height);
 
 
    // Image coordinates are relative to the window contents
    void copyImageToClipboard(int left, int top, int width, int height);
+
+   // coordinates are relative to entire containing web page
+   void copyPageRegionToClipboard(int left, int top, int width, int height);
+   void exportPageRegionToFile(QString targetPath,
+                               QString format,
+                               int left,
+                               int top,
+                               int width,
+                               int height);
 
    bool supportsClipboardMetafile();
 
@@ -95,7 +110,7 @@ public slots:
                       int defaultButton,
                       int cancelButton);
 
-   QVariant promptForText(QString title,
+   QString promptForText(QString title,
                          QString caption,
                          QString defaultValue,
                          bool usePasswordMask,
@@ -105,7 +120,6 @@ public slots:
                          int selectionStart,
                          int selectionLength);
 
-   void checkForUpdates();
    void showAboutDialog();
    void bringMainFrameToFront();
 
@@ -121,15 +135,17 @@ public slots:
                      QString workingDirectory,
                      QString extraPathEntries);
 
-   QVariant getFontList(bool fixedWidthOnly);
+   QString getFixedWidthFontList();
    QString getFixedWidthFont();
    void setFixedWidthFont(QString font);
 
-   QVariant getZoomLevels();
+   QString getZoomLevels();
    double getZoomLevel();
    void setZoomLevel(double zoomLevel);
 
-   bool forceFastScrollFactor();
+   void macZoomActualSize();
+   void macZoomIn();
+   void macZoomOut();
 
    QString getDesktopSynctexViewer();
 
@@ -148,6 +164,19 @@ public slots:
 
    void reloadZoomWindow();
 
+   void setViewerUrl(QString url);
+   void reloadViewerZoomWindow(QString url);
+
+   QString getScrollingCompensationType();
+
+   bool isOSXMavericks();
+
+   void setBusy(bool busy);
+
+   void setWindowTitle(QString title);
+
+   void installRtools(QString version, QString installerPath);
+
 private:
    Synctex& synctex();
 
@@ -159,6 +188,9 @@ private:
    GwtCallbackOwner* pOwner_;
    Synctex* pSynctex_;
    int pendingQuit_;
+#ifdef Q_OS_WIN32
+   WordViewer wordViewer_;
+#endif
 
 };
 

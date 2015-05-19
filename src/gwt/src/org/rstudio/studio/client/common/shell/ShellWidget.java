@@ -14,48 +14,69 @@
  */
 package org.rstudio.studio.client.common.shell;
 
+import java.util.Map;
+import java.util.TreeMap;
+
 import com.google.gwt.core.client.Scheduler;
 import com.google.gwt.core.client.Scheduler.RepeatingCommand;
 import com.google.gwt.core.client.Scheduler.ScheduledCommand;
 import com.google.gwt.dom.client.Document;
+import com.google.gwt.dom.client.Element;
 import com.google.gwt.dom.client.Node;
 import com.google.gwt.dom.client.SpanElement;
 import com.google.gwt.dom.client.Style.Unit;
 import com.google.gwt.dom.client.Text;
 import com.google.gwt.event.dom.client.*;
 import com.google.gwt.event.shared.HandlerRegistration;
-import com.google.gwt.user.client.Element;
 import com.google.gwt.user.client.ui.*;
+
+import org.rstudio.core.client.ElementIds;
+import org.rstudio.core.client.FilePosition;
 import org.rstudio.core.client.StringUtil;
 import org.rstudio.core.client.TimeBufferedCommand;
 import org.rstudio.core.client.VirtualConsole;
 import org.rstudio.core.client.dom.DomUtils;
+import org.rstudio.core.client.files.FileSystemItem;
 import org.rstudio.core.client.jsonrpc.RpcObjectList;
 import org.rstudio.core.client.widget.BottomScrollPanel;
 import org.rstudio.core.client.widget.FontSizer;
 import org.rstudio.core.client.widget.PreWidget;
 import org.rstudio.studio.client.RStudioGinjector;
 import org.rstudio.studio.client.application.Desktop;
+import org.rstudio.studio.client.application.events.EventBus;
+import org.rstudio.studio.client.common.debugging.model.ErrorFrame;
+import org.rstudio.studio.client.common.debugging.model.UnhandledError;
+import org.rstudio.studio.client.common.debugging.ui.ConsoleError;
+import org.rstudio.studio.client.common.filetypes.FileTypeRegistry;
+import org.rstudio.studio.client.common.filetypes.events.OpenSourceFileEvent;
+import org.rstudio.studio.client.common.filetypes.events.OpenSourceFileEvent.NavigationMethod;
 import org.rstudio.studio.client.workbench.model.ConsoleAction;
 import org.rstudio.studio.client.workbench.views.console.ConsoleResources;
+import org.rstudio.studio.client.workbench.views.console.events.RunCommandWithDebugEvent;
 import org.rstudio.studio.client.workbench.views.console.shell.editor.InputEditorDisplay;
 import org.rstudio.studio.client.workbench.views.source.editors.text.AceEditor;
 import org.rstudio.studio.client.workbench.views.source.editors.text.AceEditor.NewLineMode;
 import org.rstudio.studio.client.workbench.views.source.editors.text.events.CursorChangedEvent;
 import org.rstudio.studio.client.workbench.views.source.editors.text.events.CursorChangedHandler;
+import org.rstudio.studio.client.workbench.views.source.editors.text.events.PasteEvent;
 
 public class ShellWidget extends Composite implements ShellDisplay,
-                                                      RequiresResize
+                                                      RequiresResize,
+                                                      ConsoleError.Observer
 {
-   public ShellWidget(AceEditor editor)
+   public ShellWidget(AceEditor editor, EventBus events)
    {
       styles_ = ConsoleResources.INSTANCE.consoleStyles();
-
+      events_ = events;
+      
       SelectInputClickHandler secondaryInputHandler = new SelectInputClickHandler();
 
       output_ = new PreWidget();
       output_.setStylePrimaryName(styles_.output());
       output_.addClickHandler(secondaryInputHandler);
+      ElementIds.assignElementId(output_.getElement(), 
+                                 ElementIds.CONSOLE_OUTPUT);
+      output_.addPasteHandler(secondaryInputHandler);
 
       pendingInput_ = new PreWidget();
       pendingInput_.setStyleName(styles_.output());
@@ -74,6 +95,8 @@ public class ShellWidget extends Composite implements ShellDisplay,
       input_.setPadding(0);
       input_.autoHeight();
       final Widget inputWidget = input_.asWidget();
+      ElementIds.assignElementId(inputWidget.getElement(),
+                                 ElementIds.CONSOLE_INPUT);
       input_.addClickHandler(secondaryInputHandler) ;
       inputWidget.addStyleName(styles_.input());
       input_.addCursorChangedHandler(new CursorChangedHandler()
@@ -198,6 +221,8 @@ public class ShellWidget extends Composite implements ShellDisplay,
             }
          });
       }
+
+      ElementIds.assignElementId(this.getElement(), ElementIds.SHELL_WIDGET);
    }
 
    protected void doOnLoad()
@@ -218,6 +243,67 @@ public class ShellWidget extends Composite implements ShellDisplay,
    {
       clearPendingInput();
       output(error, getErrorClass(), false);
+
+      // Pick up the last element emitted to the console. If we get extended
+      // information for this error, we'll need to swap out the simple error
+      // element for the extended error element. 
+      Element outputElement = output_.getElement();
+      Node errorNode = outputElement.getChild(
+            outputElement.getChildCount() - 1);
+      if (clearErrors_)
+      {
+         errorNodes_.clear();
+         clearErrors_ = false;
+      }
+      errorNodes_.put(error, errorNode);
+   }
+   
+   public void consoleWriteExtendedError(
+         final String error, UnhandledError traceInfo, 
+         boolean expand, String command)
+   {
+      if (errorNodes_.containsKey(error))
+      {
+         Node errorNode = errorNodes_.get(error);
+         clearPendingInput();
+         ConsoleError errorWidget = new ConsoleError(
+               traceInfo, getErrorClass(), this, command);
+   
+         if (expand)
+            errorWidget.setTracebackVisible(true);
+         
+         // The widget must be added to the root panel to have its event handlers
+         // wired properly, but this isn't an ideal structure; consider showing
+         // console output as cell widgets in a virtualized scrolling CellTable
+         // so we can easily add arbitrary controls. 
+         RootPanel.get().add(errorWidget);
+         output_.getElement().replaceChild(errorWidget.getElement(), 
+                                           errorNode);
+         
+         scrollPanel_.onContentSizeChanged();
+         errorNodes_.remove(error);
+      }
+   }
+   
+   @Override
+   public void showSourceForFrame(ErrorFrame frame)
+   {
+      if (events_ == null)
+         return;
+      FileSystemItem sourceFile = FileSystemItem.createFile(
+            frame.getFileName());
+      events_.fireEvent(new OpenSourceFileEvent(sourceFile,
+                             FilePosition.create(
+                                   frame.getLineNumber(),
+                                   frame.getCharacterNumber()),
+                             FileTypeRegistry.R,
+                             NavigationMethod.HighlightLine));      
+   }
+   
+   @Override
+   public void runCommandWithDebug(String command)
+   {
+      events_.fireEvent(new RunCommandWithDebugEvent(command));
    }
 
    public void consoleWriteOutput(final String output)
@@ -241,6 +327,7 @@ public class ShellWidget extends Composite implements ShellDisplay,
    public void consoleWritePrompt(final String prompt)
    {
       output(prompt, styles_.prompt() + KEYWORD_CLASS_NAME, false);
+      clearErrors_ = true;
    }
 
    public void consolePrompt(String prompt, boolean showInput)
@@ -258,6 +345,7 @@ public class ShellWidget extends Composite implements ShellDisplay,
                                                    Unit.PX);
       
       input_.setPasswordMode(!showInput);
+      clearErrors_ = true;
    }
 
    public void ensureInputVisible()
@@ -452,7 +540,8 @@ public class ShellWidget extends Composite implements ShellDisplay,
     * is clicked.
     */
    private class SelectInputClickHandler implements ClickHandler,
-                                                    KeyDownHandler
+                                                    KeyDownHandler,
+                                                    PasteEvent.Handler
    {
       public void onClick(ClickEvent event)
       {
@@ -505,7 +594,13 @@ public class ShellWidget extends Composite implements ShellDisplay,
          input_.setFocus(true);
          delegateEvent(input_.asWidget(), event);
       }
-
+      
+      public void onPaste(PasteEvent event)
+      {
+         // When pasting, focus the input so it'll receive the pasted text
+         input_.setFocus(true);
+      }
+      
       public void setInput(AceEditor input)
       {
          input_ = input;
@@ -552,7 +647,7 @@ public class ShellWidget extends Composite implements ShellDisplay,
       trailingOutput_ = null;
       trailingOutputConsole_ = null;
    }
-
+   
    public InputEditorDisplay getInputEditorDisplay()
    {
       return input_ ;
@@ -677,6 +772,12 @@ public class ShellWidget extends Composite implements ShellDisplay,
          ((RequiresResize)getWidget()).onResize();
    }
 
+   @Override
+   public void onErrorBoxResize()
+   {
+      scrollPanel_.onContentSizeChanged();
+   }
+   
    private int lines_ = 0;
    private int maxLines_ = -1;
    private boolean cleared_ = false;
@@ -694,6 +795,11 @@ public class ShellWidget extends Composite implements ShellDisplay,
    private ConsoleResources.ConsoleStyles styles_;
    private final TimeBufferedCommand scrollToBottomCommand_;
    private boolean suppressPendingInput_;
+   private final EventBus events_;
+   
+   // A list of errors that have occurred between console prompts. 
+   private Map<String, Node> errorNodes_ = new TreeMap<String, Node>();
+   private boolean clearErrors_ = false;
 
    private static final String KEYWORD_CLASS_NAME = ConsoleResources.KEYWORD_CLASS_NAME;
 }

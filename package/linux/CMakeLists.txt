@@ -37,7 +37,10 @@ if(RSTUDIO_SERVER)
   set(RSTUDIO_DEBIAN_DEPENDS "psmisc, libssl0.9.8, ")
 
   # rpm dependencies
-  set(RSTUDIO_RPM_DEPENDS "psmisc, ")
+  set(RSTUDIO_RPM_DEPENDS "psmisc, libffi, ")
+
+  # don't auto-resolve other dependencies
+  set(CPACK_RPM_PACKAGE_AUTOREQPROV " no")
 
 elseif(RSTUDIO_DESKTOP)
  
@@ -53,6 +56,9 @@ elseif(RSTUDIO_DESKTOP)
   set(RSTUDIO_DEBIAN_DEPENDS "libjpeg62, ")
 
 endif()
+
+# define package suffix
+set(RSTUDIO_PACKAGE_SUFFIX "-")
 
 # include overlay if it exists
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/CMakeOverlay.txt")
@@ -75,12 +81,17 @@ configure_file(${CMAKE_CURRENT_SOURCE_DIR}/rpm-script/${RPM_POSTINST}
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/rpm-script/${RPM_POSTRM}
                ${CMAKE_CURRENT_BINARY_DIR}/rpm-script/postrm.sh)
 
+set(CPACK_RPM_SPEC_INSTALL_POST "/bin/true")
 set(CPACK_RPM_POST_INSTALL_SCRIPT_FILE "${CMAKE_CURRENT_BINARY_DIR}/rpm-script/postinst.sh")
 set(CPACK_RPM_POST_UNINSTALL_SCRIPT_FILE "${CMAKE_CURRENT_BINARY_DIR}/rpm-script/postrm.sh")
 
+set(CPACK_RPM_SPEC_MORE_DEFINE "%define ignore \#")
+set(CPACK_RPM_USER_FILELIST 
+  "%ignore /usr"
+  "%ignore /usr/lib")
 
 # package file name
-set(CPACK_PACKAGE_FILE_NAME "${CPACK_PACKAGE_NAME}-${CPACK_PACKAGE_VERSION}-${PACKAGE_ARCHITECTURE}")
+set(CPACK_PACKAGE_FILE_NAME "${CPACK_PACKAGE_NAME}${RSTUDIO_PACKAGE_SUFFIX}${CPACK_PACKAGE_VERSION}-${PACKAGE_ARCHITECTURE}")
 if(NOT ${CMAKE_BUILD_TYPE} STREQUAL "Release")
    set(CPACK_PACKAGE_FILE_NAME "${CPACK_PACKAGE_FILE_NAME}-${CMAKE_BUILD_TYPE}")
 endif()
@@ -101,7 +112,7 @@ set(CPACK_RPM_PACKAGE_DESCRIPTION "${PACKAGE_LONG_DESCRIPTION}")
 set(CPACK_RPM_PACKAGE_LICENSE "AGPL v.3.0")
 set(CPACK_RPM_PACKAGE_GROUP "Development/Tools")
 set(CPACK_RPM_PACKAGE_ARCHITECTURE "${PACKAGE_ARCHITECTURE}")
-set(CPACK_RPM_PACKAGE_DEPENDS "${RSTUDIO_RPM_DEPENDS}")
+set(CPACK_RPM_PACKAGE_REQUIRES "${RSTUDIO_RPM_DEPENDS}")
 
 # build package
 include(CPack)

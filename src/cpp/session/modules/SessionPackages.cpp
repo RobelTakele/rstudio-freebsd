@@ -32,10 +32,15 @@
 #include <r/RExec.hpp>
 #include <r/RFunctionHook.hpp>
 #include <r/RRoutines.hpp>
+#include <r/RJson.hpp>
+#include <r/RInterface.hpp>
 
 #include <session/SessionModuleContext.hpp>
+#include <session/projects/SessionProjects.hpp>
 
-#include "config.h"
+#include "SessionPackrat.hpp"
+
+#include "session-config.h"
 
 using namespace core;
 
@@ -179,6 +184,44 @@ Error availablePackagesEnd(const core::json::JsonRpcRequest& request,
    return Success();
 }
 
+
+Error getPackageStateJson(json::Object* pJson, bool useCachedPackratActions)
+{
+   Error error = Success();
+   module_context::PackratContext context = module_context::packratContext();
+   json::Value packageListJson;
+   r::sexp::Protect protect;
+   SEXP packageList;
+
+   // determine the appropriate package listing method from the current 
+   // packrat mode status
+   if (context.modeOn)
+   {
+      FilePath projectDir = projects::projectContext().directory();
+      error = r::exec::RFunction(".rs.listPackagesPackrat", 
+                                 string_utils::utf8ToSystem(
+                                    projectDir.absolutePath()))
+              .call(&packageList, &protect);
+   }
+   else
+   {
+      error = r::exec::RFunction(".rs.listInstalledPackages")
+              .call(&packageList, &protect);
+   }
+
+   if (!error)
+   {
+      // return the generated package list and the Packrat context
+      r::json::jsonValueFromObject(packageList, &packageListJson);
+      (*pJson)["package_list"] = packageListJson;
+      (*pJson)["packrat_context"] = packrat::contextAsJson(context);
+      if (context.modeOn)
+         packrat::annotatePendingActions(pJson, useCachedPackratActions);
+   }
+
+   return error;
+}
+
 SEXP rs_enqueLoadedPackageUpdates(SEXP installCmdSEXP)
 {
    std::string installCmd;
@@ -191,9 +234,65 @@ SEXP rs_enqueLoadedPackageUpdates(SEXP installCmdSEXP)
    return R_NilValue;
 }
 
+SEXP rs_canInstallPackages()
+{
+   r::sexp::Protect rProtect;
+   return r::sexp::create(session::options().allowPackageInstallation(),
+                          &rProtect);
+}
+
+void rs_packageLibraryMutated()
+{
+   // broadcast event to server
+   module_context::events().onPackageLibraryMutated();
+
+   // broadcast event to client
+   enquePackageStateChanged();
+}
+
+void detectLibPathsChanges()
+{
+   static std::vector<std::string> s_lastLibPaths;
+   std::vector<std::string> libPaths;
+   Error error = r::exec::RFunction("base:::.libPaths").call(&libPaths);
+   if (!error)
+   {
+      if (s_lastLibPaths.empty())
+      {
+         s_lastLibPaths = libPaths;
+      }
+      else if (libPaths != s_lastLibPaths)
+      {
+         enquePackageStateChanged();
+         s_lastLibPaths = libPaths;
+      }
+   }
+   else
+   {
+      LOG_ERROR(error);
+   }
+}
+
+void onDetectChanges(module_context::ChangeSource source)
+{
+   // check for libPaths changes if we're evaluating a change from the REPL at
+   // the top-level (i.e. not while debugging, as we don't want to mutate any
+   // state that might be under inspection)
+   if (source == module_context::ChangeSourceREPL && 
+       r::exec::atTopLevelContext())
+      detectLibPathsChanges();
+}
+
+
 void initializeRStudioPackages(bool newSession)
 {
-   if (newSession)
+#ifdef RSTUDIO_UNVERSIONED_BUILD
+   bool force = true;
+#else
+   bool force = false;
+#endif
+   
+   if (newSession || (options().programMode() == kSessionProgramModeServer))
    {
       std::string libDir = core::string_utils::utf8ToSystem(
                               options().sessionLibraryPath().absolutePath());
@@ -203,19 +302,61 @@ void initializeRStudioPackages(bool newSession)
       Error error = r::exec::RFunction(".rs.initializeRStudioPackages",
                                                                   libDir,
                                                                   pkgSrcDir,
-                                                                  rsVersion)
+                                                                  rsVersion,
+                                                                  force)
                                                                        .call();
       if (error)
          LOG_ERROR(error);
    }
 }
 
+void onDeferredInit(bool newSession)
+{
+   // initialize rstudio packages
+   initializeRStudioPackages(newSession);
+
+   // monitor libPaths for changes
+   detectLibPathsChanges();
+   module_context::events().onDetectChanges.connect(onDetectChanges);
+}
+
+Error getPackageState(const json::JsonRpcRequest& request,
+                      json::JsonRpcResponse* pResponse)
+{
+   json::Object result;
+   // in Packrat mode a manual refresh will bypass any cached state and do work
+   // to get the current state (even if it's expensive)
+   bool manualCheck = false;
+   Error error = json::readParams(request.params, &manualCheck);
+   if (error)
+      return error;
+   error = getPackageStateJson(&result, !manualCheck);
+   if (error) 
+      LOG_ERROR(error);
+   else
+      pResponse->setResult(result);
+   return error;
+}
+
 } // anonymous namespace
+
+void enquePackageStateChanged()
+{
+   json::Object pkgState;
+   Error error = getPackageStateJson(&pkgState, true);
+   if (error)
+      LOG_ERROR(error);
+   else
+   {
+      ClientEvent event(client_events::kPackageStateChanged, pkgState);
+      module_context::enqueClientEvent(event);
+   }
+}
 
 Error initialize()
 {
    // register deferred init
-   module_context::events().onDeferredInit.connect(initializeRStudioPackages);
+   module_context::events().onDeferredInit.connect(onDeferredInit);
 
    // register routines
    R_CallMethodDef methodDef ;
@@ -223,6 +364,18 @@ Error initialize()
    methodDef.fun = (DL_FUNC) rs_enqueLoadedPackageUpdates ;
    methodDef.numArgs = 1;
    r::routines::addCallMethod(methodDef);
+
+   R_CallMethodDef methodDef2 ;
+   methodDef2.name = "rs_canInstallPackages" ;
+   methodDef2.fun = (DL_FUNC) rs_canInstallPackages ;
+   methodDef2.numArgs = 0;
+   r::routines::addCallMethod(methodDef2);
+
+   R_CallMethodDef methodDef3 ;
+   methodDef3.name = "rs_packageLibraryMutated" ;
+   methodDef3.fun = (DL_FUNC) rs_packageLibraryMutated ;
+   methodDef3.numArgs = 0;
+   r::routines::addCallMethod(methodDef3);
 
    using boost::bind;
    using namespace module_context;
@@ -233,6 +386,7 @@ Error initialize()
             availablePackagesBegin,
             availablePackagesEnd))
       (bind(sourceModuleRFile, "SessionPackages.R"))
+      (bind(registerRpcMethod, "get_package_state", getPackageState))
       (bind(r::exec::executeString, ".rs.packages.initialize()"));
    return initBlock.execute();
 }

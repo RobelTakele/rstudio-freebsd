@@ -1775,12 +1775,18 @@ else {
     };
 }
 
-var isMacDesktop = window.desktop && window.navigator.platform == 'MacIntel';
-var isWinDesktop = window.desktop && window.navigator.platform == 'Win32';
+var useMacCompensation = window.desktop && window.navigator.platform == 'MacIntel';
+var useWinCompensation = window.desktop && window.navigator.platform == 'Win32';
+
+if (window.desktop && window.desktop.getScrollingCompensationType) {
+   var compType = window.desktop.getScrollingCompensationType();
+   useMacCompensation = compType == 'Mac';
+   useWinCompensation = compType == 'Win';
+} 
 
 exports.addMouseWheelListener = function(el, callback) {
     var listener = function(e) {
-        var factor = (isMacDesktop && Math.abs(e.wheelDeltaY) > 120) || (isWinDesktop && Math.abs(e.wheelDeltaY) > 3000) ? 960 : 8;
+        var factor = (useMacCompensation && Math.abs(e.wheelDeltaY) > 120) || (useWinCompensation && Math.abs(e.wheelDeltaY) > 3000) ? 960 : 8;
         if (e.wheelDelta !== undefined) {
             if (e.wheelDeltaX !== undefined) {
                 e.wheelX = -e.wheelDeltaX / factor;
@@ -2105,6 +2111,9 @@ exports.isAIR = ua.indexOf("AdobeAIR") >= 0;
 exports.isIPad = ua.indexOf("iPad") >= 0;
 
 exports.isTouchPad = ua.indexOf("TouchPad") >= 0;
+
+exports.isSafariWebKit = navigator.userAgent.indexOf("Qt/") < 0 &&
+  (navigator.userAgent.indexOf("Safari") > 0 || navigator.userAgent.indexOf("AppleWebKit") > 0);
 exports.OS = {
     LINUX: "LINUX",
     MAC: "MAC",
@@ -7621,11 +7630,26 @@ var TextInput = function(parentNode, host) {
         host.onCompositionEnd();
     };
 
-    var onCopy = function(e) {
+    var performCopy = function(e, forCut) {
         copied = true;
         var copyText = host.getCopyText();
-        if(copyText)
-            text.value = copyText;
+        if (copyText) {
+            // if we have text to copy on Safari, push the text to the
+            // clipboard directly instead of letting the browser copy it 
+            // (Safari copies an extra line from the TEXTAREA on linewise 
+            // selection)
+            if (e.clipboardData && useragent.isSafariWebKit) {
+                e.clipboardData.setData("Text", copyText);
+                e.preventDefault();
+            } else {
+                text.value = copyText;
+            }
+
+            // cut selection if needed
+            if (forCut) {
+                host.onCut();
+            }
+        }
         else
             e.preventDefault();
         reset();
@@ -7634,18 +7658,12 @@ var TextInput = function(parentNode, host) {
         }, 0);
     };
 
+    var onCopy = function(e) {
+        performCopy(e, false);
+    };
+
     var onCut = function(e) {
-        copied = true;
-        var copyText = host.getCopyText();
-        if(copyText) {
-            text.value = copyText;
-            host.onCut();
-        } else
-            e.preventDefault();
-        reset();
-        setTimeout(function () {
-            sendText();
-        }, 0);
+        performCopy(e, true);
     };
 
     event.addCommandKeyListener(text, host.onCommandKey.bind(host));
@@ -7705,6 +7723,16 @@ var TextInput = function(parentNode, host) {
             }
         });
         event.addListener(text, "cut", onCut); // for ie9 context menu
+        event.addListener(text, "copy", function(e) {
+            // IE overwrites the clipboardData set in onbeforecopy when it
+            // processes the copy event, so cancel that here. Note that we
+            // can't use useragent.isIE here since IE11+ deliberately omits
+            // MSIE from its user-agent. 
+            if (window.navigator.userAgent.indexOf("Trident/") >= 0 &&
+                host.getCopyText() === clipboardData.getData("Text")) {
+               e.preventDefault();
+            }
+        });
     }
     else if (useragent.isOpera && !("KeyboardEvent" in window)) {
         event.addListener(parentNode, "keydown", function(e) {
@@ -17225,7 +17253,7 @@ var Text = function(parentEl) {
             style.overflow = "visible";
             style.whiteSpace = "nowrap";
 
-            measureNode.innerHTML = "X";
+            measureNode.innerHTML = lang.stringRepeat("X", 1024);
 
             var container = this.element.parentNode;
             while (container && !dom.hasCssClass(container, "ace_editor"))
@@ -17241,7 +17269,7 @@ var Text = function(parentEl) {
 
         var size = {
             height: rect.height,
-            width: rect.width
+            width: rect.width / 1024
         };
 
         // Size and width can be null if the editor is not visible or

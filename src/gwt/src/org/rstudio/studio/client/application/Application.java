@@ -35,6 +35,7 @@ import com.google.inject.Provider;
 import com.google.inject.Singleton;
 
 import org.rstudio.core.client.Barrier;
+import org.rstudio.core.client.BrowseCap;
 import org.rstudio.core.client.Debug;
 import org.rstudio.core.client.Barrier.Token;
 import org.rstudio.core.client.command.CommandBinder;
@@ -44,7 +45,9 @@ import org.rstudio.core.client.events.BarrierReleasedEvent;
 import org.rstudio.core.client.events.BarrierReleasedHandler;
 import org.rstudio.core.client.widget.Operation;
 import org.rstudio.studio.client.application.events.*;
+import org.rstudio.studio.client.application.model.ProductInfo;
 import org.rstudio.studio.client.application.model.SessionSerializationAction;
+import org.rstudio.studio.client.application.ui.AboutDialog;
 import org.rstudio.studio.client.application.ui.RequestLogVisualization;
 import org.rstudio.studio.client.common.GlobalDisplay;
 import org.rstudio.studio.client.common.SimpleRequestCallback;
@@ -52,7 +55,6 @@ import org.rstudio.studio.client.common.SuperDevMode;
 import org.rstudio.studio.client.common.satellite.SatelliteManager;
 import org.rstudio.studio.client.projects.Projects;
 import org.rstudio.studio.client.server.*;
-import org.rstudio.studio.client.server.Void;
 import org.rstudio.studio.client.workbench.ClientStateUpdater;
 import org.rstudio.studio.client.workbench.Workbench;
 import org.rstudio.studio.client.workbench.commands.Commands;
@@ -216,6 +218,25 @@ public class Application implements ApplicationEventHandlers
       setToolbarPref(false);
    }
    
+   
+   @Handler
+   void onShowAboutDialog()
+   {
+      server_.getProductInfo(new ServerRequestCallback<ProductInfo>()
+      {
+         @Override
+         public void onResponseReceived(ProductInfo info)
+         {
+            AboutDialog about = new AboutDialog(info);
+            about.showModal();
+         }
+         @Override
+         public void onError(ServerError error)
+         {
+         }
+      });
+   }
+   
    @Handler
    public void onGoToFileFunction()
    {
@@ -247,15 +268,6 @@ public class Application implements ApplicationEventHandlers
          globalDisplay_.openWindow(customDocsURL);
       else
          globalDisplay_.openRStudioLink("docs");
-   }
-   
-   @Handler
-   public void onHelpKeyboardShortcuts()
-   {
-      if (Desktop.isDesktop())
-         Desktop.getFrame().showKeyboardShortcutHelp();
-      else
-         openApplicationURL("docs/keyboard.htm");
    }
    
    private void showAgreement()
@@ -333,15 +345,27 @@ public class Application implements ApplicationEventHandlers
    }
    
    @Handler
+   public void onZoomActualSize()
+   {
+      // only supported in cocoa desktop
+      if (BrowseCap.isCocoaDesktop())
+         Desktop.getFrame().macZoomActualSize();
+   }
+   
+   @Handler
    public void onZoomIn()
    {
-      // fake handler (this is intercepted by Qt)
+      // pass on to cocoa desktop (qt desktop intercepts)
+      if (BrowseCap.isCocoaDesktop())
+         Desktop.getFrame().macZoomIn();
    }
    
    @Handler
    public void onZoomOut()
    {
-      // fake handler (this is intercepted by Qt)
+      // pass on to cocoa desktop (qt desktop intercepts)
+      if (BrowseCap.isCocoaDesktop())
+         Desktop.getFrame().macZoomOut();
    }
   
    public void onSessionSerialization(SessionSerializationEvent event)
@@ -480,7 +504,7 @@ public class Application implements ApplicationEventHandlers
    private void verifyAgreement(SessionInfo sessionInfo,
                               final Operation verifiedOperation)
    {
-      // get the agreeeent (if any)
+      // get the agreement (if any)
       final Agreement agreement = sessionInfo.pendingAgreement();
       
       // if there is an agreement then prompt user for agreement (otherwise just
@@ -509,7 +533,7 @@ public class Application implements ApplicationEventHandlers
                                        DesktopFrame.PENDING_QUIT_AND_EXIT);
                      server_.quitSession(false,
                                          null,
-                                         new SimpleRequestCallback<Void>());
+                                         new SimpleRequestCallback<Boolean>());
                   }
                   else
                      navigateToSignIn();
@@ -545,12 +569,6 @@ public class Application implements ApplicationEventHandlers
     
       String url = GWT.getHostPageBaseURL() + relativeUrl;
       Window.Location.replace(url);
-   }
-   
-   private void openApplicationURL(String relativeURL)
-   {
-      String url = GWT.getHostPageBaseURL() + relativeURL;
-      globalDisplay_.openWindow(url);
    }
    
    private void initializeWorkbench()
@@ -590,12 +608,27 @@ public class Application implements ApplicationEventHandlers
          commands_.exportFiles().remove();
       }
       
+      // disable rpubs if requested
+      if (!sessionInfo.getAllowRpubsPublish())
+      {
+         commands_.publishHTML().remove();
+         commands_.publishPlotToRPubs().remove();
+         commands_.presentationPublishToRpubs().remove();
+         commands_.viewerPublishToRPubs().remove();
+      } 
+      
       // hide the agreement menu item if we don't have one
       if (!session_.getSessionInfo().hasAgreement())
          commands_.rstudioAgreement().setVisible(false);
-         
+           
       // show workbench
       view_.showWorkbenchView(wb.getMainView().asWidget());
+      
+      // hide zoom actual size everywhere but cocoa desktop
+      if (!BrowseCap.isCocoaDesktop())
+      {
+         commands_.zoomActualSize().remove();
+      }
       
       // hide zoom in and zoom out in web mode
       if (!Desktop.isDesktop())
@@ -671,7 +704,6 @@ public class Application implements ApplicationEventHandlers
       return Window.Location.getParameter("project") != null; 
    }
    
-  
    private final ApplicationView view_ ;
    private final GlobalDisplay globalDisplay_ ;
    private final EventBus events_;

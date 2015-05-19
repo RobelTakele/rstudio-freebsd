@@ -86,6 +86,7 @@ public interface DocDisplay extends HasValueChangeHandlers<Void>,
    boolean moveSelectionToNextLine(boolean skipBlankLines);
    boolean moveSelectionToBlankLine(); 
    void reindent();
+   void reindent(Range range);
    ChangeTracker getChangeTracker();
 
    String getCode(Position start, Position end);
@@ -138,6 +139,7 @@ public interface DocDisplay extends HasValueChangeHandlers<Void>,
    void setCursorPosition(Position position);
    void moveCursorNearTop();
    void moveCursorNearTop(int rowOffset);
+   void ensureCursorVisible();
 
    
    InputEditorSelection search(String needle,
@@ -161,7 +163,9 @@ public interface DocDisplay extends HasValueChangeHandlers<Void>,
    Scope getCurrentChunk();
    Scope getCurrentChunk(Position position);
    Scope getCurrentFunction();
+   Scope getCurrentSection();
    Scope getFunctionAtPosition(Position position);
+   Scope getSectionAtPosition(Position position);
    boolean hasScopeTree();
    JsArray<Scope> getScopeTree();
    InsertChunkInfo getInsertChunkInfo();
@@ -216,5 +220,6 @@ public interface DocDisplay extends HasValueChangeHandlers<Void>,
    void addOrUpdateBreakpoint(Breakpoint breakpoint);
    void removeBreakpoint(Breakpoint breakpoint);
    void removeAllBreakpoints();
+   void toggleBreakpointAtCursor();
    boolean hasBreakpoints();
 }

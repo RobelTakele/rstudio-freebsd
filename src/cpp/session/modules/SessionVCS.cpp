@@ -25,6 +25,7 @@
 
 #include <session/SessionModuleContext.hpp>
 #include <session/projects/SessionProjects.hpp>
+#include <session/SessionConsoleProcess.hpp>
 
 #include "vcs/SessionVCSUtils.hpp"
 
@@ -32,9 +33,8 @@
 #include "SessionGit.hpp"
 
 #include "SessionAskPass.hpp"
-#include "SessionConsoleProcess.hpp"
 
-#include "config.h"
+#include "session-config.h"
 
 #ifdef RSTUDIO_SERVER
 #include <core/system/Crypto.hpp>

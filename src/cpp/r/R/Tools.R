@@ -17,9 +17,12 @@
 .rs.Env <- attach(NULL,name="tools:rstudio")
 
 # add a function to the tools:rstudio environment
-assign( envir = .rs.Env, ".rs.addFunction", function(name, FN)
+assign( envir = .rs.Env, ".rs.addFunction", function(
+   name, FN, attrs = list())
 { 
    fullName = paste(".rs.", name, sep="")
+   for (attrib in names(attrs))
+     attr(FN, attrib) <- attrs[[attrib]]
    assign(fullName, FN, .rs.Env)
    environment(.rs.Env[[fullName]]) <- .rs.Env
 })
@@ -168,7 +171,7 @@ assign( envir = .rs.Env, ".rs.clearVar", function(name)
    # make a copy of the snapshot into plot and set its metadata in a way
    # that is compatible with recordPlot
    plot = snapshot
-   attr(plot, "version") <- grDevices:::rversion()
+   attr(plot, "version") <- as.character(getRversion())
    class(plot) <- "recordedplot"
    
    save(plot, file=filename)
@@ -225,6 +228,14 @@ assign( envir = .rs.Env, ".rs.clearVar", function(name)
        }
      },
      silent = TRUE);
+   }
+
+   # set the pid attribute to the current pid if necessary
+   if (rVersion >= "3.0.2")
+   {
+      plotPid <- attr(plot, "pid")
+      if (is.null(plotPid) || (plotPid != Sys.getpid()))
+        attr(plot, "pid") <- Sys.getpid()
    }
    
    # we suppressWarnings so that R doesnt print a warning if we restore
@@ -387,10 +398,33 @@ assign( envir = .rs.Env, ".rs.clearVar", function(name)
 {
   local({
       r <- getOption("repos");
+      # attribute indicating the repos was set from rstudio prefs
+      attr(r, "RStudio") <- TRUE
       r["CRAN"] <- reposUrl;
       options(repos=r)
     })
 })
+
+.rs.addFunction( "setCRANReposAtStartup", function(reposUrl)
+{
+   # check whether the user has already set a CRAN repository
+   # in their .Rprofile
+   repos = getOption("repos")
+   cranMirrorConfigured <- !is.null(repos) && repos != "@CRAN@"
+
+   if (!cranMirrorConfigured)
+      .rs.setCRANRepos(reposUrl)
+})
+
+.rs.addFunction( "setCRANReposFromSettings", function(reposUrl)
+{
+   # only set the repository if the repository was set by us
+   # in the first place (it wouldn't be if the user defined a
+   # repository in .Rprofile or called setRepositories directly)
+   if (!is.null(attr(getOption("repos"), "RStudio")))
+      .rs.setCRANRepos(reposUrl)
+})
+
 
 .rs.addFunction( "setMemoryLimit", function(limit)
 {
@@ -445,7 +479,7 @@ assign( envir = .rs.Env, ".rs.clearVar", function(name)
 .rs.addFunction( "addJsonRpcHandler", function(name, FN)
 {
    fullName = paste("rpc.", name, sep="")
-   .rs.addFunction(fullName, FN)
+   .rs.addFunction(fullName, FN, TRUE)
 })
 
 # list all rpc handlers in the tools:rstudio environment
@@ -514,7 +548,42 @@ assign( envir = .rs.Env, ".rs.clearVar", function(name)
   as.list(call)[-1]
 })
 
+.rs.addFunction("isTraced", function(fun) {
+   isS4(fun) && class(fun) == "functionWithTrace"
+})
 
+# when a function is traced, some data about the function (such as its original
+# body and source references) exist only on the untraced copy
+.rs.addFunction("untraced", function(fun) {
+   if (.rs.isTraced(fun)) 
+      fun@original
+   else
+      fun
+})
 
+.rs.addFunction("getSrcref", function(fun) {
+   attr(.rs.untraced(fun), "srcref")
+})
 
+# returns a list containing line data from the given source reference,
+# formatted for output to the client
+.rs.addFunction("lineDataList", function(srcref) {
+   list(
+      line_number = .rs.scalar(srcref[1]),
+      end_line_number = .rs.scalar(srcref[3]),
+      character_number = .rs.scalar(srcref[5]),
+      end_character_number = .rs.scalar(srcref[6]))
+})
 
+.rs.addFunction("haveRequiredRSvnRev", function(requiredSvnRev) {
+   svnRev <- R.version$`svn rev`
+   if (!is.null(svnRev)) {
+      svnRevNumeric <- suppressWarnings(as.numeric(svnRev))
+      if (!is.na(svnRevNumeric) && length(svnRevNumeric) == 1)
+         svnRevNumeric >= requiredSvnRev
+      else
+         FALSE
+   } else {
+      FALSE
+   }
+})

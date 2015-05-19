@@ -42,7 +42,6 @@ import org.rstudio.studio.client.application.model.SuspendOptions;
 import org.rstudio.studio.client.common.GlobalDisplay;
 import org.rstudio.studio.client.common.GlobalProgressDelayer;
 import org.rstudio.studio.client.common.filetypes.FileIconResources;
-import org.rstudio.studio.client.server.Void;
 import org.rstudio.studio.client.server.ServerError;
 import org.rstudio.studio.client.server.ServerRequestCallback;
 import org.rstudio.studio.client.server.VoidServerRequestCallback;
@@ -171,10 +170,11 @@ public class ApplicationQuit implements SaveActionChangedHandler,
       if (saveAction != SaveAction.SAVEASK && unsavedSourceDocs.size() == 0)
       {
          quitContext.onReadyToQuit(saveAction == SaveAction.SAVE);
+         return;
       }
       
       // just an unsaved environment
-      else if (unsavedSourceDocs.size() == 0) 
+      if (unsavedSourceDocs.size() == 0) 
       {        
          // confirm quit and do it
          String prompt = "Save workspace image to " + 
@@ -595,24 +595,36 @@ public class ApplicationQuit implements SaveActionChangedHandler,
                server_.quitSession(
                   saveChanges_,
                   switchToProject_,
-                  new ServerRequestCallback<Void>()
+                  new ServerRequestCallback<Boolean>()
                   {
                      @Override
-                     public void onResponseReceived(Void response)
+                     public void onResponseReceived(Boolean response)
                      {
-                        // clear progress only if we aren't switching projects
-                        // (otherwise we want to leave progress up until
-                        // the app reloads)
-                        if (switchToProject_ == null)
-                           progress.dismiss();
-                        
-                        // fire onQuitAcknowledged
-                        if (onQuitAcknowledged_ != null)
-                           onQuitAcknowledged_.execute();
+                        if (response)
+                        {
+                           // clear progress only if we aren't switching projects
+                           // (otherwise we want to leave progress up until
+                           // the app reloads)
+                           if (switchToProject_ == null)
+                              progress.dismiss();
+                           
+                           // fire onQuitAcknowledged
+                           if (onQuitAcknowledged_ != null)
+                              onQuitAcknowledged_.execute();
+                        }
+                        else
+                        {
+                           onFailedToQuit();
+                        }
                      }
 
                      @Override
                      public void onError(ServerError error)
+                     {
+                        onFailedToQuit();
+                     }
+                     
+                     private void onFailedToQuit()
                      {
                         progress.dismiss();
 

@@ -158,7 +158,6 @@ QString Options::proportionalFont() const
            QString::fromAscii("Helvetica");
 #else
    fontList <<
-           QString::fromAscii("Ubuntu") << // Ubuntu
            QString::fromAscii("Lucida Sans") << QString::fromAscii("DejaVu Sans") <<  // Linux
            QString::fromAscii("Lucida Grande") <<          // Mac
            QString::fromAscii("Segoe UI") << QString::fromAscii("Verdana") <<  // Windows
@@ -186,7 +185,7 @@ QString Options::fixedWidthFont() const
          settings_.value(QString::fromAscii("font.fixedWidth")).toString();
    if (!font.isEmpty())
    {
-      return font;
+      return QString::fromAscii("\"") + font + QString::fromAscii("\"");
    }
 
    if (!detectedFont.isEmpty())
@@ -276,8 +275,7 @@ FilePath Options::executablePath() const
 {
    if (executablePath_.empty())
    {
-      Error error = core::system::executablePath(QApplication::argc(),
-                                                 QApplication::argv(),
+      Error error = core::system::executablePath(QApplication::arguments().at(0).toUtf8(),
                                                  &executablePath_);
       if (error)
          LOG_ERROR(error);
@@ -291,8 +289,7 @@ FilePath Options::supportingFilePath() const
    {
       // default to install path
       core::system::installPath("..",
-                                QApplication::argc(),
-                                QApplication::argv(),
+                                QApplication::arguments().at(0).toUtf8(),
                                 &supportingFilePath_);
 
       // adapt for OSX resource bundles

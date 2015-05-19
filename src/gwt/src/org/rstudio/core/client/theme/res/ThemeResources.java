@@ -118,6 +118,8 @@ public interface ThemeResources extends ClientBundle
 
    @Source("closeTabSelected.png")
    ImageResource closeTab();
+   @Source("busyTab.gif")
+   ImageResource busyTab();
 
    ImageResource toolbarSeparator();
 
@@ -189,4 +191,9 @@ public interface ThemeResources extends ClientBundle
    DataResource pendingBreakpoint();
    @Source("executingLine.png")
    DataResource executingLine();
+   
+   @Source("macCheck.png")
+   DataResource macCheck();
+   
+   ImageResource menuCheck();
 }

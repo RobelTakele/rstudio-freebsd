@@ -18,6 +18,8 @@ import java.util.ArrayList;
 
 import com.google.gwt.core.client.Scheduler;
 import com.google.gwt.core.client.Scheduler.RepeatingCommand;
+import com.google.gwt.dom.client.NativeEvent;
+import com.google.gwt.dom.client.Element;
 import com.google.gwt.event.dom.client.*;
 import com.google.gwt.event.logical.shared.HasValueChangeHandlers;
 import com.google.gwt.event.logical.shared.ValueChangeEvent;
@@ -26,12 +28,13 @@ import com.google.gwt.event.shared.HandlerManager;
 import com.google.gwt.event.shared.HandlerRegistration;
 import com.google.gwt.event.shared.HasHandlers;
 import com.google.gwt.user.client.Command;
-import com.google.gwt.user.client.Element;
 import com.google.gwt.user.client.ui.Composite;
 import com.google.gwt.user.client.ui.HTML;
 import com.google.gwt.user.client.ui.RequiresResize;
+
 import org.rstudio.core.client.BrowseCap;
 import org.rstudio.core.client.CommandWithArg;
+import org.rstudio.core.client.Debug;
 import org.rstudio.core.client.StringUtil;
 import org.rstudio.core.client.widget.FontSizer;
 import org.rstudio.studio.client.common.debugging.model.Breakpoint;
@@ -76,8 +79,27 @@ public class AceEditorWidget extends Composite
       {
          public void execute(AceDocumentChangeEventNative changeEvent)
          {
-            ValueChangeEvent.fire(AceEditorWidget.this, null);            
-            updateBreakpoints(changeEvent);
+            // Case 3815: It appears to be possible for change events to be
+            // fired recursively, which exhausts the stack. This shouldn't 
+            // happen, but since it has in at least one setting, guard against
+            // recursion here.
+            if (inOnChangeHandler_)
+            {
+               Debug.log("Warning: ignoring recursive ACE change event");
+               return;
+            }
+            inOnChangeHandler_ = true;
+            try
+            {
+               ValueChangeEvent.fire(AceEditorWidget.this, null);            
+               updateBreakpoints(changeEvent);
+            }
+            catch (Exception ex)
+            {
+               Debug.log("Exception occurred during ACE change event: " + 
+                         ex.getMessage());
+            }
+            inOnChangeHandler_ = false;
          }
 
       });
@@ -102,44 +124,22 @@ public class AceEditorWidget extends Composite
               return;
            }
            
-           // rows are 0-based, but debug line numbers are 1-based
-           int lineNumber = lineFromRow(arg.getDocumentPosition().getRow());
-           int breakpointIdx = getBreakpointIdxByLine(lineNumber);
-
-           // if there's already a breakpoint on that line, remove it
-           if (breakpointIdx >= 0)
+           NativeEvent evt = arg.getNativeEvent();
+           
+           // right-clicking shouldn't set a breakpoint
+           if (evt.getButton() != NativeEvent.BUTTON_LEFT) 
            {
-              Breakpoint breakpoint = breakpoints_.get(breakpointIdx);
-              removeBreakpointMarker(breakpoint);
-              fireEvent(new BreakpointSetEvent(
-                    lineNumber, 
-                    breakpoint.getBreakpointId(),
-                    false));
-              breakpoints_.remove(breakpointIdx);
+              return;
            }
            
-           // if there's no breakpoint on that line yet, create a new unset
-           // breakpoint there (the breakpoint manager will pick up the new
-           // breakpoint and attempt to set it on the server)
-           else
+           // make sure that the click was in the left half of the element--
+           // clicking on the line number itself (or the gutter near the 
+           // text) shouldn't set a breakpoint.
+           if (evt.getClientX() < 
+               (targetElement.getAbsoluteLeft() + 
+                     (targetElement.getClientWidth() / 2))) 
            {
-              // move the breakpoint down to the first line that has a
-              // non-whitespace, non-comment token
-              Position pos = editor_.getSession().getMode().getCodeModel()
-                 .findNextSignificantToken(arg.getDocumentPosition());
-              if (pos != null)
-              {
-                 lineNumber = lineFromRow(pos.getRow());
-                 if (getBreakpointIdxByLine(lineNumber) >= 0)
-                 {
-                    return;
-                 }
-              }
-
-              fireEvent(new BreakpointSetEvent(
-                    lineNumber,
-                    BreakpointSetEvent.UNSET_BREAKPOINT_ID,
-                    true));
+              toggleBreakpointAtPosition(arg.getDocumentPosition());            
            }
         }
       });
@@ -215,6 +215,12 @@ public class AceEditorWidget extends Composite
       (BreakpointMoveEvent.Handler handler)
    {
       return addHandler(handler, BreakpointMoveEvent.TYPE);
+   }
+   
+   public void toggleBreakpointAtCursor()
+   {
+      Position pos = editor_.getSession().getSelection().getCursor();
+      toggleBreakpointAtPosition(Position.create(pos.getRow(), 0));
    }
    
    public AceEditorNative getEditor() {
@@ -534,6 +540,67 @@ public class AceEditorWidget extends Composite
       }
    }
    
+   private void toggleBreakpointAtPosition(Position pos)
+   {
+      // rows are 0-based, but debug line numbers are 1-based
+      int lineNumber = lineFromRow(pos.getRow());
+      int breakpointIdx = getBreakpointIdxByLine(lineNumber);
+
+      // if there's already a breakpoint on that line, remove it
+      if (breakpointIdx >= 0)
+      {
+         Breakpoint breakpoint = breakpoints_.get(breakpointIdx);
+         removeBreakpointMarker(breakpoint);
+         fireEvent(new BreakpointSetEvent(
+               lineNumber, 
+               breakpoint.getBreakpointId(),
+               false));
+         breakpoints_.remove(breakpointIdx);
+      }
+
+      // if there's no breakpoint on that line yet, create a new unset
+      // breakpoint there (the breakpoint manager will pick up the new
+      // breakpoint and attempt to set it on the server)
+      else
+      {
+         try
+         {
+            // move the breakpoint down to the first line that has a
+            // non-whitespace, non-comment token
+            if (editor_.getSession().getMode().getCodeModel() != null)
+            {
+               Position tokenPos = editor_.getSession().getMode().getCodeModel()
+                  .findNextSignificantToken(pos);
+               if (tokenPos != null)
+               {
+                  lineNumber = lineFromRow(tokenPos.getRow());
+                  if (getBreakpointIdxByLine(lineNumber) >= 0)
+                  {
+                     return;
+                  }
+               }
+               else
+               {
+                  // if there are no tokens anywhere after the line, don't
+                  // set a breakpoint
+                  return;
+               }
+            }
+         }
+         catch (Exception e)
+         {
+            // If we failed at any point to fast-forward to the next line with
+            // a statement, we'll try to set a breakpoint on the line the user
+            // originally clicked. 
+         }
+
+         fireEvent(new BreakpointSetEvent(
+               lineNumber,
+               BreakpointSetEvent.UNSET_BREAKPOINT_ID,
+               true));
+      }
+   }
+   
    private int getBreakpointIdxById(int breakpointId)
    {
 	   for (int idx = 0; idx < breakpoints_.size(); idx++)
@@ -571,5 +638,6 @@ public class AceEditorWidget extends Composite
    private final AceEditorNative editor_;
    private final HandlerManager capturingHandlers_;
    private boolean initToEmptyString_ = true;
+   private boolean inOnChangeHandler_ = false;
    private ArrayList<Breakpoint> breakpoints_ = new ArrayList<Breakpoint>();
 }

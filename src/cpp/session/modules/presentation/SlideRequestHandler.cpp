@@ -145,14 +145,14 @@ std::string alternateMathjax(const std::string& prefix)
 {
    return boost::algorithm::replace_first_copy(
         remoteMathjax(),
-        "https://c328740.ssl.cf1.rackcdn.com/mathjax/2.0-latest",
+        "https://cdn.mathjax.org/mathjax/latest",
         prefix);
 }
 
 
 std::string localMathjax()
 {
-   return alternateMathjax("mathjax");
+   return alternateMathjax("mathjax-23");
 }
 
 std::string copiedMathjax(const FilePath& targetFile)
@@ -182,7 +182,7 @@ std::string copiedMathjax(const FilePath& targetFile)
    }
 
    // return fixed up html
-   return alternateMathjax(presFilesDir + "/mathjax");
+   return alternateMathjax(presFilesDir + "/mathjax-23");
 }
 
 std::string localWebFonts()
@@ -234,11 +234,7 @@ std::string embeddedWebFonts()
 
 bool hasKnitrVersion_1_2()
 {
-   bool hasVersion = false;
-   Error error = r::exec::RFunction(".rs.hasKnitrVersion_1_2").call(&hasVersion);
-   if (error)
-      LOG_ERROR(error);
-   return hasVersion;
+   return module_context::isPackageVersionInstalled("knitr", "1.2");
 }
 
 std::string extractKnitrError(const std::string& stdError)
@@ -315,17 +311,16 @@ bool performKnit(const FilePath& rmdPath,
 
    // args
    std::vector<std::string> args;
-   args.push_back("--silent");
+   args.push_back("--slave");
    args.push_back("--no-save");
    args.push_back("--no-restore");
    args.push_back("-e");
    boost::format fmt("library(knitr); "
-                     "opts_knit$set(stop_on_error = 2L); "
-                     "opts_chunk$set(cache=TRUE, "
-                                    "cache.path='%1%-cache/', "
+                     "opts_chunk$set(cache.path='%1%-cache/', "
                                     "fig.path='%1%-figure/', "
                                     "tidy=FALSE, "
                                     "warning=FALSE, "
+                                    "error=FALSE, "
                                     "message=FALSE, "
                                     "comment=NA); "
                      "render_markdown(); "
@@ -912,6 +907,12 @@ void handlePresentationRootRequest(const std::string& path,
    {
       pResponse->setError(errorResponse.statusCode, errorResponse.message);
    }
+
+   if (!zoom)
+   {
+      ClientEvent event(client_events::kPresentationPaneRequestCompleted);
+      module_context::enqueClientEvent(event);
+   }
 }
 
 
@@ -1080,6 +1081,7 @@ void handlePresentationFileRequest(const http::Request& request,
    FilePath resPath = options().rResourcesPath().complete("presentation");
    FilePath filePath = resPath.complete(dir + "/" + path);
    pResponse->setCacheWithRevalidationHeaders();
+   pResponse->setContentType(filePath.mimeContentType());
    pResponse->setCacheableBody(filePath, request);
 }
 
@@ -1102,7 +1104,7 @@ void handlePresentationPaneRequest(const http::Request& request,
    // return not found if presentation isn't active
    if (!presentation::state::isActive())
    {
-      pResponse->setError(http::status::NotFound, request.uri() + " not found");
+      pResponse->setNotFoundError(request.uri());
       return;
    }
 
@@ -1134,7 +1136,7 @@ void handlePresentationPaneRequest(const http::Request& request,
    }
 
    // special handling for mathjax assets
-   else if (boost::algorithm::starts_with(path, "mathjax/"))
+   else if (boost::algorithm::starts_with(path, "mathjax-23/"))
    {
       FilePath filePath =
             session::options().mathjaxPath().parent().childPath(path);
@@ -1182,7 +1184,7 @@ void handlePresentationHelpRequest(const core::http::Request& request,
       FilePath filePath = module_context::resolveAliasedPath(file);
       if (!filePath.exists())
       {
-         pResponse->setError(http::status::NotFound, request.uri());
+         pResponse->setNotFoundError(request.uri());
          return;
       }
 
@@ -1212,9 +1214,7 @@ void handlePresentationHelpRequest(const core::http::Request& request,
       // make sure the directory exists
       if (!s_presentationHelpDir.exists())
       {
-         pResponse->setError(http::status::NotFound,
-                             "Directory not found: " +
-                             s_presentationHelpDir.absolutePath());
+         pResponse->setNotFoundError(s_presentationHelpDir.absolutePath());
          return;
       }
 

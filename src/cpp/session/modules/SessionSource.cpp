@@ -52,8 +52,6 @@ extern "C" const char *locale2charset(const char *);
 #include <session/SessionModuleContext.hpp>
 #include <session/projects/SessionProjects.hpp>
 
-#include "SessionVCS.hpp"
-
 using namespace core;
 
 namespace session {
@@ -126,6 +124,33 @@ RSourceIndexes& rSourceIndexes()
    return instance;
 }
 
+
+void writeDocToJson(boost::shared_ptr<SourceDocument> pDoc,
+                    core::json::Object* pDocJson)
+{
+   // write the doc
+   pDoc->writeToJson(pDocJson);
+
+   // derive the extended type property
+   (*pDocJson)["extended_type"] = module_context::events()
+                                   .onDetectSourceExtendedType(pDoc);
+}
+
+void detectExtendedType(boost::shared_ptr<SourceDocument> pDoc)
+{
+   // detect the extended type of the document by calling any registered
+   // extended type detection handlers
+   std::string extendedType =
+                  module_context::events().onDetectSourceExtendedType(pDoc);
+
+   // notify the client
+   json::Object jsonData;
+   jsonData["doc_id"] = pDoc->id();
+   jsonData["extended_type"] = extendedType;
+   ClientEvent event(client_events::kSourceExtendedTypeDetected, jsonData);
+   module_context::enqueClientEvent(event);
+}
+
 // wrap source_database::put for situations where there are new contents
 // (so we can index the contents)
 Error sourceDatabasePutWithUpdatedContents(
@@ -170,7 +195,7 @@ Error newDocument(const json::JsonRpcRequest& request,
 
    // return the doc
    json::Object jsonDoc;
-   pDoc->writeToJson(&jsonDoc);
+   writeDocToJson(pDoc, &jsonDoc);
    pResponse->setResult(jsonDoc);
    return Success();
 }
@@ -246,7 +271,7 @@ Error openDocument(const json::JsonRpcRequest& request,
 
    // return the doc
    json::Object jsonDoc;
-   pDoc->writeToJson(&jsonDoc);
+   writeDocToJson(pDoc, &jsonDoc);
    pResponse->setResult(jsonDoc);
    return Success();
 } 
@@ -346,6 +371,9 @@ Error saveDocumentCore(const std::string& contents,
 
       // notify other server modules of the file save
       module_context::events().onSourceEditorFileSaved(fullDocPath);
+
+      // save could change the extended type of the file so check it
+      detectExtendedType(pDoc);
    }
 
    // always update the contents so it holds the original UTF-8 data
@@ -561,7 +589,7 @@ Error reopen(std::string id, std::string fileType, std::string encoding,
       return error;
 
    json::Object resultObj;
-   pDoc->writeToJson(&resultObj);
+   writeDocToJson(pDoc, &resultObj);
    pResponse->setResult(resultObj);
 
    return Success();
@@ -844,6 +872,66 @@ Error isReadOnlyFile(const json::JsonRpcRequest& request,
    return Success();
 }
 
+Error getScriptRunCommand(const json::JsonRpcRequest& request,
+                          json::JsonRpcResponse* pResponse)
+{
+   // params
+   std::string interpreter, path;
+   Error error = json::readParams(request.params, &interpreter, &path);
+   if (error)
+      return error ;
+   FilePath filePath = module_context::resolveAliasedPath(path);
+
+   // use as minimal a path as possible
+   FilePath currentPath = module_context::safeCurrentPath();
+   if (filePath.isWithin(currentPath))
+   {
+      path = filePath.relativePath(currentPath);
+      if (interpreter.empty())
+      {
+#ifndef _WINDOWS
+         if (path.find_first_of('/') == std::string::npos)
+            path = "./" + path;
+      }
+#endif
+   }
+   else
+   {
+      path = filePath.absolutePath();
+   }
+
+   // quote if necessary
+   if (path.find_first_of(' ') != std::string::npos)
+      path = "\\\"" + path + "\\\"";
+
+   // if there's no interpreter then we may need to do a chmod
+#ifndef _WINDOWS
+   if (interpreter.empty())
+   {
+      error = r::exec::RFunction(
+                 "system",
+                  "chmod +x " +
+                  string_utils::utf8ToSystem(path)).call();
+      if (error)
+         return error;
+   }
+#endif
+
+   // now build and return the command
+   std::string command;
+   if (interpreter.empty())
+      command = path;
+   else
+      command = interpreter + " " + path;
+   command = "system(\"" + command + "\")";
+
+   pResponse->setResult(command);
+
+   return Success();
+}
+
+
+
 void enqueFileEditEvent(const std::string& file)
 {
    // ignore if no file passed
@@ -974,7 +1062,7 @@ Error clientInitDocuments(core::json::Array* pJsonDocs)
          LOG_ERROR(error);
 
       json::Object jsonDoc ;
-      pDoc->writeToJson(&jsonDoc);
+      writeDocToJson(pDoc, &jsonDoc);
       pJsonDocs->push_back(jsonDoc);
 
       // update the source index
@@ -1025,6 +1113,7 @@ Error initialize()
       (bind(registerRpcMethod, "get_source_template", getSourceTemplate))
       (bind(registerRpcMethod, "create_rd_shell", createRdShell))
       (bind(registerRpcMethod, "is_read_only_file", isReadOnlyFile))
+      (bind(registerRpcMethod, "get_script_run_command", getScriptRunCommand))
       (bind(sourceModuleRFile, "SessionSource.R"));
    Error error = initBlock.execute();
    if (error)

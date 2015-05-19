@@ -31,6 +31,7 @@
 #include <core/system/System.hpp>
 #include <core/system/Environment.hpp>
 #include <core/r_util/RProjectFile.hpp>
+#include <core/r_util/RSessionContext.hpp>
 
 #include "DesktopApplicationLaunch.hpp"
 #include "DesktopSlotBinders.hpp"
@@ -92,7 +93,7 @@ void initializeWorkingDirectory(int argc,
       // wd to the current path
 
       FilePath exePath;
-      Error error = core::system::executablePath(argc, argv, &exePath);
+      Error error = core::system::executablePath(argv[0], &exePath);
       if (!error)
       {
          if (!exePath.isWithin(currentPath))
@@ -107,7 +108,8 @@ void initializeWorkingDirectory(int argc,
 
       // on linux we take the current working dir if we were launched
       // from within a terminal
-      if (core::system::stdoutIsTerminal())
+      if (core::system::stdoutIsTerminal() &&
+         (currentPath != core::system::userHomePath()))
       {
          workingDir = currentPath.absolutePath();
       }
@@ -118,12 +120,12 @@ void initializeWorkingDirectory(int argc,
 
    // set the working dir if we have one
    if (!workingDir.empty())
-      core::system::setenv("RS_INITIAL_WD", workingDir);
+      core::system::setenv(kRStudioInitialWorkingDir, workingDir);
 }
 
 void setInitialProject(const FilePath& projectFile, QString* pFilename)
 {
-   core::system::setenv("RS_INITIAL_PROJECT", projectFile.absolutePath());
+   core::system::setenv(kRStudioInitialProject, projectFile.absolutePath());
    pFilename->clear();
 }
 
@@ -155,7 +157,7 @@ void initializeStartupEnvironment(QString* pFilename)
       }
       else if (ext == ".rdata" || ext == ".rda")
       {   
-         core::system::setenv("RS_INITIAL_ENV", filePath.absolutePath());
+         core::system::setenv(kRStudioInitialEnvironment, filePath.absolutePath());
          pFilename->clear();
       }
 
@@ -203,6 +205,13 @@ int main(int argc, char* argv[])
       Error error = core::system::ignoreSignal(core::system::SigPipe);
       if (error)
          LOG_ERROR(error);
+
+#ifdef __APPLE__
+      // font substituion for OSX Mavericks
+      // see: https://bugreports.qt-project.org/browse/QTBUG-32789
+      QFont::insertSubstitution(QString::fromUtf8(".Lucida Grande UI"),
+                                QString::fromUtf8("Lucida Grande"));
+#endif
 
       boost::scoped_ptr<QApplication> pApp;
       boost::scoped_ptr<ApplicationLaunch> pAppLaunch;
@@ -271,7 +280,7 @@ int main(int argc, char* argv[])
 
       // get install path
       FilePath installPath;
-      error = core::system::installPath("..", argc, argv, &installPath);
+      error = core::system::installPath("..", argv[0], &installPath);
       if (error)
       {
          LOG_ERROR(error);

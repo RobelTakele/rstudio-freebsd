@@ -49,7 +49,7 @@ public interface ApplicationServerOperations extends PrefsServerOperations
    // quit the current session
    void quitSession(boolean saveWorkspace, 
                     String switchToProjectPath,
-                    ServerRequestCallback<Void> requestCallback);
+                    ServerRequestCallback<Boolean> requestCallback);
    
    // verify current credentials
    void updateCredentials();
@@ -62,4 +62,11 @@ public interface ApplicationServerOperations extends PrefsServerOperations
    void suspendForRestart(SuspendOptions options,
                           ServerRequestCallback<Void> requestCallback);
    void ping(ServerRequestCallback<Void> requestCallback);
+
+   public void checkForUpdates(
+         boolean manual,
+         ServerRequestCallback<UpdateCheckResult> requestCallback);
+
+   public void getProductInfo(
+         ServerRequestCallback<ProductInfo> requestCallback);
 }

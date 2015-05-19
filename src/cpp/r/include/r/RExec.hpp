@@ -28,6 +28,7 @@
 #include <core/system/System.hpp>
 
 #include <r/RSexp.hpp> 
+#include <r/RInterface.hpp>
 
 
 namespace core {
@@ -127,6 +128,22 @@ public:
       addParam(param2);
       addParam(param3);
    }
+
+   template <typename Param1Type, typename Param2Type,
+             typename Param3Type, typename Param4Type>
+   RFunction(const std::string& name,
+             const Param1Type& param1,
+             const Param2Type& param2,
+             const Param3Type& param3,
+             const Param4Type& param4)
+      : functionSEXP_(R_UnboundValue)
+   {
+      commonInit(name);
+      addParam(param1);
+      addParam(param2);
+      addParam(param3);
+      addParam(param4);
+   }
    
    explicit RFunction(SEXP functionSEXP);
    
@@ -157,11 +174,14 @@ public:
       params_.push_back(Param(name, paramSEXP));
    }
                         
-   core::Error call(SEXP evalNS = R_GlobalEnv);
+   core::Error call(SEXP evalNS = R_GlobalEnv, bool safely = true);
+   core::Error callUnsafe();
 
    core::Error call(SEXP* pResultSEXP, sexp::Protect* pProtect);
    core::Error call(SEXP evalNS, SEXP* pResultSEXP, sexp::Protect* pProtect);
- 
+   core::Error call(SEXP evalNS, bool safely, SEXP* pResultSEXP,
+                    sexp::Protect* pProtect);
+
    template <typename T>
    core::Error call(T* pValue)
    {
@@ -210,6 +230,8 @@ private:
 
 void warning(const std::string& warning);
    
+void message(const std::string& message);
+
 // special exception type used to raise R errors. allows for correct
 // exiting from c++ context (with destructors called, etc.) while still
 // propagating the error to a point where it will be re-raised to r
@@ -254,6 +276,28 @@ private:
    bool previousInterruptsSuspended_ ;
    boost::scoped_ptr<core::system::SignalBlocker> pSignalBlocker_;
 };
+
+// returns true if the global context is on the top (i.e. the context stack is
+// empty and we're not debugging)
+bool atTopLevelContext();
+
+// create a scope for disabling debugging while evaluating an expression in a
+// given environment--this is needed to protect internal functions from being
+// stepped into when we execute them while the user is stepping while
+// debugging. R does this itself for expressions entered at the Browse prompt,
+// but we need to do it manually. 
+// Discussion here: https://bugs.r-project.org/bugzilla/show_bug.cgi?id=15770
+class DisableDebugScope : boost::noncopyable
+{
+public:
+   DisableDebugScope(SEXP env);
+   virtual ~DisableDebugScope();
+
+private:
+   int rdebug_;  // stored debug flag
+   SEXP env_;    // debug environment (or NULL if not debugging)
+};
+
 
 class InterruptException {};
    

@@ -14,19 +14,16 @@
  */
 package org.rstudio.studio.client.workbench.views.plots.ui.export;
 
-import java.util.HashMap;
-
-import org.rstudio.core.client.StringUtil;
 import org.rstudio.core.client.files.FileSystemItem;
 import org.rstudio.core.client.widget.OperationWithInput;
 import org.rstudio.studio.client.common.GlobalDisplay;
+import org.rstudio.studio.client.workbench.exportplot.SavePlotAsImageDialog;
+import org.rstudio.studio.client.workbench.exportplot.model.ExportPlotOptions;
+import org.rstudio.studio.client.workbench.exportplot.model.SavePlotAsImageContext;
 import org.rstudio.studio.client.workbench.model.SessionInfo;
-import org.rstudio.studio.client.workbench.views.plots.model.ExportPlotOptions;
-import org.rstudio.studio.client.workbench.views.plots.model.SavePlotAsImageContext;
 import org.rstudio.studio.client.workbench.views.plots.model.PlotsServerOperations;
 import org.rstudio.studio.client.workbench.views.plots.model.SavePlotAsPdfOptions;
 
-import com.google.gwt.user.client.ui.TextBox;
 
 public class ExportPlot
 {
@@ -37,7 +34,9 @@ public class ExportPlot
                                OperationWithInput<ExportPlotOptions> onClose)
    {
       new SavePlotAsImageDialog(globalDisplay,
-                                server, 
+                                new PlotsPaneSaveAsImageOperation(globalDisplay,
+                                                                  server), 
+                                new PlotsPanePreviewer(server),
                                 context, 
                                 options, 
                                 onClose).showModal();
@@ -67,63 +66,4 @@ public class ExportPlot
                            OperationWithInput<ExportPlotOptions> onClose)
    {  
    }
-   
-   
-   // utility for calculating display of directory
-   public static String shortDirectoryName(FileSystemItem directory,
-                                           int maxWidth)
-   {
-      return StringUtil.shortPathName(directory, "gwt-Label", maxWidth);
-   }
-   
-   public static FileSystemItem composeTargetPath(String ext,
-                                                  TextBox fileNameTextBox,
-                                                  FileSystemItem directory)
-   {
-      // get the filename
-      String filename = fileNameTextBox.getText().trim();
-      if (filename.length() == 0)
-         return null;
-      
-      // compute the target path
-      FileSystemItem targetPath = FileSystemItem.createFile(
-                                          directory.completePath(filename));
-      
-      // if the extension isn't already correct then append it
-      if (!targetPath.getExtension().equalsIgnoreCase(ext))
-         targetPath = FileSystemItem.createFile(targetPath.getPath() + ext);
-      
-      // return the path
-      return targetPath;
-   }
-   
-   
-   // track which directory to suggest as the default for various 
-   // working directories
-   
-   
-   public static FileSystemItem getDefaultSaveDirectory(
-                                                FileSystemItem workingDir)
-   {
-      // do we have a cached initial dir?
-      if (initialDirectories_.containsKey(workingDir.getPath()))
-         return initialDirectories_.get(workingDir.getPath());
-      else
-         return workingDir;
-   }
-   
-   public static void setDefaultSaveDirectory(
-                                          FileSystemItem workingDir,
-                                          FileSystemItem defaultSaveDirectory)
-   {
-      initialDirectories_.put(workingDir.getPath(),
-                              defaultSaveDirectory);
-   }
-   
-   // remember what directory was chosen for plot export for various
-   // working directories
-   static private HashMap<String, FileSystemItem> initialDirectories_ = 
-                                       new HashMap<String,FileSystemItem>();
-   
-
 }

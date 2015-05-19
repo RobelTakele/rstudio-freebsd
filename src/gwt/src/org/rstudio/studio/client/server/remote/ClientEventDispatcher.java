@@ -20,6 +20,7 @@ import com.google.gwt.core.client.JavaScriptObject;
 import com.google.gwt.core.client.JsArray;
 import com.google.gwt.core.client.Scheduler;
 import com.google.gwt.core.client.Scheduler.RepeatingCommand;
+
 import org.rstudio.core.client.files.FileSystemItem;
 import org.rstudio.core.client.js.JsObject;
 import org.rstudio.core.client.jsonrpc.RpcObjectList;
@@ -37,7 +38,13 @@ import org.rstudio.studio.client.common.console.ConsoleProcessCreatedEvent;
 import org.rstudio.studio.client.common.console.ServerConsoleOutputEvent;
 import org.rstudio.studio.client.common.console.ServerConsolePromptEvent;
 import org.rstudio.studio.client.common.console.ServerProcessExitEvent;
-import org.rstudio.studio.client.common.debugging.events.ActivePackageLoadedEvent;
+import org.rstudio.studio.client.common.debugging.events.ErrorHandlerChangedEvent;
+import org.rstudio.studio.client.common.debugging.events.PackageLoadedEvent;
+import org.rstudio.studio.client.common.debugging.events.PackageUnloadedEvent;
+import org.rstudio.studio.client.common.debugging.events.UnhandledErrorEvent;
+import org.rstudio.studio.client.common.debugging.model.ErrorHandlerType;
+import org.rstudio.studio.client.common.debugging.model.UnhandledError;
+import org.rstudio.studio.client.common.dependencies.events.InstallShinyEvent;
 import org.rstudio.studio.client.common.rpubs.events.RPubsUploadStatusEvent;
 import org.rstudio.studio.client.common.synctex.events.SynctexEditFileEvent;
 import org.rstudio.studio.client.common.synctex.model.SourceLocation;
@@ -47,7 +54,20 @@ import org.rstudio.studio.client.htmlpreview.events.HTMLPreviewStartedEvent;
 import org.rstudio.studio.client.htmlpreview.model.HTMLPreviewResult;
 import org.rstudio.studio.client.projects.events.OpenProjectErrorEvent;
 import org.rstudio.studio.client.projects.model.OpenProjectError;
+import org.rstudio.studio.client.rmarkdown.events.RmdRenderCompletedEvent;
+import org.rstudio.studio.client.rmarkdown.events.RmdRenderOutputEvent;
+import org.rstudio.studio.client.rmarkdown.events.RmdRenderStartedEvent;
+import org.rstudio.studio.client.rmarkdown.events.RmdShinyDocStartedEvent;
+import org.rstudio.studio.client.rmarkdown.events.RmdTemplateDiscoveredEvent;
+import org.rstudio.studio.client.rmarkdown.events.RmdTemplateDiscoveryCompletedEvent;
+import org.rstudio.studio.client.rmarkdown.model.RmdDiscoveredTemplate;
+import org.rstudio.studio.client.rmarkdown.model.RmdRenderResult;
+import org.rstudio.studio.client.rmarkdown.model.RmdShinyDocInfo;
 import org.rstudio.studio.client.server.Bool;
+import org.rstudio.studio.client.shiny.events.ShinyApplicationStatusEvent;
+import org.rstudio.studio.client.shiny.events.ShinyAppsDeploymentCompletedEvent;
+import org.rstudio.studio.client.shiny.events.ShinyAppsDeploymentOutputEvent;
+import org.rstudio.studio.client.shiny.model.ShinyApplicationParams;
 import org.rstudio.studio.client.workbench.events.*;
 import org.rstudio.studio.client.workbench.model.*;
 import org.rstudio.studio.client.workbench.prefs.events.UiPrefsChangedEvent;
@@ -64,6 +84,8 @@ import org.rstudio.studio.client.workbench.views.data.model.DataView;
 import org.rstudio.studio.client.workbench.views.edit.events.ShowEditorEvent;
 import org.rstudio.studio.client.workbench.views.edit.model.ShowEditorData;
 import org.rstudio.studio.client.workbench.views.environment.events.*;
+import org.rstudio.studio.client.workbench.views.environment.model.DebugSourceResult;
+import org.rstudio.studio.client.workbench.views.environment.model.EnvironmentContextData;
 import org.rstudio.studio.client.workbench.views.environment.model.RObject;
 import org.rstudio.studio.client.workbench.views.files.events.DirectoryNavigateEvent;
 import org.rstudio.studio.client.workbench.views.files.events.FileChangeEvent;
@@ -76,24 +98,28 @@ import org.rstudio.studio.client.workbench.views.output.find.events.FindResultEv
 import org.rstudio.studio.client.workbench.views.output.sourcecpp.events.SourceCppCompletedEvent;
 import org.rstudio.studio.client.workbench.views.output.sourcecpp.events.SourceCppStartedEvent;
 import org.rstudio.studio.client.workbench.views.output.sourcecpp.model.SourceCppState;
-import org.rstudio.studio.client.workbench.views.packages.events.InstalledPackagesChangedEvent;
+import org.rstudio.studio.client.workbench.views.packages.events.PackageStateChangedEvent;
 import org.rstudio.studio.client.workbench.views.packages.events.LoadedPackageUpdatesEvent;
 import org.rstudio.studio.client.workbench.views.packages.events.PackageStatusChangedEvent;
+import org.rstudio.studio.client.workbench.views.packages.model.PackageState;
 import org.rstudio.studio.client.workbench.views.packages.model.PackageStatus;
 import org.rstudio.studio.client.workbench.views.plots.events.LocatorEvent;
 import org.rstudio.studio.client.workbench.views.plots.events.PlotsChangedEvent;
 import org.rstudio.studio.client.workbench.views.plots.events.PlotsZoomSizeChangedEvent;
 import org.rstudio.studio.client.workbench.views.plots.model.PlotsState;
+import org.rstudio.studio.client.workbench.views.presentation.events.PresentationPaneRequestCompletedEvent;
 import org.rstudio.studio.client.workbench.views.presentation.events.ShowPresentationPaneEvent;
 import org.rstudio.studio.client.workbench.views.presentation.model.PresentationState;
 import org.rstudio.studio.client.workbench.views.source.events.FileEditEvent;
 import org.rstudio.studio.client.workbench.views.source.events.ShowContentEvent;
 import org.rstudio.studio.client.workbench.views.source.events.ShowDataEvent;
+import org.rstudio.studio.client.workbench.views.source.events.SourceExtendedTypeDetectedEvent;
 import org.rstudio.studio.client.workbench.views.source.model.ContentItem;
 import org.rstudio.studio.client.workbench.views.source.model.DataItem;
 import org.rstudio.studio.client.workbench.views.vcs.common.events.AskPassEvent;
 import org.rstudio.studio.client.workbench.views.vcs.common.events.VcsRefreshEvent;
 import org.rstudio.studio.client.workbench.views.vcs.common.events.VcsRefreshEvent.Reason;
+import org.rstudio.studio.client.workbench.views.viewer.events.ViewerNavigateEvent;
 
 import java.util.ArrayList;
 
@@ -213,9 +239,10 @@ public class ClientEventDispatcher
             DataView dataView = event.getData();
             eventBus_.fireEvent(new ViewDataEvent(dataView));
          }
-         else if (type.equals(ClientEvent.InstalledPackagesChanged))
+         else if (type.equals(ClientEvent.PackageStateChanged))
          {
-            eventBus_.fireEvent(new InstalledPackagesChangedEvent());
+            PackageState newState = event.getData();
+            eventBus_.fireEvent(new PackageStateChangedEvent(newState));
          }
          else if (type.equals(ClientEvent.PackageStatusChanged))
          {
@@ -332,7 +359,7 @@ public class ClientEventDispatcher
          }
          else if (type.equals(ClientEvent.CompilePdfOutputEvent))
          {
-            String output = event.getData();
+            CompileOutput output = event.getData();
             eventBus_.fireEvent(new CompilePdfOutputEvent(output));
          }
          else if (type.equals(ClientEvent.CompilePdfErrorsEvent))
@@ -437,8 +464,8 @@ public class ClientEventDispatcher
             eventBus_.fireEvent(new UiPrefsChangedEvent(data));
          }
          else if (type.equals(ClientEvent.ContextDepthChanged)) {
-            ContextDepthChangedEvent.ContextData data = event.getData();
-            eventBus_.fireEvent(new ContextDepthChangedEvent(data));
+            EnvironmentContextData data = event.getData();
+            eventBus_.fireEvent(new ContextDepthChangedEvent(data, true));
          }
          else if (type.equals(ClientEvent.HandleUnsavedChanges))
          {
@@ -478,9 +505,108 @@ public class ClientEventDispatcher
             LineData lineData = event.getData();
             eventBus_.fireEvent(new BrowserLineChangedEvent(lineData));
          }
-         else if (type.equals(ClientEvent.ActivePackageLoaded))
+         else if (type.equals(ClientEvent.PackageLoaded))
          {
-            eventBus_.fireEvent(new ActivePackageLoadedEvent());
+            eventBus_.fireEvent(new PackageLoadedEvent(
+                  (String)event.getData()));
+         }
+         else if (type.equals(ClientEvent.PackageUnloaded))
+         {
+            eventBus_.fireEvent(new PackageUnloadedEvent(
+                  (String)event.getData()));
+         }
+         else if (type.equals(ClientEvent.PresentationPaneRequestCompleted))
+         {
+            eventBus_.fireEvent(new PresentationPaneRequestCompletedEvent());
+         }
+         else if (type.equals(ClientEvent.UnhandledError))
+         {
+            UnhandledError err = event.getData();
+            eventBus_.fireEvent(new UnhandledErrorEvent(err));
+         }
+         else if (type.equals(ClientEvent.ErrorHandlerChanged))
+         {
+            ErrorHandlerType handlerType = event.getData();
+            eventBus_.fireEvent(new ErrorHandlerChangedEvent(handlerType));
+         }
+         else if (type.equals(ClientEvent.ViewerNavigate))
+         {
+            ViewerNavigateEvent.Data data = event.getData();
+            eventBus_.fireEvent(new ViewerNavigateEvent(data));
+         }
+         else if (type.equals(ClientEvent.SourceExtendedTypeDetected))
+         {
+            SourceExtendedTypeDetectedEvent.Data data = event.getData();
+            eventBus_.fireEvent(new SourceExtendedTypeDetectedEvent(data));
+         }
+         else if (type.equals(ClientEvent.ShinyViewer))
+         {
+            ShinyApplicationParams data = event.getData();
+            eventBus_.fireEvent(new ShinyApplicationStatusEvent(data));
+         }
+         else if (type.equals(ClientEvent.DebugSourceCompleted))
+         {
+            DebugSourceResult result = (DebugSourceResult)event.getData();
+            eventBus_.fireEvent(new DebugSourceCompletedEvent(result));
+         }
+         else if (type.equals(ClientEvent.RmdRenderStarted))
+         {
+            RmdRenderStartedEvent.Data data = event.getData();
+            eventBus_.fireEvent(new RmdRenderStartedEvent(data));
+         }
+         else if (type.equals(ClientEvent.RmdRenderOutput))
+         {
+            CompileOutput data = event.getData();
+            eventBus_.fireEvent(new RmdRenderOutputEvent(data));
+         }
+         else if (type.equals(ClientEvent.RmdRenderCompleted))
+         {
+            RmdRenderResult result = event.getData();
+            eventBus_.fireEvent(new RmdRenderCompletedEvent(result));
+         }
+         else if (type.equals(ClientEvent.RmdTemplateDiscovered))
+         {
+            RmdDiscoveredTemplate template = event.getData();
+            eventBus_.fireEvent(new RmdTemplateDiscoveredEvent(template));
+         }
+         else if (type.equals(ClientEvent.RmdTemplateDiscoveryCompleted))
+         {
+            eventBus_.fireEvent(new RmdTemplateDiscoveryCompletedEvent());
+         }
+         else if (type.equals(ClientEvent.RmdShinyDocStarted))
+         {
+            RmdShinyDocInfo docInfo = event.getData();
+            eventBus_.fireEvent(new RmdShinyDocStartedEvent(docInfo));
+         }
+         else if (type.equals(ClientEvent.ShinyAppsDeploymentOutput))
+         {
+            CompileOutput output = event.getData();
+            eventBus_.fireEvent(new ShinyAppsDeploymentOutputEvent(output));
+         }
+         else if (type.equals(ClientEvent.ShinyAppsDeploymentCompleted))
+         {
+            String url = event.getData();
+            eventBus_.fireEvent(new ShinyAppsDeploymentCompletedEvent(url));
+         }
+         else if (type.equals(ClientEvent.UserPrompt))
+         {
+            UserPrompt prompt = event.getData();
+            eventBus_.fireEvent(new UserPromptEvent(prompt));
+         }
+         else if (type.equals(ClientEvent.InstallRtools))
+         {
+            InstallRtoolsEvent.Data data = event.getData();
+            eventBus_.fireEvent(new InstallRtoolsEvent(data));
+         }
+         else if (type.equals(ClientEvent.InstallShiny))
+         {
+            String userAction = event.getData();
+            eventBus_.fireEvent(new InstallShinyEvent(userAction));
+         }
+         else if (type.equals(ClientEvent.SuspendAndRestart))
+         {
+            SuspendAndRestartEvent.Data data = event.getData();
+            eventBus_.fireEvent(new SuspendAndRestartEvent(data));
          }
          else
          {

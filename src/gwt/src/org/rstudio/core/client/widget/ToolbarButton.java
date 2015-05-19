@@ -32,6 +32,8 @@ import com.google.gwt.user.client.ui.PopupPanel;
 import com.google.gwt.user.client.ui.PopupPanel.PositionCallback;
 import com.google.gwt.user.client.ui.Widget;
 import org.rstudio.core.client.StringUtil;
+import org.rstudio.core.client.command.ImageResourceProvider;
+import org.rstudio.core.client.command.SimpleImageResourceProvider;
 import org.rstudio.core.client.theme.res.ThemeResources;
 import org.rstudio.core.client.theme.res.ThemeStyles;
 
@@ -69,10 +71,17 @@ public class ToolbarButton extends FocusWidget
    }
    
    public ToolbarButton(String text, 
+                        ImageResourceProvider leftImageProvider,
+                        ClickHandler clickHandler)
+   {
+      this(text, leftImageProvider, null, clickHandler);
+   }
+   
+   public ToolbarButton(String text, 
                         ImageResource leftImage,
                         ClickHandler clickHandler)
    {
-      this(text, leftImage, null, clickHandler);
+      this(text, new SimpleImageResourceProvider(leftImage), clickHandler);
    }
    
    public ToolbarButton(ImageResource image,
@@ -100,9 +109,27 @@ public class ToolbarButton extends FocusWidget
    {
       this(text, leftImage, menu, false);
    }
+   
+   public ToolbarButton(String text,
+                        ImageResourceProvider leftImage,
+                        ToolbarPopupMenu menu)
+   {
+      this(text, leftImage, menu, false);
+   }
     
    public ToolbarButton(String text, 
                         ImageResource leftImage,
+                        ToolbarPopupMenu menu,
+                        boolean rightAlignMenu)
+   {
+      this(text,
+           new SimpleImageResourceProvider(leftImage),
+           menu, 
+           rightAlignMenu);
+   }
+
+   public ToolbarButton(String text, 
+                        ImageResourceProvider leftImage,
                         ToolbarPopupMenu menu,
                         boolean rightAlignMenu)
    {
@@ -113,10 +140,11 @@ public class ToolbarButton extends FocusWidget
       addStyleName(styles_.toolbarButtonMenu());
    }
    
-   private void addMenuHandlers(final ToolbarPopupMenu menu, 
+   
+   private void addMenuHandlers(final ToolbarPopupMenu popupMenu, 
                                 final boolean rightAlign)
    {
-      menu_ = menu;
+      menu_ = popupMenu;
       /*
        * We want clicks on this button to toggle the visibility of the menu,
        * as well as having the menu auto-hide itself as it normally does.
@@ -135,36 +163,48 @@ public class ToolbarButton extends FocusWidget
          {
             event.preventDefault();
             event.stopPropagation();
-            if (menuShowing[0])
-               menu.hide();
-            else
+            addStyleName(styles_.toolbarButtonPushed());
+            // Some menus are rebuilt on every invocation. Ask the menu for 
+            // the most up-to-date version before proceeding.
+            popupMenu.getDynamicPopupMenu(
+               new ToolbarPopupMenu.DynamicPopupMenuCallback()
             {
-               if (rightAlign)
+               @Override
+               public void onPopupMenu(final ToolbarPopupMenu menu)
                {
-                  menu.setPopupPositionAndShow(new PositionCallback() {
-                     @Override
-                     public void setPosition(int offsetWidth, int offsetHeight)
+                  if (menuShowing[0])
+                     menu.hide();
+                  else
+                  {
+                     if (rightAlign)
                      {
-                        menu.setPopupPosition(
-                           (rightImageWidget_ != null ?
-                                 rightImageWidget_.getAbsoluteLeft() :
-                                 leftImageWidget_.getAbsoluteLeft())
-                           + 20 - offsetWidth, 
-                           ToolbarButton.this.getAbsoluteTop() +
-                           ToolbarButton.this.getOffsetHeight());
-                     } 
-                  });
+                        menu.setPopupPositionAndShow(new PositionCallback() 
+                        {
+                           @Override
+                           public void setPosition(int offsetWidth, 
+                                                   int offsetHeight)
+                           {
+                              menu.setPopupPosition(
+                                 (rightImageWidget_ != null ?
+                                       rightImageWidget_.getAbsoluteLeft() :
+                                       leftImageWidget_.getAbsoluteLeft())
+                                 + 20 - offsetWidth, 
+                                 ToolbarButton.this.getAbsoluteTop() +
+                                 ToolbarButton.this.getOffsetHeight());
+                           } 
+                        });
+                     }
+                     else
+                     {
+                        menu.showRelativeTo(ToolbarButton.this);
+                     }
+                     menuShowing[0] = true;
+                  }
                }
-               else
-               {
-                  menu.showRelativeTo(ToolbarButton.this);
-               }
-               menuShowing[0] = true;
-               addStyleName(styles_.toolbarButtonPushed());
-            }
+            });
          }
       });
-      menu.addCloseHandler(new CloseHandler<PopupPanel>()
+      popupMenu.addCloseHandler(new CloseHandler<PopupPanel>()
       {
          public void onClose(CloseEvent<PopupPanel> popupPanelCloseEvent)
          {
@@ -179,9 +219,20 @@ public class ToolbarButton extends FocusWidget
          }
       });
    }
+
+   private ToolbarButton(String text,
+                         ImageResource leftImage,
+                         ImageResource rightImage,
+                         ClickHandler clickHandler)
+   {
+      this(text,
+           new SimpleImageResourceProvider(leftImage),
+           rightImage,
+           clickHandler);
+   }
    
    private ToolbarButton(String text, 
-                         ImageResource leftImage,
+                         ImageResourceProvider leftImage,
                          ImageResource rightImage,
                          ClickHandler clickHandler)
    {
@@ -192,8 +243,12 @@ public class ToolbarButton extends FocusWidget
       this.setStylePrimaryName(styles_.toolbarButton());
 
       setText(text);
-      if (leftImage != null)
-         leftImageWidget_ = new Image(leftImage);
+      if (leftImage != null && 
+          leftImage.getImageResource() != null)
+      {
+         leftImageWidget_ = new Image(leftImage.getImageResource());
+         leftImage.addRenderedImage(leftImageWidget_);
+      }
       else
          leftImageWidget_ = new Image();
       leftImageWidget_.setStylePrimaryName(styles_.toolbarButtonLeftImage());

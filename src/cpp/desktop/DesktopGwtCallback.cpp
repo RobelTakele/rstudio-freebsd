@@ -43,7 +43,6 @@
 #include "DesktopMainWindow.hpp"
 #include "DesktopUtils.hpp"
 #include "DesktopSynctex.hpp"
-#include "DesktopUpdateAvailableDialog.hpp"
 
 #ifdef __APPLE__
 #include <Carbon/Carbon.h>
@@ -52,6 +51,10 @@
 using namespace core;
 
 namespace desktop {
+
+namespace {
+   WindowTracker s_windowTracker;
+}
 
 extern QString scratchPath;
 
@@ -69,6 +72,11 @@ Synctex& GwtCallback::synctex()
       pSynctex_ = Synctex::create(pMainWindow_);
 
    return *pSynctex_;
+}
+
+bool GwtCallback::isCocoa()
+{
+   return false;
 }
 
 void GwtCallback::browseUrl(QString url)
@@ -318,6 +326,40 @@ void GwtCallback::showFile(QString path)
    desktop::openUrl(QUrl::fromLocalFile(path));
 }
 
+void GwtCallback::showWordDoc(QString path)
+{
+#ifdef Q_OS_WIN32
+
+   path = resolveAliasedPath(path);
+   Error error = wordViewer_.showDocument(path);
+   if (error)
+   {
+      LOG_ERROR(error);
+      showFile(path);
+   }
+
+#else
+   // Invoke default viewer on other platforms
+   showFile(path);
+#endif
+}
+
+void GwtCallback::showPDF(QString path, int pdfPage)
+{
+   path = resolveAliasedPath(path);
+   synctex().view(path, pdfPage);
+}
+
+void GwtCallback::prepareShowWordDoc()
+{
+#ifdef Q_OS_WIN32
+   Error error = wordViewer_.closeLastViewedDocument();
+   if (error)
+   {
+      LOG_ERROR(error);
+   }
+#endif
+}
 
 QString GwtCallback::getRVersion()
 {
@@ -364,29 +406,45 @@ void GwtCallback::openMinimalWindow(QString name,
                                     int width,
                                     int height)
 {
-   static WindowTracker windowTracker;
-
    bool named = !name.isEmpty() && name != QString::fromAscii("_blank");
 
    BrowserWindow* browser = NULL;
    if (named)
-      browser = windowTracker.getWindow(name);
+      browser = s_windowTracker.getWindow(name);
 
    if (!browser)
    {
-      browser = new BrowserWindow(false, true);
+      bool isViewerZoomWindow =
+          (name == QString::fromAscii("_rstudio_viewer_zoom"));
+
+      browser = new BrowserWindow(false, !isViewerZoomWindow);
       browser->setAttribute(Qt::WA_DeleteOnClose);
       browser->setAttribute(Qt::WA_QuitOnClose, false);
       browser->connect(browser->webView(), SIGNAL(onCloseWindowShortcut()),
                        browser, SLOT(onCloseRequested()));
       if (named)
-         windowTracker.addWindow(name, browser);
+         s_windowTracker.addWindow(name, browser);
+
+      // set title for viewer zoom
+      if (isViewerZoomWindow)
+         browser->setWindowTitle(QString::fromAscii("Viewer Zoom"));
    }
 
    browser->webView()->load(QUrl(url));
    browser->resize(width, height);
    browser->show();
    browser->activateWindow();
+}
+
+void GwtCallback::activateMinimalWindow(QString name)
+{
+   // We currently only activate minimal windows on Cocoa, so this isn't
+   // implemented on Qt desktop, and we don't expect it to be called.
+   std::string message = "Could not activate window '" + name.toStdString() +
+                          "'.";
+   QMessageBox::warning(pOwner_->asWidget(),
+                        QString::fromUtf8("Window Activation Failed"),
+                        QString::fromUtf8(message.c_str()));
 }
 
 void GwtCallback::prepareForSatelliteWindow(QString name,
@@ -408,6 +466,39 @@ void GwtCallback::copyImageToClipboard(int left, int top, int width, int height)
          QPoint(left + (width/2), top + (height/2)));
    pOwner_->triggerPageAction(QWebPage::CopyImageToClipboard);
 }
+
+void GwtCallback::copyPageRegionToClipboard(int left, int top, int width, int height)
+{
+   QPixmap pixmap = QPixmap::grabWidget(pMainWindow_->webView(),
+                                        left,
+                                        top,
+                                        width,
+                                        height);
+
+   QApplication::clipboard()->setPixmap(pixmap);
+}
+
+void GwtCallback::exportPageRegionToFile(QString targetPath,
+                                         QString format,
+                                         int left,
+                                         int top,
+                                         int width,
+                                         int height)
+{
+   // resolve target path
+   targetPath = resolveAliasedPath(targetPath);
+
+   // get the pixmap
+   QPixmap pixmap = QPixmap::grabWidget(pMainWindow_->webView(),
+                                        left,
+                                        top,
+                                        width,
+                                        height);
+
+   // save the file
+   pixmap.save(targetPath, format.toUtf8().constData(), 100);
+}
+
 
 bool GwtCallback::supportsClipboardMetafile()
 {
@@ -445,13 +536,6 @@ int GwtCallback::showMessageBox(int type,
                                 int defaultButton,
                                 int cancelButton)
 {
-   // cancel update checker if it's visible
-   DesktopUpdateAvailableDialog* pUpdateDialog =
-                  qobject_cast<DesktopUpdateAvailableDialog*>(
-                        QApplication::activeModalWidget());
-   if (pUpdateDialog != NULL)
-      pUpdateDialog->close();
-
    // cancel other message box if it's visible
    QMessageBox* pMsgBox = qobject_cast<QMessageBox*>(
                         QApplication::activeModalWidget());
@@ -490,7 +574,7 @@ int GwtCallback::showMessageBox(int type,
    return cancelButton;
 }
 
-QVariant GwtCallback::promptForText(QString title,
+QString GwtCallback::promptForText(QString title,
                                    QString caption,
                                    QString defaultValue,
                                    bool usePasswordMask,
@@ -541,18 +625,14 @@ QVariant GwtCallback::promptForText(QString title,
    {
       QString value = dialog.textValue();
       bool extraOption = dialog.extraOption();
-      QMap<QString, QVariant> values;
-      values.insert(QString::fromAscii("value"), value);
-      values.insert(QString::fromAscii("extraOption"), extraOption);
+      QString values;
+      values += value;
+      values += QString::fromAscii("\n");
+      values += extraOption ? QString::fromAscii("1") : QString::fromAscii("0");
       return values;
    }
    else
-      return QVariant();
-}
-
-void GwtCallback::checkForUpdates()
-{
-   pMainWindow_->checkForUpdates();
+      return QString();
 }
 
 bool GwtCallback::supportsFullscreenMode()
@@ -647,7 +727,9 @@ OSStatus addToPasteboard(PasteboardRef pasteboard,
    if (!dataRef)
       return memFullErr;
 
-   return ::PasteboardPutItemFlavor(pasteboard, (PasteboardItemID)slot, flavor, dataRef, 0);
+   return ::PasteboardPutItemFlavor(pasteboard,
+                                    reinterpret_cast<PasteboardItemID>(slot),
+                                    flavor, dataRef, 0);
 }
 
 } // anonymous namespace
@@ -836,19 +918,16 @@ bool isProportionalFont(QString fontFamily)
    return !isFixedWidthFont(font);
 }
 
-QVariant GwtCallback::getFontList(bool fixedWidthOnly)
+QString GwtCallback::getFixedWidthFontList()
 {
    QFontDatabase db;
    QStringList families = db.families();
 
-   if (fixedWidthOnly)
-   {
-      QStringList::iterator it = std::remove_if(
+   QStringList::iterator it = std::remove_if(
             families.begin(), families.end(), isProportionalFont);
-      families.erase(it, families.end());
-   }
+   families.erase(it, families.end());
 
-   return QVariant(families);
+   return families.join(QString::fromAscii("\n"));
 }
 
 QString GwtCallback::getFixedWidthFont()
@@ -861,7 +940,7 @@ void GwtCallback::setFixedWidthFont(QString font)
    options().setFixedWidthFont(font);
 }
 
-QVariant GwtCallback::getZoomLevels()
+QString GwtCallback::getZoomLevels()
 {
    QStringList zoomLevels;
    BOOST_FOREACH(double zoomLevel, pMainWindow_->zoomLevels())
@@ -869,7 +948,7 @@ QVariant GwtCallback::getZoomLevels()
       zoomLevels.append(QString::fromStdString(
                            safe_convert::numberToString(zoomLevel)));
    }
-   return QVariant(zoomLevels);
+   return zoomLevels.join(QString::fromAscii("\n"));
 }
 
 double GwtCallback::getZoomLevel()
@@ -882,13 +961,16 @@ void GwtCallback::setZoomLevel(double zoomLevel)
    options().setZoomLevel(zoomLevel);
 }
 
-bool GwtCallback::forceFastScrollFactor()
+void GwtCallback::macZoomActualSize()
 {
-#ifdef Q_WS_MACX
-   return true;
-#else
-   return false;
-#endif
+}
+
+void GwtCallback::macZoomIn()
+{
+}
+
+void GwtCallback::macZoomOut()
+{
 }
 
 
@@ -926,22 +1008,84 @@ void GwtCallback::activateAndFocusOwner()
 
 void GwtCallback::reloadZoomWindow()
 {
-   QWidgetList topLevels = QApplication::topLevelWidgets();
-   for (int i = 0; i < topLevels.size(); i++)
-   {
-      QWidget* pWindow = topLevels.at(i);
-      if (!pWindow->isVisible())
-         continue;
-
-      if (pWindow->windowTitle() == QString::fromAscii("Plot Zoom"))
-      {
-         // do the reload
-         BrowserWindow* pBrowserWindow = (BrowserWindow*)pWindow;
-         pBrowserWindow->webView()->reload();
-
-         break;
-      }
-   }
+   BrowserWindow* pBrowser = s_windowTracker.getWindow(
+                     QString::fromAscii("_rstudio_zoom"));
+   if (pBrowser)
+      pBrowser->webView()->reload();
 }
+
+void GwtCallback::setViewerUrl(QString url)
+{
+   pOwner_->webPage()->setViewerUrl(url);
+}
+
+void GwtCallback::reloadViewerZoomWindow(QString url)
+{
+   BrowserWindow* pBrowser = s_windowTracker.getWindow(
+                     QString::fromAscii("_rstudio_viewer_zoom"));
+   if (pBrowser)
+      pBrowser->webView()->setUrl(url);
+}
+
+
+
+
+bool GwtCallback::isOSXMavericks()
+{
+   return desktop::isOSXMavericks();
+}
+
+QString GwtCallback::getScrollingCompensationType()
+{
+#if defined(Q_WS_MACX)
+   return QString::fromAscii("Mac");
+#elif defined(Q_WS_WIN)
+   return QString::fromAscii("Win");
+#else
+   return QString::fromAscii("None");
+#endif
+}
+
+void GwtCallback::setBusy(bool)
+{
+#if defined(Q_WS_MACX)
+   // call AppNap apis for Mac (we use Cocoa on the Mac though so
+   // this codepath will never be hit)
+#endif
+}
+
+void GwtCallback::setWindowTitle(QString title)
+{
+   pMainWindow_->setWindowTitle(title + QString::fromUtf8(" - RStudio"));
+}
+
+#ifdef Q_WS_WIN
+void GwtCallback::installRtools(QString version, QString installerPath)
+{
+   // silent install
+   QStringList args;
+   args.push_back(QString::fromAscii("/SP-"));
+   args.push_back(QString::fromAscii("/SILENT"));
+
+   // custom install directory
+   std::string systemDrive = core::system::getenv("SYSTEMDRIVE");
+   if (!systemDrive.empty() && FilePath(systemDrive).exists())
+   {
+      std::string dir = systemDrive + "\\RBuildTools\\" + version.toStdString();
+      std::string dirArg = "/DIR=" + dir;
+      args.push_back(QString::fromStdString(dirArg));
+   }
+
+   // launch installer
+   QProcess::startDetached(installerPath, args);
+}
+#else
+void GwtCallback::installRtools(QString version, QString installerPath)
+{
+}
+#endif
+
+
+
 
 } // namespace desktop

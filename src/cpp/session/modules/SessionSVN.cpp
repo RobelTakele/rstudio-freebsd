@@ -39,12 +39,13 @@
 #include <session/SessionModuleContext.hpp>
 #include <session/SessionOptions.hpp>
 #include <session/SessionUserSettings.hpp>
+#include <session/SessionConsoleProcess.hpp>
 
 #include <r/RExec.hpp>
 
 #include "SessionVCS.hpp"
 #include "vcs/SessionVCSUtils.hpp"
-#include "SessionConsoleProcess.hpp"
+
 #include "SessionAskPass.hpp"
 #include "SessionWorkbench.hpp"
 #include "SessionGit.hpp"
@@ -52,7 +53,7 @@
 using namespace core;
 using namespace core::shell_utils;
 using namespace session::modules::vcs_utils;
-using namespace session::modules::console_process;
+using namespace session::console_process;
 
 namespace session {
 namespace modules {
@@ -253,12 +254,13 @@ core::Error createConsoleProc(const ShellArgs& args,
       options.stdOutFile = outputFile;
 
    // create the process
+   using namespace session::console_process;
    *ppCP = ConsoleProcess::create(command,
                                   options,
                                   caption,
                                   dialog,
-                                  console_process::InteractionPossible,
-                                  console_process::kDefaultMaxOutputLines);
+                                  InteractionPossible,
+                                  kDefaultMaxOutputLines);
 
    if (enqueueRefreshOnExit)
       (*ppCP)->onExit().connect(boost::bind(&enqueueRefreshEvent));
@@ -375,17 +377,7 @@ bool detectSvnExeOnPath(FilePath* pPath)
 
 FilePath whichSvnExe()
 {
-   std::string whichSvn;
-   Error error = r::exec::RFunction("Sys.which", "svn").call(&whichSvn);
-   if (error)
-   {
-      LOG_ERROR(error);
-      return FilePath();
-   }
-   else
-   {
-      return FilePath(whichSvn);
-   }
+   return module_context::findProgram("svn");
 }
 
 void initSvnBin()
@@ -428,6 +420,14 @@ Error parseXml(const std::string strData,
 
 bool isSvnInstalled()
 {
+   // special check on osx mavericks to make sure we don't run the fake svn
+   if (module_context::isOSXMavericks() &&
+       !module_context::hasOSXMavericksDeveloperTools() &&
+       whichSvnExe().empty())
+   {
+      return false;
+   }
+
    int exitCode;
    Error error = runSvn(ShellArgs() << "help", NULL, NULL, &exitCode);
 
@@ -530,7 +530,20 @@ FilePath detectedSvnExePath()
 #else
    FilePath svnExeFilePath = whichSvnExe();
    if (!svnExeFilePath.empty())
-      return FilePath(svnExeFilePath);
+   {
+      // extra check on mavericks to make sure it's not the fake svn
+      if (module_context::isOSXMavericks())
+      {
+         if (module_context::hasOSXMavericksDeveloperTools())
+            return FilePath(svnExeFilePath);
+         else
+            return FilePath();
+      }
+      else
+      {
+         return FilePath(svnExeFilePath);
+      }
+   }
    else
       return FilePath();
 #endif
@@ -1036,7 +1049,7 @@ Error svnDiffFile(const json::JsonRpcRequest& request,
       error = systemError(boost::system::errc::file_too_large,
                           ERROR_LOCATION);
       pResponse->setError(error,
-                          json::Value(static_cast<uint64_t>(stdOut.size())));
+                          json::Value(static_cast<boost::uint64_t>(stdOut.size())));
    }
    else
    {
@@ -1461,7 +1474,7 @@ void svnShowEnd(bool noSizeWarning,
    {
       response.setError(
             systemError(boost::system::errc::file_too_large, ERROR_LOCATION),
-            json::Value(static_cast<uint64_t>(result.stdOut.size())));
+            json::Value(static_cast<boost::uint64_t>(result.stdOut.size())));
    }
    else
    {

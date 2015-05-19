@@ -21,29 +21,26 @@
 #define kRStudioUserIdentity              "RSTUDIO_USER_IDENTITY"
 #define kRStudioLimitRpcClientUid         "RSTUDIO_LIMIT_RPC_CLIENT_UID"
 #define kRSessionPortNumber               "RSTUDIO_SESSION_PORT"
+#define kRSessionStandalonePortNumber     "RSTUDIO_STANDALONE_PORT"
 
 #define kProgramModeSessionOption         "program-mode"
 #define kSessionProgramModeDesktop        "desktop"
 #define kSessionProgramModeServer         "server"
 
+#define kShowUserIdentitySessionOption    "show-user-identity"
 #define kUserIdentitySessionOption        "user-identity"
 #define kUserIdentitySessionOptionShort   "u"
 
 #define kVerifyInstallationSessionOption  "verify-installation"
 
 #define kTimeoutSessionOption             "session-timeout-minutes"
+#define kDisconnectedTimeoutSessionOption "session-disconnected-timeout-minutes"
 
 // NOTE: literal versions of these are depended upon by the desktop/rsinverse
 // project so they should be updated there as well if they are changed
 #define kLocalUriLocationPrefix           "/rsession-local/"
 #define kPostbackUriScope                 "postback/"
 #define kPostbackExitCodeHeader           "X-Postback-ExitCode"
-
-// These constants are here so that the HttpConnectionListener::checkForAbort
-// method can write the next session project (so that aborts don't require
-// a full IDE reload)
-#define kProjectsSettings                  "projects_settings"
-#define kNextSessionProject                "next-session-project"
 
 #endif // SESSION_CONSTANTS_HPP
 

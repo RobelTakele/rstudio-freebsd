@@ -24,13 +24,18 @@ file(GLOB_RECURSE SERVER_HEADER_FILES "*.h*")
 set(SERVER_SOURCE_FILES
    ServerAppArmor.cpp
    ServerBrowser.cpp
+   ServerErrorCategory.cpp
+   ServerEval.cpp
    ServerInit.cpp
    ServerMain.cpp
    ServerMainOverlay.cpp
+   ServerMeta.cpp
    ServerOffline.cpp
    ServerOptions.cpp
    ServerOptionsOverlay.cpp
    ServerPAMAuth.cpp
+   ServerPAMAuthOverlay.cpp
+   ServerProcessSupervisor.cpp
    ServerREnvironment.cpp
    ServerSessionProxy.cpp
    ServerSessionManager.cpp
@@ -183,6 +188,11 @@ if (UNIX AND NOT APPLE)
    configure_file(${CMAKE_CURRENT_SOURCE_DIR}/${RSERVER_UPSTART_PROFILE}.in
                   ${CMAKE_CURRENT_BINARY_DIR}/${RSERVER_UPSTART_PROFILE})
    install(FILES ${CMAKE_CURRENT_BINARY_DIR}/${RSERVER_UPSTART_PROFILE}
+           DESTINATION ${RSERVER_UPSTART_DIR})
+   set(RSERVER_UPSTART_PROFILE_REDHAT "${RSERVER_UPSTART_DIR}/rstudio-server.redhat.conf")
+   configure_file(${CMAKE_CURRENT_SOURCE_DIR}/${RSERVER_UPSTART_PROFILE_REDHAT}.in
+                  ${CMAKE_CURRENT_BINARY_DIR}/${RSERVER_UPSTART_PROFILE_REDHAT})
+   install(FILES ${CMAKE_CURRENT_BINARY_DIR}/${RSERVER_UPSTART_PROFILE_REDHAT}
            DESTINATION ${RSERVER_UPSTART_DIR})
 
 endif()

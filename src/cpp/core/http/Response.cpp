@@ -234,8 +234,13 @@ void Response::setError(int statusCode, const std::string& message)
 {
    setStatusCode(statusCode);
    removeCachingHeaders();
-   setContentType("text/plain");
-   setBodyUnencoded(message);
+   setContentType("text/html");
+   setBodyUnencoded(string_utils::htmlEscape(message));
+}
+
+void Response::setNotFoundError(const std::string& uri)
+{
+   setError(http::status::NotFound, uri + " not found");
 }
    
 void Response::setError(const Error& error)
@@ -317,6 +322,7 @@ void Response::appendFirstLineBuffers(
 
 namespace status {
 namespace Message {
+   const char * const SwitchingProtocols = "SwitchingProtocols";
 	const char * const Ok = "OK" ;
    const char * const Created = "Created";
    const char * const PartialContent = "Partial Content";
@@ -348,6 +354,10 @@ void Response::ensureStatusMessage() const
 
 		switch(statusCode_)
 		{
+         case SwitchingProtocols:
+            statusMessage_ = status::Message::SwitchingProtocols;
+            break;
+
 			case Ok:
 				statusMessage_ = status::Message::Ok ;
 				break;

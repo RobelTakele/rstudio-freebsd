@@ -371,8 +371,13 @@ private:
                                  &code);
          if (error)
          {
-            error.addProperty("src-file", filePath.absolutePath());
-            LOG_ERROR(error);
+            // log if not path not found error (this can happen if the
+            // file was removed after entering the indexing queue)
+            if (!core::isPathNotFoundError(error))
+            {
+               error.addProperty("src-file", filePath.absolutePath());
+               LOG_ERROR(error);
+            }
             return;
          }
 
@@ -423,9 +428,10 @@ private:
    {
       FilePath filePath(fileInfo.absolutePath());
 
-      // if we are in a package project then screen our src- files
+      // screen directories
       if (projects::projectContext().hasProject())
       {
+         // if we are in a package project then screen our src- files
          if (projects::projectContext().config().buildType ==
                                                  r_util::kBuildTypePackage)
          {
@@ -434,6 +440,12 @@ private:
              if (boost::algorithm::starts_with(pkgRelative, "src-"))
                 return false;
          }
+
+         // screen the packrat directory
+         FilePath projPath = projects::projectContext().directory();
+         std::string pkgRelative = filePath.relativePath(projPath);
+         if (boost::algorithm::starts_with(pkgRelative, "packrat/"))
+            return false;
       }
 
       // filter files by name and extension
@@ -450,6 +462,9 @@ private:
                filename == "README" ||
                filename == "NEWS" ||
                filename == "Makefile" ||
+               filename == "configure" ||
+               filename == "cleanup" ||
+               filename == "Makevars" ||
                filePath.hasTextMimeType());
    }
 

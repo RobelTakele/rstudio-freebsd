@@ -36,6 +36,11 @@ public interface FileIconResources extends ClientBundle
    ImageResource iconRprofile();
    ImageResource iconTex();
    ImageResource iconText();
+   ImageResource iconPython();
+   ImageResource iconSql();
+   ImageResource iconSh();
+   ImageResource iconYaml();
+   ImageResource iconXml();
    ImageResource iconMarkdown();
    ImageResource iconH();
    ImageResource iconC();
@@ -50,4 +55,6 @@ public interface FileIconResources extends ClientBundle
    ImageResource iconRmarkdown();
    ImageResource iconRpresentation();
    ImageResource iconSourceViewer();
+   ImageResource iconProfiler();
+   ImageResource iconWord();
 }

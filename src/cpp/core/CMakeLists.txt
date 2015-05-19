@@ -26,6 +26,7 @@ set (CORE_SOURCE_FILES
    Assert.cpp
    Base64.cpp
    BoostErrors.cpp
+   BrowserUtils.cpp
    ConfigUtils.cpp
    DateTime.cpp
    Error.cpp 
@@ -44,6 +45,7 @@ set (CORE_SOURCE_FILES
    PerformanceTimer.cpp
    ProgramOptions.cpp
    RegexUtils.cpp
+   RecursionGuard.cpp
    SafeConvert.cpp
    Settings.cpp
    StderrLogWriter.cpp
@@ -66,6 +68,7 @@ set (CORE_SOURCE_FILES
    http/Request.cpp
    http/RequestParser.cpp
    http/Response.cpp
+   http/SocketProxy.cpp
    http/URL.cpp
    http/UriHandler.cpp
    http/Util.cpp
@@ -81,6 +84,7 @@ set (CORE_SOURCE_FILES
    markdown/sundown/stack.c
    r_util/RPackageInfo.cpp
    r_util/RProjectFile.cpp
+   r_util/RSessionContext.cpp
    r_util/RTokenizer.cpp
    r_util/RSourceIndex.cpp
    r_util/RTokenizerTests.cpp
@@ -157,13 +161,18 @@ if (UNIX)
    )
 
    if(RSTUDIO_SERVER)
-      # require openssl (for crypto)
       find_package(OpenSSL REQUIRED QUIET)
-      set (CORE_SYSTEM_LIBRARIES
+      find_package(PAM REQUIRED)
+      set(CORE_SYSTEM_LIBRARIES
          ${CORE_SYSTEM_LIBRARIES}
          ${OPENSSL_LIBRARIES}
+         ${PAM_LIBRARIES}
       )
-      set(CORE_INCLUDE_DIRS ${OPENSSL_INCLUDE_DIRS})
+      set(CORE_INCLUDE_DIRS
+         ${CORE_INCLUDE_DIRS}
+         ${OPENSSL_INCLUDE_DIRS}
+         ${PAM_INCLUDE_DIRS}
+      )
    endif()
 
    # source files
@@ -172,14 +181,15 @@ if (UNIX)
       PosixStringUtils.cpp
       r_util/REnvironmentPosix.cpp
       r_util/RSessionLaunchProfile.cpp
+      r_util/RVersionsPosix.cpp
       SyslogLogWriter.cpp
-      system/Pam.cpp
       system/PosixChildProcessTracker.cpp
       system/PosixEnvironment.cpp
       system/PosixFileScanner.cpp
       system/PosixLibraryLoader.cpp
       system/PosixParentProcessMonitor.cpp
       system/PosixOutputCapture.cpp
+      system/PosixSched.cpp
       system/PosixShellUtils.cpp
       system/PosixSystem.cpp
       system/PosixUser.cpp
@@ -189,6 +199,7 @@ if (UNIX)
    if(RSTUDIO_SERVER)
       set(CORE_SOURCE_FILES ${CORE_SOURCE_FILES}
          system/PosixCrypto.cpp
+         system/Pam.cpp
       )
    endif()
 

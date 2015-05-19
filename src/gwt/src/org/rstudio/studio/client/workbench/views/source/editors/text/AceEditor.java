@@ -36,6 +36,7 @@ import com.google.gwt.user.client.ui.Widget;
 import com.google.inject.Inject;
 
 import org.rstudio.core.client.CommandWithArg;
+import org.rstudio.core.client.ElementIds;
 import org.rstudio.core.client.ExternalJavaScriptLoader;
 import org.rstudio.core.client.ExternalJavaScriptLoader.Callback;
 import org.rstudio.core.client.Rectangle;
@@ -209,6 +210,9 @@ public class AceEditor implements DocDisplay,
    public AceEditor()
    {
       widget_ = new AceEditorWidget();
+      ElementIds.assignElementId(widget_.getElement(), 
+                                 ElementIds.SOURCE_TEXT_EDITOR);
+
       completionManager_ = new NullCompletionManager();
       RStudioGinjector.INSTANCE.injectMembers(this);
 
@@ -1047,6 +1051,15 @@ public class AceEditor implements DocDisplay,
    public boolean moveSelectionToBlankLine()
    {
       int curRow = getSession().getSelection().getCursor().getRow();
+      
+      // if the current row is the last row then insert a new row
+      if (curRow == (getSession().getLength() - 1))
+      {
+         int rowLen = getSession().getLine(curRow).length();
+         getSession().getSelection().moveCursorTo(curRow, rowLen, false);
+         insertCode("\n");
+      }
+      
       while (curRow < getSession().getLength())
       {
          String line = getSession().getLine(curRow);
@@ -1069,6 +1082,12 @@ public class AceEditor implements DocDisplay,
       getSession().reindent(getSession().getSelection().getRange());
       if (emptySelection)
          moveSelectionToNextLine(false);
+   }
+   
+   @Override
+   public void reindent(Range range)
+   {
+      getSession().reindent(range);
    }
    
    @Override
@@ -1341,6 +1360,18 @@ public class AceEditor implements DocDisplay,
             position);
    }
 
+   @Override
+   public Scope getCurrentSection()
+   {
+      return getSectionAtPosition(getCursorPosition());
+   }
+
+   @Override
+   public Scope getSectionAtPosition(Position position)
+   {
+      return getSession().getMode().getCodeModel().getCurrentSection(position);
+   }
+
    public Position getCursorPosition()
    {
       return getSession().getSelection().getCursor();
@@ -1363,6 +1394,14 @@ public class AceEditor implements DocDisplay,
    public void moveCursorNearTop()
    {
       moveCursorNearTop(7);
+   }
+   
+   @Override
+   public void ensureCursorVisible()
+   {
+      int screenRow = getSession().documentToScreenRow(getCursorPosition());     
+      if (!widget_.getEditor().isRowFullyVisible(screenRow))
+         moveCursorNearTop();
    }
    
    public void scrollToBottom()
@@ -1483,6 +1522,9 @@ public class AceEditor implements DocDisplay,
       int debugRow = (int) Math.floor(startPosition.getRow() + (
             endPosition.getRow() - startPosition.getRow())/2);
       
+      // if the row at which the debugging occurs is inside a fold, unfold it
+      getSession().unfold(debugRow, true);
+
       // if the line to be debugged is past or near the edges of the screen,
       // scroll it into view. allow some lines of context.
       if (debugRow <= (firstRow + DEBUG_CONTEXT_LINES) || 
@@ -1527,6 +1569,12 @@ public class AceEditor implements DocDisplay,
    public void removeBreakpoint(Breakpoint breakpoint)
    {
       widget_.removeBreakpoint(breakpoint);
+   }
+   
+   @Override
+   public void toggleBreakpointAtCursor()
+   {
+      widget_.toggleBreakpointAtCursor();
    }
    
    @Override 

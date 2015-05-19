@@ -39,7 +39,7 @@ class Error ;
 class FilePath
 {
 public:
-   typedef boost::function<void(int, const FilePath&)>  
+   typedef boost::function<bool(int, const FilePath&)>  
                                                 RecursiveIterationFunction;
 
 public:
@@ -57,6 +57,8 @@ public:
    static bool exists(const std::string& path);
 
    static bool isRootPath(const std::string& path);
+
+   static Error tempFilePath(FilePath* pFilePath);
    
 public:
    FilePath() ;
@@ -131,6 +133,9 @@ public:
 
    // is this a hidden file?
    bool isHidden() const ;
+
+   // is this a Windows junction point?
+   bool isJunction() const ;
    
    // is this a directory?
    bool isDirectory() const ;

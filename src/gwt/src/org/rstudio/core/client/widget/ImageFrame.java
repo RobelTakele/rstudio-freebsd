@@ -18,7 +18,6 @@ import org.rstudio.core.client.BrowseCap;
 import org.rstudio.studio.client.application.Desktop;
 
 import com.google.gwt.dom.client.Element;
-import com.google.gwt.user.client.DOM;
 import com.google.gwt.user.client.Timer;
 import com.google.gwt.user.client.ui.Frame;
 
@@ -62,16 +61,14 @@ public class ImageFrame extends Frame
 
    public void setMarginWidth(int width)
    {
-      DOM.setElementAttribute(getElement(), 
-                              "marginwidth", 
-                              Integer.toString(width));
+      getElement().setAttribute("marginwidth", 
+                                Integer.toString(width));
    }
    
    public void setMarginHeight(int height)
    {
-      DOM.setElementAttribute(getElement(), 
-                              "marginheight", 
-                              Integer.toString(height));
+      getElement().setAttribute("marginheight", 
+                                Integer.toString(height));
    }
    
    public void setImageUrl(String url)
@@ -116,7 +113,7 @@ public class ImageFrame extends Frame
       doc.write(
          '<html><head></head>' +
          '<body style="margin: 0; padding: 0; overflow: hidden; border: none">' +
-         '<img id="img" ' + sizing + ' style="display: none" src="javascript:false">' +
+         '<img id="img" ' + sizing + ' style="display: none" src="data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs%3D">' +
          '</body></html>');
       doc.close();
    }-*/;

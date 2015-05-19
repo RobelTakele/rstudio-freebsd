@@ -23,6 +23,7 @@
 #include <QMenuBar>
 #include <QStack>
 #include <QKeyEvent>
+#include <DesktopSubMenu.hpp>
 
 namespace desktop {
 
@@ -38,7 +39,8 @@ public slots:
     void addCommand(QString commandId,
                     QString label,
                     QString tooltip,
-                    QString shortcut);
+                    QString shortcut,
+                    bool isCheckable);
     void addSeparator();
     void endMenu();
     void endMainMenu();
@@ -47,6 +49,7 @@ public slots:
 signals:
     void menuBarCompleted(QMenuBar* menuBar);
     void manageCommand(QString commandId, QAction* action);
+    void manageCommandVisibility(QString commandId, QAction* action);
     void commandInvoked(QString commandId);
 
     void zoomIn();
@@ -59,7 +62,7 @@ private:
 
 private:
     QMenuBar* pMainMenu_;
-    QStack<QMenu*> menuStack_;
+    QStack<SubMenu*> menuStack_;
 };
 
 /* Previously, in desktop mode, many keyboard shortcuts were handled by Qt,

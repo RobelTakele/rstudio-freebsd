@@ -8,10 +8,14 @@ ${CMAKE_INSTALL_PREFIX}/bin/rserver {
   # #################################################################
 
   # Allow everything during startup 
+  #include <abstractions/base>
   #include <abstractions/nameservice>
+  #include <abstractions/ssl_certs>
   capability setgid,
   capability setuid,
   capability sys_resource,
+  capability sys_nice,
+  capability sys_ptrace,
   capability kill,
   capability chown,
   capability fowner,
@@ -34,8 +38,13 @@ ${CMAKE_INSTALL_PREFIX}/bin/rserver {
      capability setgid,
      capability setuid,
      capability sys_resource,
+     capability sys_nice,
+     capability sys_ptrace,
      capability kill,
     
+     @{PROC} r,
+     @{PROC}/*/cmdline r,
+
      owner @{HOME}/** rw,
      owner /tmp/** rw,
      /tmp/rstudio-rsession/** rw,
@@ -46,7 +55,7 @@ ${CMAKE_INSTALL_PREFIX}/bin/rserver {
 
      ${CMAKE_INSTALL_PREFIX}/bin/rserver-* Ux,
 
-     ${CMAKE_INSTALL_PREFIX}/bin/rsession ux,
+     ${CMAKE_INSTALL_PREFIX}/bin/rsession* ux,
      ${CMAKE_INSTALL_PREFIX}/www/** r,
      ${CMAKE_INSTALL_PREFIX}/www-symbolmaps/** r,
   }   

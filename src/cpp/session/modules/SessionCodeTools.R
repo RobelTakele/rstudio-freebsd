@@ -152,7 +152,8 @@
    tags <- c(
       "@aliases",
       "@author",
-      "@concepts",
+      "@concept",
+      "@describeIn",
       "@description",
       "@details",
       "@docType",
@@ -162,6 +163,7 @@
       "@exportClass",
       "@exportMethod",
       "@family",
+      "@field",
       "@format",
       "@import",
       "@importClassesFrom",
@@ -180,6 +182,7 @@
       "@S3method",
       "@section",
       "@seealso",
+      "@slot",
       "@source",
       "@template",
       "@templateVar",
@@ -216,6 +219,9 @@ utils:::rc.settings(files=T)
    status = utils:::rc.status()
    
    packages = sub('^package:', '', .rs.which(results))
+
+   # ensure spaces around =
+   results <- sub("=$", " = ", results)
 
    choose = packages == '.GlobalEnv'
    results.sorted = c(results[choose], results[!choose])

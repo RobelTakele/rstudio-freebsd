@@ -18,6 +18,7 @@
 
 #include <string>
 #include <map>
+#include <iosfwd>
 
 #include <boost/utility.hpp>
 
@@ -44,7 +45,9 @@ private:
    
 public:
    virtual ~Options() {}
-   core::ProgramStatus read(int argc, char * const argv[]);
+   core::ProgramStatus read(int argc,
+                            char * const argv[],
+                            std::ostream& osWarnings);
    
    bool verifyInstallation() const
    {
@@ -69,7 +72,7 @@ public:
    bool serverDaemonize() const { return serverDaemonize_; }
 
    bool serverAppArmorEnabled() const { return serverAppArmorEnabled_; }
-      
+
    // www 
    std::string wwwAddress() const
    { 
@@ -111,10 +114,25 @@ public:
       return wwwThreadPoolSize_;
    }
 
+   bool wwwProxyLocalhost() const
+   {
+      return wwwProxyLocalhost_;
+   }
+
    // auth
+   bool authNone()
+   {
+      return authNone_;
+   }
+
    bool authValidateUsers()
    {
       return authValidateUsers_;
+   }
+
+   bool authEncryptPassword()
+   {
+      return authEncryptPassword_;
    }
 
    std::string authRequiredUserGroup()
@@ -170,7 +188,8 @@ public:
 
 private:
 
-   void resolvePath(std::string* pPath) const;
+   void resolvePath(const core::FilePath& basePath,
+                    std::string* pPath) const;
 
    void addOverlayOptions(boost::program_options::options_description* pServer,
                           boost::program_options::options_description* pWWW,
@@ -178,7 +197,7 @@ private:
                           boost::program_options::options_description* pAuth,
                           boost::program_options::options_description* pMonitor);
 
-   bool validateOverlayOptions(std::string* pErrMsg);
+   bool validateOverlayOptions(std::string* pErrMsg, std::ostream& osWarnings);
 
    void resolveOverlayOptions();
 
@@ -212,7 +231,10 @@ private:
    std::string wwwSymbolMapsPath_;
    bool wwwUseEmulatedStack_;
    int wwwThreadPoolSize_;
+   bool wwwProxyLocalhost_;
+   bool authNone_;
    bool authValidateUsers_;
+   bool authEncryptPassword_;
    std::string authRequiredUserGroup_;
    std::string authPamHelperPath_;
    std::string rsessionWhichR_;

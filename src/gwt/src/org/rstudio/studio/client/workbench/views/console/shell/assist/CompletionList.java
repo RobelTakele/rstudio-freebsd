@@ -15,12 +15,12 @@
 package org.rstudio.studio.client.workbench.views.console.shell.assist;
 
 import com.google.gwt.event.dom.client.*;
+import com.google.gwt.dom.client.Element;
 import com.google.gwt.event.logical.shared.HasSelectionHandlers;
 import com.google.gwt.event.logical.shared.SelectionEvent;
 import com.google.gwt.event.logical.shared.SelectionHandler;
 import com.google.gwt.event.shared.HandlerRegistration;
 import com.google.gwt.user.client.DOM;
-import com.google.gwt.user.client.Element;
 import com.google.gwt.user.client.Event;
 import com.google.gwt.user.client.ui.Composite;
 import com.google.gwt.user.client.ui.Grid;
@@ -139,7 +139,10 @@ class CompletionList<TItem> extends Composite
 
    public int getItemCount()
    {
-      return grid_.getRowCount() ;
+      if (grid_ != null)
+         return grid_.getRowCount() ;
+      else
+         return 0;
    }
    
    public TItem getSelectedItem()

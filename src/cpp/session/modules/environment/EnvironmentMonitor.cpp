@@ -51,22 +51,27 @@ void addUnevaledPromise(std::vector<r::sexp::Variable>* pEnv,
    }
 }
 
-// if the given variable exists in the given list, remove it
+// If the given variable exists in the given list, remove it. Compares on name
+// only.
 void removeVarFromList(std::vector<r::sexp::Variable>* pEnv,
                        const r::sexp::Variable& var)
 {
-   std::vector<r::sexp::Variable>::iterator iter =
-         std::find(pEnv->begin(), pEnv->end(), var);
-   if (iter != pEnv->end())
+   for (std::vector<r::sexp::Variable>::iterator iter = pEnv->begin();
+        iter != pEnv->end(); iter++)
    {
-      pEnv->erase(iter);
+      if (iter->first == var.first)
+      {
+         pEnv->erase(iter);
+         break;
+      }
    }
 }
 
 } // anonymous namespace
 
 EnvironmentMonitor::EnvironmentMonitor() :
-   initialized_(false)
+   initialized_(false),
+   refreshOnInit_(false)
 {}
 
 void EnvironmentMonitor::enqueRemovedEvent(const r::sexp::Variable& variable)
@@ -85,18 +90,29 @@ void EnvironmentMonitor::enqueAssignedEvent(const r::sexp::Variable& variable)
    module_context::enqueClientEvent(assignedEvent);
 }
 
-void EnvironmentMonitor::setMonitoredEnvironment(SEXP pEnvironment)
+void EnvironmentMonitor::setMonitoredEnvironment(SEXP pEnvironment,
+                                                 bool refresh)
 {
+   // ignore if we're already monitoring this environment
+   if (getMonitoredEnvironment() == pEnvironment)
+      return;
+
    environment_.set(pEnvironment);
 
    // init the environment by doing an initial check for changes
    initialized_ = false;
+   refreshOnInit_ = refresh;
    checkForChanges();
 }
 
 SEXP EnvironmentMonitor::getMonitoredEnvironment()
 {
    return environment_.get();
+}
+
+bool EnvironmentMonitor::hasEnvironment()
+{
+   return getMonitoredEnvironment() != NULL;
 }
 
 void EnvironmentMonitor::listEnv(std::vector<r::sexp::Variable>* pEnv)
@@ -128,13 +144,17 @@ void EnvironmentMonitor::checkForChanges()
    std::for_each(currentEnv.begin(), currentEnv.end(),
                  boost::bind(addUnevaledPromise, &currentPromises, _1));
 
+   bool refreshEnqueued = false;
    if (!initialized_)
    {
-      if (getMonitoredEnvironment() == R_GlobalEnv)
+      if (refreshOnInit_ ||
+          getMonitoredEnvironment() == R_GlobalEnv)
       {
          enqueRefreshEvent();
+         refreshEnqueued = true;
       }
       initialized_ = true;
+      refreshOnInit_ = false;
    }
    else
    {
@@ -149,6 +169,7 @@ void EnvironmentMonitor::checkForChanges()
              && getMonitoredEnvironment() == R_GlobalEnv)
          {
             enqueRefreshEvent();
+            refreshEnqueued = true;
          }
          else
          {
@@ -174,9 +195,18 @@ void EnvironmentMonitor::checkForChanges()
             std::set_difference(currentEnv.begin(), currentEnv.end(),
                                 lastEnv_.begin(), lastEnv_.end(),
                                 std::back_inserter(addedVars));
+
+            // remove assigned objects from the list of uneval'ed promises
+            // (otherwise, we double-assign in the case where a promise SEXP
+            // is simultaneously forced/evaluated and assigned a new value)
+            std::for_each(addedVars.begin(),
+                          addedVars.end(),
+                          boost::bind(removeVarFromList, &unevaledPromises_, _1));
+
          }
       }
-      if (!currentEnv.empty() && !lastEnv_.empty())
+      // if a refresh is scheduled there's no need to emit add events one by one
+      if (!refreshEnqueued)
       {
          // have any promises been evaluated since we last checked?
          if (currentPromises != unevaledPromises_)
@@ -200,7 +230,6 @@ void EnvironmentMonitor::checkForChanges()
    unevaledPromises_ = currentPromises;
    lastEnv_ = currentEnv;
 }
-
 
 } // namespace environment
 } // namespace modules

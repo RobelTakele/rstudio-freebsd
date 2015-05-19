@@ -65,7 +65,8 @@ int length(SEXP object);
    
 SEXP getNames(SEXP sexp);
 core::Error getNames(SEXP sexp, std::vector<std::string>* pNames);  
- 
+bool isActiveBinding(const std::string&, const SEXP);
+
 // type checking
 bool isString(SEXP object);
 bool isLanguage(SEXP object);
@@ -84,6 +85,14 @@ bool asLogical(SEXP object);
 
 SEXP getAttrib(SEXP object, SEXP attrib);
 SEXP getAttrib(SEXP object, const std::string& attrib);
+SEXP setAttrib(SEXP object, const std::string& attrib, SEXP val);
+
+// weak/external pointers and finalizers
+SEXP makeWeakRef(SEXP key, SEXP val, R_CFinalizer_t fun, Rboolean onexit);
+void registerFinalizer(SEXP s, R_CFinalizer_t fun);
+SEXP makeExternalPtr(void* ptr, R_CFinalizer_t fun, Protect* protect);
+void* getExternalPtrAddr(SEXP extptr);
+void clearExternalPtr(SEXP extptr);
 
 // extract c++ type from R SEXP
 core::Error extract(SEXP valueSEXP, int* pInt);
@@ -137,27 +146,20 @@ inline int indexOfElementNamed(SEXP listSEXP, const std::string& name)
 
 }
 
+core::Error getNamedListSEXP(SEXP listSEXP, const std::string& name,
+                             SEXP* pValueSEXP);
+
 template <typename T>
 core::Error getNamedListElement(SEXP listSEXP,
                                 const std::string& name,
                                 T* pValue)
 {
-   // find the element
-   int valueIndex = indexOfElementNamed(listSEXP, name);
-
-   if (valueIndex != -1)
-   {
-      // get the appropriate value
-      SEXP valueSEXP = VECTOR_ELT(listSEXP, valueIndex);
-      return sexp::extract(valueSEXP, pValue);
-   }
-   else
-   {
-      // otherwise an error
-      core::Error error(r::errc::ListElementNotFoundError, ERROR_LOCATION);
-      error.addProperty("element", name);
+   SEXP valueSEXP;
+   core::Error error = getNamedListSEXP(listSEXP, name, &valueSEXP);
+   if (error)
       return error;
-   }
+   else
+      return sexp::extract(valueSEXP, pValue);
 }
 
 template <typename T>
@@ -240,7 +242,6 @@ core::Error setNamedListElement(SEXP listSEXP,
       return error;
    }
 }
-
 
 
 class PreservedSEXP : boost::noncopyable

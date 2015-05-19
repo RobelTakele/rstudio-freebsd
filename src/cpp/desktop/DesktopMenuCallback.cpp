@@ -17,6 +17,7 @@
 #include <QDebug>
 #include <QApplication>
 #include "DesktopCommandInvoker.hpp"
+#include "DesktopSubMenu.hpp"
 
 #ifdef Q_OS_MAC
 #include <ApplicationServices/ApplicationServices.h>
@@ -43,7 +44,10 @@ void MenuCallback::beginMenu(QString label)
    }
 #endif
 
-   QMenu* pMenu = new QMenu(label, pMainMenu_);
+   SubMenu* pMenu = new SubMenu(label, pMainMenu_);
+
+   connect(pMenu, SIGNAL(manageCommandVisibility(QString,QAction*)),
+           this, SIGNAL(manageCommandVisibility(QString,QAction*)));
 
    if (menuStack_.count() == 0)
       pMainMenu_->addMenu(pMenu);
@@ -112,7 +116,8 @@ QAction* MenuCallback::addCustomAction(QString commandId,
 void MenuCallback::addCommand(QString commandId,
                               QString label,
                               QString tooltip,
-                              QString shortcut)
+                              QString shortcut,
+                              bool checkable)
 {
    shortcut = shortcut.replace(QString::fromUtf8("Enter"), QString::fromAscii("\n"));
 
@@ -138,11 +143,12 @@ void MenuCallback::addCommand(QString commandId,
                                             keySequence);
       pAction->setData(commandId);
       pAction->setToolTip(tooltip);
+      if (checkable)
+         pAction->setCheckable(true);
 
       MenuActionBinder* pBinder = new MenuActionBinder(menuStack_.top(), pAction);
       connect(pBinder, SIGNAL(manageCommand(QString,QAction*)),
               this, SIGNAL(manageCommand(QString,QAction*)));
-
    }
 }
 

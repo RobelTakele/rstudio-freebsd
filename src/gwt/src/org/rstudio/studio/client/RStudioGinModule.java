@@ -15,10 +15,12 @@
 package org.rstudio.studio.client;
 
 import com.google.gwt.inject.client.AbstractGinModule;
+import com.google.gwt.inject.client.assistedinject.GinFactoryModuleBuilder;
 import com.google.gwt.user.client.ui.Widget;
 import com.google.inject.Singleton;
 import com.google.inject.name.Names;
 
+import org.rstudio.core.client.command.ShortcutViewer;
 import org.rstudio.studio.client.application.ApplicationInterrupt;
 import org.rstudio.studio.client.application.ApplicationQuit;
 import org.rstudio.studio.client.application.ApplicationView;
@@ -35,6 +37,8 @@ import org.rstudio.studio.client.common.crypto.CryptoServerOperations;
 import org.rstudio.studio.client.common.debugging.BreakpointManager;
 import org.rstudio.studio.client.common.debugging.DebugCommander;
 import org.rstudio.studio.client.common.debugging.DebuggingServerOperations;
+import org.rstudio.studio.client.common.dependencies.DependencyManager;
+import org.rstudio.studio.client.common.dependencies.model.DependencyServerOperations;
 import org.rstudio.studio.client.common.filetypes.FileTypeCommands;
 import org.rstudio.studio.client.common.latex.LatexProgramRegistry;
 import org.rstudio.studio.client.common.mirrors.DefaultCRANMirror;
@@ -43,6 +47,8 @@ import org.rstudio.studio.client.common.rnw.RnwWeaveRegistry;
 import org.rstudio.studio.client.common.rpubs.model.RPubsServerOperations;
 import org.rstudio.studio.client.common.satellite.Satellite;
 import org.rstudio.studio.client.common.satellite.SatelliteManager;
+import org.rstudio.studio.client.common.shiny.model.ShinyAppsServerOperations;
+import org.rstudio.studio.client.common.shiny.model.ShinyServerOperations;
 import org.rstudio.studio.client.common.spelling.model.SpellingServerOperations;
 import org.rstudio.studio.client.common.synctex.Synctex;
 import org.rstudio.studio.client.common.synctex.model.SynctexServerOperations;
@@ -58,15 +64,24 @@ import org.rstudio.studio.client.htmlpreview.model.HTMLPreviewServerOperations;
 import org.rstudio.studio.client.htmlpreview.ui.HTMLPreviewApplicationView;
 import org.rstudio.studio.client.htmlpreview.ui.HTMLPreviewApplicationWindow;
 import org.rstudio.studio.client.htmlpreview.ui.HTMLPreviewPanel;
+import org.rstudio.studio.client.packrat.model.PackratServerOperations;
 import org.rstudio.studio.client.pdfviewer.PDFViewer;
-import org.rstudio.studio.client.pdfviewer.PDFViewerPresenter;
-import org.rstudio.studio.client.pdfviewer.ui.PDFViewerApplicationView;
-import org.rstudio.studio.client.pdfviewer.ui.PDFViewerApplicationWindow;
-import org.rstudio.studio.client.pdfviewer.ui.PDFViewerPanel;
 import org.rstudio.studio.client.projects.Projects;
 import org.rstudio.studio.client.projects.model.ProjectsServerOperations;
+import org.rstudio.studio.client.rmarkdown.RmdOutput;
+import org.rstudio.studio.client.rmarkdown.RmdOutputView;
+import org.rstudio.studio.client.rmarkdown.model.RMarkdownServerOperations;
+import org.rstudio.studio.client.rmarkdown.ui.RmdOutputPanel;
+import org.rstudio.studio.client.rmarkdown.ui.RmdOutputPresenter;
+import org.rstudio.studio.client.rmarkdown.ui.RmdOutputWindow;
 import org.rstudio.studio.client.server.Server;
 import org.rstudio.studio.client.server.remote.RemoteServer;
+import org.rstudio.studio.client.shiny.ShinyApplication;
+import org.rstudio.studio.client.shiny.ShinyApplicationPresenter;
+import org.rstudio.studio.client.shiny.ShinyApps;
+import org.rstudio.studio.client.shiny.ui.ShinyApplicationPanel;
+import org.rstudio.studio.client.shiny.ui.ShinyApplicationView;
+import org.rstudio.studio.client.shiny.ui.ShinyApplicationWindow;
 import org.rstudio.studio.client.vcs.VCSApplicationView;
 import org.rstudio.studio.client.vcs.ui.VCSApplicationWindow;
 import org.rstudio.studio.client.workbench.ClientStateUpdater;
@@ -77,6 +92,7 @@ import org.rstudio.studio.client.workbench.codesearch.CodeSearch;
 import org.rstudio.studio.client.workbench.codesearch.model.CodeSearchServerOperations;
 import org.rstudio.studio.client.workbench.codesearch.ui.CodeSearchWidget;
 import org.rstudio.studio.client.workbench.commands.Commands;
+import org.rstudio.studio.client.workbench.model.MetaServerOperations;
 import org.rstudio.studio.client.workbench.model.Session;
 import org.rstudio.studio.client.workbench.model.WorkbenchListsServerOperations;
 import org.rstudio.studio.client.workbench.model.WorkbenchServerOperations;
@@ -112,6 +128,8 @@ import org.rstudio.studio.client.workbench.views.output.find.FindOutputPane;
 import org.rstudio.studio.client.workbench.views.output.find.FindOutputPresenter;
 import org.rstudio.studio.client.workbench.views.output.find.FindOutputTab;
 import org.rstudio.studio.client.workbench.views.output.find.model.FindInFilesServerOperations;
+import org.rstudio.studio.client.workbench.views.output.renderrmd.RenderRmdOutputTab;
+import org.rstudio.studio.client.workbench.views.output.shinyappsdeploy.ShinyAppsDeployOutputTab;
 import org.rstudio.studio.client.workbench.views.output.sourcecpp.SourceCppOutputPane;
 import org.rstudio.studio.client.workbench.views.output.sourcecpp.SourceCppOutputPresenter;
 import org.rstudio.studio.client.workbench.views.output.sourcecpp.SourceCppOutputTab;
@@ -125,8 +143,9 @@ import org.rstudio.studio.client.workbench.views.history.History;
 import org.rstudio.studio.client.workbench.views.history.HistoryTab;
 import org.rstudio.studio.client.workbench.views.history.model.HistoryServerOperations;
 import org.rstudio.studio.client.workbench.views.history.view.HistoryPane;
-import org.rstudio.studio.client.workbench.views.output.compilepdf.CompilePdfOutputPane;
-import org.rstudio.studio.client.workbench.views.output.compilepdf.CompilePdfOutputPresenter;
+import org.rstudio.studio.client.workbench.views.output.common.CompileOutputPane;
+import org.rstudio.studio.client.workbench.views.output.common.CompileOutputPaneDisplay;
+import org.rstudio.studio.client.workbench.views.output.common.CompileOutputPaneFactory;
 import org.rstudio.studio.client.workbench.views.output.compilepdf.CompilePdfOutputTab;
 import org.rstudio.studio.client.workbench.views.packages.Packages;
 import org.rstudio.studio.client.workbench.views.packages.PackagesPane;
@@ -143,6 +162,8 @@ import org.rstudio.studio.client.workbench.views.presentation.model.Presentation
 import org.rstudio.studio.client.workbench.views.source.Source;
 import org.rstudio.studio.client.workbench.views.source.SourcePane;
 import org.rstudio.studio.client.workbench.views.source.editors.EditingTargetSource;
+import org.rstudio.studio.client.workbench.views.source.editors.profiler.ProfilerPresenter;
+import org.rstudio.studio.client.workbench.views.source.editors.profiler.model.ProfilerServerOperations;
 import org.rstudio.studio.client.workbench.views.source.editors.text.AceEditor;
 import org.rstudio.studio.client.workbench.views.source.editors.text.DocDisplay;
 import org.rstudio.studio.client.workbench.views.source.model.SourceServerOperations;
@@ -162,19 +183,25 @@ import org.rstudio.studio.client.workbench.views.vcs.svn.SVNPane;
 import org.rstudio.studio.client.workbench.views.vcs.svn.SVNPresenter;
 import org.rstudio.studio.client.workbench.views.vcs.svn.dialog.SVNReviewPanel;
 import org.rstudio.studio.client.workbench.views.vcs.svn.dialog.SVNReviewPresenter;
+import org.rstudio.studio.client.workbench.views.viewer.ViewerPane;
+import org.rstudio.studio.client.workbench.views.viewer.ViewerPresenter;
+import org.rstudio.studio.client.workbench.views.viewer.ViewerTab;
+import org.rstudio.studio.client.workbench.views.viewer.model.ViewerServerOperations;
 
 public class RStudioGinModule extends AbstractGinModule
 {
    @Override
    protected void configure()
    {
-      bind(EventBus.class).in(Singleton.class) ;
-      bind(Session.class).in(Singleton.class) ;
+      bind(EventBus.class).in(Singleton.class);
+      bind(Session.class).in(Singleton.class);
       bind(Projects.class).in(Singleton.class);
       bind(Satellite.class).in(Singleton.class);
       bind(SatelliteManager.class).in(Singleton.class);
       bind(AskPassManager.class).in(Singleton.class);
+      bind(ProfilerPresenter.class).asEagerSingleton();
       bind(WorkbenchContext.class).asEagerSingleton();
+      bind(DependencyManager.class).asEagerSingleton();
       bind(WorkbenchListManager.class).asEagerSingleton();
       bind(ApplicationQuit.class).asEagerSingleton();
       bind(ApplicationInterrupt.class).asEagerSingleton();
@@ -190,8 +217,12 @@ public class RStudioGinModule extends AbstractGinModule
       bind(Synctex.class).in(Singleton.class);
       bind(PDFViewer.class).in(Singleton.class);
       bind(HTMLPreview.class).in(Singleton.class);      
+      bind(ShinyApplication.class).in(Singleton.class);      
       bind(BreakpointManager.class).asEagerSingleton();
       bind(DebugCommander.class).asEagerSingleton();
+      bind(ShortcutViewer.class).asEagerSingleton();
+      bind(ShinyApps.class).asEagerSingleton();
+      bind(RmdOutput.class).in(Singleton.class);
 
       bind(ApplicationView.class).to(ApplicationWindow.class)
             .in(Singleton.class) ;
@@ -200,8 +231,9 @@ public class RStudioGinModule extends AbstractGinModule
             .in(Singleton.class);
       bind(ReviewPresenter.class).to(ReviewPresenterImpl.class);
       
-      bind(PDFViewerApplicationView.class).to(PDFViewerApplicationWindow.class);
       bind(HTMLPreviewApplicationView.class).to(HTMLPreviewApplicationWindow.class);
+      bind(ShinyApplicationView.class).to(ShinyApplicationWindow.class);
+      bind(RmdOutputView.class).to(RmdOutputWindow.class);
       
       bind(Server.class).to(RemoteServer.class) ;
       bind(WorkbenchServerOperations.class).to(RemoteServer.class) ;
@@ -223,8 +255,8 @@ public class RStudioGinModule extends AbstractGinModule
       bind(BuildPresenter.Display.class).to(BuildPane.class);
       bind(Presentation.Display.class).to(PresentationPane.class);
       bind(EnvironmentPresenter.Display.class).to(EnvironmentPane.class);
+      bind(ViewerPresenter.Display.class).to(ViewerPane.class);
       bind(Ignore.Display.class).to(IgnoreDialog.class);
-      bind(CompilePdfOutputPresenter.Display.class).to(CompilePdfOutputPane.class);
       bind(FindOutputPresenter.Display.class).to(FindOutputPane.class);
       bind(SourceCppOutputPresenter.Display.class).to(SourceCppOutputPane.class);
       bindTab("History", HistoryTab.class);
@@ -237,9 +269,12 @@ public class RStudioGinModule extends AbstractGinModule
       bindTab("Build", BuildTab.class);
       bindTab("Presentation", PresentationTab.class);
       bindTab("Environment", EnvironmentTab.class);
+      bindTab("Viewer", ViewerTab.class);
       bindTab("Compile PDF", CompilePdfOutputTab.class);
+      bindTab("R Markdown", RenderRmdOutputTab.class);
       bindTab("Find", FindOutputTab.class);
       bindTab("Source Cpp", SourceCppOutputTab.class);
+      bindTab("Deploy", ShinyAppsDeployOutputTab.class);
 
       bind(Shell.Display.class).to(ShellPane.class) ;
            
@@ -252,8 +287,9 @@ public class RStudioGinModule extends AbstractGinModule
       bind(HistoryPresenter.DisplayBuilder.class).to(
                                                     HistoryPanel.Builder.class);
       
-      bind(PDFViewerPresenter.Display.class).to(PDFViewerPanel.class);
       bind(HTMLPreviewPresenter.Display.class).to(HTMLPreviewPanel.class);
+      bind(ShinyApplicationPresenter.Display.class).to(ShinyApplicationPanel.class);
+      bind(RmdOutputPresenter.Display.class).to(RmdOutputPanel.class);
       
       bind(GlobalDisplay.class)
             .to(DefaultGlobalDisplay.class)
@@ -286,15 +322,27 @@ public class RStudioGinModule extends AbstractGinModule
       bind(FindInFilesServerOperations.class).to(RemoteServer.class);
       bind(SynctexServerOperations.class).to(RemoteServer.class);
       bind(HTMLPreviewServerOperations.class).to(RemoteServer.class);
+      bind(ShinyServerOperations.class).to(RemoteServer.class);
+      bind(ShinyAppsServerOperations.class).to(RemoteServer.class);
       bind(RPubsServerOperations.class).to(RemoteServer.class);
       bind(BuildServerOperations.class).to(RemoteServer.class);
       bind(PresentationServerOperations.class).to(RemoteServer.class);
       bind(EnvironmentServerOperations.class).to(RemoteServer.class);
       bind(DebuggingServerOperations.class).to(RemoteServer.class);
+      bind(MetaServerOperations.class).to(RemoteServer.class);
+      bind(ViewerServerOperations.class).to(RemoteServer.class);
+      bind(ProfilerServerOperations.class).to(RemoteServer.class);
+      bind(RMarkdownServerOperations.class).to(RemoteServer.class);
+      bind(DependencyServerOperations.class).to(RemoteServer.class);
+      bind(PackratServerOperations.class).to(RemoteServer.class);
 
       bind(WorkbenchMainView.class).to(WorkbenchScreen.class) ;
 
       bind(DocDisplay.class).to(AceEditor.class);
+      
+      install(new GinFactoryModuleBuilder()
+         .implement(CompileOutputPaneDisplay.class, CompileOutputPane.class)
+         .build(CompileOutputPaneFactory.class));
    }
 
    private <T extends WorkbenchTab> void bindTab(String name, Class<T> clazz)
