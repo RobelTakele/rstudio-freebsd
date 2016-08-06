@@ -36,6 +36,7 @@
 #include <r/RFunctionHook.hpp>
 #include <r/RExec.hpp>
 #include <r/session/REventLoop.hpp>
+#include <r/session/RSessionUtils.hpp>
 
 #include <Rembedded.h>
 #include <graphapp.h>
@@ -44,8 +45,9 @@ extern "C" void R_ProcessEvents(void);
 extern "C" void R_CleanUp(SA_TYPE, int, int);
 extern "C" UImode CharacterMode;
 
-using namespace core;
+using namespace rstudio::core;
 
+namespace rstudio {
 namespace r {
 namespace session {
 
@@ -214,14 +216,16 @@ Error completeEmbeddedRInitialization(bool useInternet2)
    setMemoryLimit();
 
    // use IE proxy settings if requested
-   boost::format fmt("suppressWarnings(utils::setInternet2(%1%))");
-   Error error = r::exec::executeString(boost::str(fmt % useInternet2));
-   if (error)
-      LOG_ERROR(error);
-
+   if (!r::session::utils::isR3_3())
+   {
+      boost::format fmt("suppressWarnings(utils::setInternet2(%1%))");
+      Error error = r::exec::executeString(boost::str(fmt % useInternet2));
+      if (error)
+         LOG_ERROR(error);
+   }
 
    // register history functions
-   error = r::exec::RFunction(".rs.registerHistoryFunctions").call();
+   Error error = r::exec::RFunction(".rs.registerHistoryFunctions").call();
    if (error)
       LOG_ERROR(error);
 
@@ -264,6 +268,7 @@ void processEvents()
 } // namespace event_loop
 } // namespace session
 } // namespace r
+} // namespace rstudio
 
 
 

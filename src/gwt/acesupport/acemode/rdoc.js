@@ -12,7 +12,7 @@
  * AGPL (http://www.gnu.org/licenses/agpl-3.0.txt) for more details.
  *
  */
-define("mode/rdoc", function(require, exports, module) {
+define("mode/rdoc", ["require", "exports", "module"], function(require, exports, module) {
 
 var oop = require("ace/lib/oop");
 var TextMode = require("ace/mode/text").Mode;
@@ -22,10 +22,16 @@ var RDocHighlightRules = require("mode/rdoc_highlight_rules").RDocHighlightRules
 var MatchingBraceOutdent = require("ace/mode/matching_brace_outdent").MatchingBraceOutdent;
 
 var Mode = function(suppressHighlighting) {
-	if (suppressHighlighting)
+    if (suppressHighlighting)
+    {
+	this.$highlightRules = new TextHighlightRules();
     	this.$tokenizer = new Tokenizer(new TextHighlightRules().getRules());
-	else
-    	this.$tokenizer = new Tokenizer(new RDocHighlightRules().getRules());
+    }
+    else
+    {
+	this.$highlightRules = new RDocHighlightRules();
+	this.$tokenizer = new Tokenizer(new RDocHighlightRules().getRules());
+    }
     this.$outdent = new MatchingBraceOutdent();
 };
 oop.inherits(Mode, TextMode);

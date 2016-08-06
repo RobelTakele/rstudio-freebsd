@@ -19,8 +19,6 @@ import com.google.gwt.core.client.Scheduler.RepeatingCommand;
 import com.google.gwt.dom.client.Document;
 import com.google.gwt.dom.client.Element;
 import com.google.gwt.dom.client.Style.Unit;
-import com.google.gwt.event.dom.client.ClickEvent;
-import com.google.gwt.event.dom.client.ClickHandler;
 import com.google.gwt.event.dom.client.KeyCodes;
 import com.google.gwt.event.dom.client.KeyDownEvent;
 import com.google.gwt.event.dom.client.KeyDownHandler;
@@ -50,11 +48,10 @@ import org.rstudio.core.client.widget.ToolbarLabel;
 import org.rstudio.studio.client.RStudioGinjector;
 import org.rstudio.studio.client.rmarkdown.model.RMarkdownServerOperations;
 import org.rstudio.studio.client.rmarkdown.model.RmdPreviewParams;
-import org.rstudio.studio.client.shiny.ShinyApps;
+import org.rstudio.studio.client.rsconnect.RSConnect;
+import org.rstudio.studio.client.rsconnect.ui.RSConnectPublishButton;
 import org.rstudio.studio.client.shiny.ShinyFrameHelper;
-import org.rstudio.studio.client.shiny.events.ShinyAppsActionEvent;
 import org.rstudio.studio.client.workbench.commands.Commands;
-import org.rstudio.studio.client.application.events.EventBus;
 import org.rstudio.studio.client.common.filetypes.FileTypeRegistry;
 import org.rstudio.studio.client.common.presentation.SlideNavigationMenu;
 import org.rstudio.studio.client.common.presentation.SlideNavigationToolbarMenu;
@@ -71,24 +68,22 @@ public class RmdOutputPanel extends SatelliteFramePanel<AnchorableFrame>
    public RmdOutputPanel(Commands commands, 
                          FileTypeRegistry fileTypeRegistry,
                          RMarkdownServerOperations server,
-                         EventBus events, 
-                         ShinyApps shinyApps,
+                         RSConnect rsconnect,
                          Satellite satellite)
    {
       super(commands);
       fileTypeRegistry_ = fileTypeRegistry;
       server_ = server;
       shinyFrame_ = new ShinyFrameHelper();
-      events_ = events;
       
-      // if this window is a satellite, ensure that the shinyapps instance
+      // if this window is a satellite, ensure that the rsconnect instance
       // is initialized
-      shinyApps.ensureSessionInit();
+      rsconnect.ensureSessionInit();
    }
    
    @Override
    public void showOutput(RmdPreviewParams params, boolean enablePublish, 
-                          boolean enableDeploy, boolean refresh)
+                          boolean refresh)
    {
       // remember output parameters
       outputParms_ = params;
@@ -118,21 +113,8 @@ public class RmdOutputPanel extends SatelliteFramePanel<AnchorableFrame>
          isShiny_ = false;
       }
       
-      // RPubs
-      boolean showPublish = enablePublish && 
-                            params.getResult().isHtml() &&
-                            params.getResult().getFormat() != null &&
-                            params.getResult().getFormat().isSelfContained();
-      publishButton_.setText(params.getResult().getRpubsPublished() ? 
-            "Republish" : "Publish");
-      publishButton_.setVisible(showPublish);
-      publishButtonSeparator_.setVisible(showPublish);
-      
-      // ShinyApps
-      boolean showDeploy = enableDeploy && params.isShinyDocument();
-      deployButton_.setVisible(showDeploy);
-      deployButton_.setText("Publish");
-      deployButtonSeparator_.setVisible(showDeploy);
+
+      publishButton_.setRmdPreview(params);
       
       // find text box
       boolean showFind = params.getResult().isHtml() && 
@@ -147,19 +129,22 @@ public class RmdOutputPanel extends SatelliteFramePanel<AnchorableFrame>
       // get the URL to load
       String url = getDocumentUrl();
 
-      // check for an anchor implied by a preview_slide field
-      String anchor = "";
-      if (params.getResult().getPreviewSlide() > 0)
-         anchor = String.valueOf(params.getResult().getPreviewSlide());
-            
-      // check for an explicit anchor if there wasn't one implied
-      // by the preview_slide
-      if (anchor.length() == 0)
-         anchor = params.getAnchor();
-      
-      // add the anchor if necessary
-      if (anchor.length() > 0)
-         url += "#" + anchor;
+      // restore anchor if necessary
+      if (params.getResult().getRestoreAnchor())
+      {
+         String anchor = "";
+         if (params.getResult().getPreviewSlide() > 0)
+            anchor = String.valueOf(params.getResult().getPreviewSlide());
+               
+         // check for an explicit anchor if there wasn't one implied
+         // by the preview_slide
+         if (anchor.length() == 0)
+            anchor = params.getAnchor();
+         
+         // add the anchor if necessary
+         if (anchor.length() > 0)
+            url += "#" + anchor;
+      }
       
       showUrl(url);
    }
@@ -181,30 +166,13 @@ public class RmdOutputPanel extends SatelliteFramePanel<AnchorableFrame>
             commands.viewerPopout().createToolbarButton();
       popoutButton.setText("Open in Browser");
       toolbar.addLeftWidget(popoutButton);
-      publishButtonSeparator_ = toolbar.addLeftSeparator();
-      publishButton_ = commands.publishHTML().createToolbarButton(false);
-      toolbar.addLeftWidget(publishButton_);
-
-      deployButtonSeparator_ = toolbar.addLeftSeparator();
-      deployButton_ = new ToolbarButton("Publish", 
-            commands.shinyAppsDeploy().getImageResource(), 
-            new ClickHandler()
-      {
-         @Override
-         public void onClick(ClickEvent evt)
-         {
-            events_.fireEvent(new ShinyAppsActionEvent(
-                  ShinyAppsActionEvent.ACTION_TYPE_DEPLOY, 
-                  targetFile_.getPath()));
-         }
-      });
-      toolbar.addLeftWidget(deployButton_);
 
       findTextBox_ = new FindTextBox("Find");
       findTextBox_.setIconVisible(true);
       findTextBox_.setOverrideWidth(120);
       findTextBox_.getElement().getStyle().setMarginRight(6, Unit.PX);
-      toolbar.addRightWidget(findTextBox_);
+      findSeparator_ = toolbar.addLeftSeparator();
+      toolbar.addLeftWidget(findTextBox_);
       
       findTextBox_.addKeyDownHandler(new KeyDownHandler() {
          @Override
@@ -242,9 +210,15 @@ public class RmdOutputPanel extends SatelliteFramePanel<AnchorableFrame>
          }
          
       });
-      toolbar.addRightWidget(findTextBox_);
-      findSeparator_ = toolbar.addRightSeparator();
       
+      toolbar.addLeftSeparator();
+      
+      
+      publishButton_ = new RSConnectPublishButton(
+            RSConnect.CONTENT_TYPE_DOCUMENT, true, null);
+      toolbar.addRightWidget(publishButton_);
+      
+      toolbar.addRightSeparator();
       toolbar.addRightWidget(commands.viewerRefresh().createToolbarButton());
    }
    
@@ -349,9 +323,14 @@ public class RmdOutputPanel extends SatelliteFramePanel<AnchorableFrame>
       // recompute the URL (we can't pick up the URL from the document since 
       // it may have encoding problems--see case 3994)
       String url = getDocumentUrl();
-      String anchor = getAnchor();
-      if (anchor.length() > 0)
-         url += "#" + anchor;
+      
+      // restore anchor if necessary
+      if (outputParms_ != null && outputParms_.getResult().getRestoreAnchor())
+      {
+         String anchor = getAnchor();
+         if (anchor.length() > 0)
+            url += "#" + anchor;
+      }
       
       // re-initialize the shiny frame with the URL (so it waits for the new 
       // window object to become available after refresh)
@@ -359,6 +338,13 @@ public class RmdOutputPanel extends SatelliteFramePanel<AnchorableFrame>
          shinyFrame_.initialize(url, null);
 
       showUrl(url);
+   }
+
+   
+   @Override
+   public void focusFind()
+   {
+      findTextBox_.focus();
    }
 
    @Override
@@ -507,15 +493,11 @@ public class RmdOutputPanel extends SatelliteFramePanel<AnchorableFrame>
 
    private Label fileLabel_;
    private Widget fileLabelSeparator_;
-   private ToolbarButton publishButton_;
-   private Widget publishButtonSeparator_;
-   private ToolbarButton deployButton_;
-   private Widget deployButtonSeparator_;
+   private RSConnectPublishButton publishButton_;
    private String title_;
    
    private final FileTypeRegistry fileTypeRegistry_;
    private final RMarkdownServerOperations server_;
-   private final EventBus events_;
 
    private int scrollPosition_ = 0;
    

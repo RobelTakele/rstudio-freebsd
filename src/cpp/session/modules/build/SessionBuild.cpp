@@ -48,13 +48,13 @@
 #include <session/SessionUserSettings.hpp>
 #include <session/SessionModuleContext.hpp>
 
-#include "SessionBuildEnvironment.hpp"
 #include "SessionBuildErrors.hpp"
 #include "SessionSourceCpp.hpp"
 #include "SessionInstallRtools.hpp"
 
-using namespace core;
+using namespace rstudio::core;
 
+namespace rstudio {
 namespace session {
 
 namespace {
@@ -127,10 +127,54 @@ bool isPackageHeaderFile(const FilePath& filePath)
 
 void onFileChanged(FilePath sourceFilePath)
 {
+   // set package rebuild flag
    if (!s_forcePackageRebuild)
    {
       if (isPackageHeaderFile(sourceFilePath))
          s_forcePackageRebuild = true;
+   }
+}
+
+void onSourceEditorFileSaved(FilePath sourceFilePath)
+{
+   onFileChanged(sourceFilePath);
+
+   // see if this is a website file and fire an event if it is
+   if (module_context::isWebsiteProject())
+   {
+      // see if the option is enabled for live preview
+      projects::RProjectBuildOptions options;
+      Error error = projects::projectContext().readBuildOptions(&options);
+      if (error)
+      {
+         LOG_ERROR(error);
+         return;
+      }
+
+      FilePath buildTargetPath = projects::projectContext().buildTargetPath();
+      if (sourceFilePath.isWithin(buildTargetPath))
+      {
+         std::string outputDir = module_context::websiteOutputDir();
+         FilePath outputDirPath = buildTargetPath.childPath(outputDir);
+         if (outputDir.empty() || !sourceFilePath.isWithin(outputDirPath))
+         {
+            // are we live previewing?
+            bool livePreview = options.livePreviewWebsite;
+
+            // force live preview for JS and CSS
+            std::string mimeType = sourceFilePath.mimeContentType();
+            if (mimeType == "text/css" || mimeType == "text/javascript")
+               livePreview = true;
+
+            if (livePreview)
+            {
+               json::Object fileJson =
+                   module_context::createFileSystemItem(sourceFilePath);
+               ClientEvent event(client_events::kWebsiteFileSaved, fileJson);
+               module_context::enqueClientEvent(event);
+            }
+         }
+      }
    }
 }
 
@@ -172,10 +216,11 @@ class Build : boost::noncopyable,
               public boost::enable_shared_from_this<Build>
 {
 public:
-   static boost::shared_ptr<Build> create(const std::string& type)
+   static boost::shared_ptr<Build> create(const std::string& type,
+                                          const std::string& subType)
    {
       boost::shared_ptr<Build> pBuild(new Build());
-      pBuild->start(type);
+      pBuild->start(type, subType);
       return pBuild;
    }
 
@@ -186,7 +231,7 @@ private:
    {
    }
 
-   void start(const std::string& type)
+   void start(const std::string& type, const std::string& subType)
    {
       ClientEvent event(client_events::kBuildStarted);
       module_context::enqueClientEvent(event);
@@ -214,11 +259,12 @@ private:
                                 _1);
 
       // execute build
-      executeBuild(type, cb);
+      executeBuild(type, subType, cb);
    }
 
 
    void executeBuild(const std::string& type,
+                     const std::string& subType,
                      const core::system::ProcessCallbacks& cb)
    {
       // options
@@ -236,6 +282,11 @@ private:
       {
          options.workingDir = buildTargetPath;
          executeMakefileBuild(type, buildTargetPath, options, cb);
+      }
+      else if (config.buildType == r_util::kBuildTypeWebsite)
+      {
+         options.workingDir = buildTargetPath;
+         executeWebsiteBuild(type, subType, buildTargetPath, options, cb);
       }
       else if (config.buildType == r_util::kBuildTypeCustom)
       {
@@ -349,6 +400,18 @@ private:
       boost::algorithm::split(roclets,
                               projectConfig().packageRoxygenize,
                               boost::algorithm::is_any_of(","));
+
+      // remove vignette roclet if we don't have the requisite roxygen2 version
+      bool haveVignetteRoclet = module_context::isPackageVersionInstalled(
+                                                   "roxygen2", "4.1.0.9001");
+      if (!haveVignetteRoclet)
+      {
+         std::vector<std::string>::iterator it =
+                      std::find(roclets.begin(), roclets.end(), "vignette");
+         if (it != roclets.end())
+            roclets.erase(it);
+      }
+
       BOOST_FOREACH(std::string& roclet, roclets)
       {
          roclet = "'" + roclet + "'";
@@ -402,6 +465,13 @@ private:
       {
          terminateWithError("Locating R script", error);
          return;
+      }
+
+      // check for required version of roxygen
+      if (!module_context::isMinimumRoxygenInstalled())
+      {
+         terminateWithError("roxygen2 v4.0 (or later) required to "
+                            "generate documentation");
       }
 
       // build the roxygenize command
@@ -502,8 +572,12 @@ private:
       // set the not cran env var
       core::system::setenv(&childEnv, "NOT_CRAN", "true");
 
+      // turn off external applications launching
+      core::system::setenv(&childEnv, "R_BROWSER", "false");
+      core::system::setenv(&childEnv, "R_PDFVIEWER", "false");
+
       // add r tools to path if necessary
-      addRtoolsToPathIfNecessary(&childEnv, &buildToolsWarning_);
+      module_context::addRtoolsToPathIfNecessary(&childEnv, &buildToolsWarning_);
 
       pkgOptions.environment = childEnv;
 
@@ -731,10 +805,10 @@ private:
                                                      buildCb);
    }
 
-   bool devtoolsExecute(const std::string& command,
-                        const FilePath& packagePath,
-                        core::system::ProcessOptions pkgOptions,
-                        const core::system::ProcessCallbacks& cb)
+   bool rExecute(const std::string& command,
+                 const FilePath& workingDir,
+                 core::system::ProcessOptions pkgOptions,
+                 const core::system::ProcessCallbacks& cb)
    {
       // Find the path to R
       FilePath rProgramPath;
@@ -746,7 +820,7 @@ private:
       }
 
       // execute within the package directory
-      pkgOptions.workingDir = packagePath;
+      pkgOptions.workingDir = workingDir;
 
       // build args
       std::vector<std::string> args;
@@ -762,8 +836,18 @@ private:
                pkgOptions,
                cb);
 
-      usedDevtools_ = true;
+      return true;
+   }
 
+   bool devtoolsExecute(const std::string& command,
+                        const FilePath& packagePath,
+                        core::system::ProcessOptions pkgOptions,
+                        const core::system::ProcessCallbacks& cb)
+   {
+      if (!rExecute(command, packagePath, pkgOptions, cb))
+         return false;
+
+      usedDevtools_ = true;
       return true;
    }
 
@@ -872,7 +956,7 @@ private:
 
       boost::format fmt(
          "setwd('%1%'); "
-         "invisible(lapply(list.files(pattern = '\\.[rR]$'), function(x) { "
+         "invisible(lapply(list.files(pattern = '\\\\.[rR]$'), function(x) { "
          "    system(paste(shQuote('%2%'), '--vanilla --slave -f', shQuote(x))) "
          "}))"
       );
@@ -883,6 +967,7 @@ private:
 
       pkgOptions.workingDir = testsPath;
       enqueCommandString("Sourcing R files in 'tests' directory");
+      successMessage_ = "\nTests complete";
       module_context::processSupervisor().runCommand(cmd,
                                                      pkgOptions,
                                                      cb);
@@ -1041,6 +1126,74 @@ private:
    }
 
 
+   void executeWebsiteBuild(const std::string& type,
+                            const std::string& subType,
+                            const FilePath& websitePath,
+                            const core::system::ProcessOptions& options,
+                            const core::system::ProcessCallbacks& cb)
+   {
+      std::string command;
+
+      if (type == "build-all")
+      {
+         if (options_.previewWebsite)
+         {
+            successFunction_ = boost::bind(&Build::showWebsitePreview,
+                                           Build::shared_from_this(),
+                                           websitePath);
+         }
+
+         // if there is a subType then use it to set the output format
+         if (!subType.empty())
+         {
+            projects::projectContext().setWebsiteOutputFormat(subType);
+            options_.websiteOutputFormat = subType;
+         }
+
+         boost::format fmt("rmarkdown::render_site(%1%)");
+         std::string format;
+         if (options_.websiteOutputFormat != "all")
+            format = "output_format = '" + options_.websiteOutputFormat + "', ";
+
+         format += ("encoding = '" +
+                    projects::projectContext().defaultEncoding() +
+                    "'");
+
+         command = boost::str(fmt % format);
+      }
+      else if (type == "clean-all")
+      {
+         command = "rmarkdown::clean_site()";
+      }
+
+      // execute command
+      enqueCommandString(command);
+      rExecute(command, websitePath, options, cb);
+   }
+
+   void showWebsitePreview(const FilePath& websitePath)
+   {
+      // determine source file
+      std::string output = outputAsText();
+      FilePath sourceFile = websitePath.childPath("index.Rmd");
+      if (!sourceFile.exists())
+         sourceFile = websitePath.childPath("index.md");
+
+      // look for Output created message
+      FilePath outputFile = module_context::extractOutputFileCreated(sourceFile,
+                                                                     output);
+      if (!outputFile.empty())
+      {
+         json::Object previewRmdJson;
+         using namespace module_context;
+         previewRmdJson["source_file"] = createAliasedPath(sourceFile);
+         previewRmdJson["encoding"] = projects::projectContext().config().encoding;
+         previewRmdJson["output_file"] = createAliasedPath(outputFile);
+         ClientEvent event(client_events::kPreviewRmd, previewRmdJson);
+         enqueClientEvent(event);
+      }
+   }
+
    void terminateWithErrorStatus(int exitStatus)
    {
       boost::format fmt("\nExited with status %1%.\n\n");
@@ -1065,7 +1218,7 @@ private:
    bool useDevtools()
    {
       return projectConfig().packageUseDevtools &&
-             module_context::isPackageVersionInstalled("devtools", "1.4.1");
+             module_context::isMinimumDevtoolsInstalled();
    }
 
 public:
@@ -1157,10 +1310,10 @@ private:
       // call the error parser if one has been specified
       if (errorParser_)
       {
-         std::vector<CompileError> errors = errorParser_(outputAsText());
+         std::vector<SourceMarker> errors = errorParser_(outputAsText());
          if (!errors.empty())
          {
-            errorsJson_ = compileErrorsAsJson(errors);
+            errorsJson_ = sourceMarkersAsJson(errors);
             enqueBuildErrors(errorsJson_);
          }
       }
@@ -1229,6 +1382,53 @@ private:
       module_context::enqueClientEvent(event);
    }
 
+   std::string parseLibrarySwitchFromInstallArgs()
+   {
+      std::string libPath;
+
+      std::string extraArgs = projectConfig().packageInstallArgs;
+      std::size_t n = extraArgs.size();
+      std::size_t index = extraArgs.find("--library=");
+
+      if (index != std::string::npos &&
+          index < n - 2) // ensure some space for path
+      {
+         std::size_t startIndex = index + std::string("--library=").length();
+         std::size_t endIndex = startIndex + 1;
+
+         // The library path can be specified with quotes + spaces, or without
+         // quotes (but no spaces), so handle both cases.
+         char firstChar = extraArgs[startIndex];
+         if (firstChar == '\'' || firstChar == '\"')
+         {
+            while (++endIndex < n)
+            {
+               // skip escaped characters
+               if (extraArgs[endIndex] == '\\')
+               {
+                  ++endIndex;
+                  continue;
+               }
+
+               if (extraArgs[endIndex] == firstChar)
+                  break;
+            }
+
+            libPath = extraArgs.substr(startIndex + 1, endIndex - startIndex - 1);
+         }
+         else
+         {
+            while (++endIndex < n)
+            {
+               if (std::isspace(extraArgs[endIndex]))
+                  break;
+            }
+            libPath = extraArgs.substr(startIndex, endIndex - startIndex + 1);
+         }
+      }
+      return libPath;
+   }
+   
    void enqueBuildCompleted()
    {
       isRunning_ = false;
@@ -1242,7 +1442,21 @@ private:
       // enque event
       std::string afterRestartCommand;
       if (restartR_)
-         afterRestartCommand = "library(" + pkgInfo_.name() + ")";
+      {
+         afterRestartCommand = "library(" + pkgInfo_.name();
+         
+         // if --library="" was specified and we're not in devmode,
+         // use it
+         if (!(r::session::utils::isPackratModeOn() ||
+               r::session::utils::isDevtoolsDevModeOn()))
+         {
+            std::string libPath = parseLibrarySwitchFromInstallArgs();
+            if (!libPath.empty())
+               afterRestartCommand += ", lib.loc = \"" + libPath + "\"";
+         }
+         
+         afterRestartCommand += ")";
+      }
       json::Object dataJson;
       dataJson["restart_r"] = restartR_;
       dataJson["after_restart_command"] = afterRestartCommand;
@@ -1309,8 +1523,8 @@ Error startBuild(const json::JsonRpcRequest& request,
                  json::JsonRpcResponse* pResponse)
 {
    // get type
-   std::string type;
-   Error error = json::readParam(request.params, 0, &type);
+   std::string type, subType;
+   Error error = json::readParams(request.params, &type, &subType);
    if (error)
       return error;
 
@@ -1321,7 +1535,7 @@ Error startBuild(const json::JsonRpcRequest& request,
    }
    else
    {
-      s_pBuild = Build::create(type);
+      s_pBuild = Build::create(type, subType);
       pResponse->setResult(true);
    }
 
@@ -1473,7 +1687,7 @@ SEXP rs_addRToolsToPath()
     s_previousPath = core::system::getenv("PATH");
     std::string newPath = s_previousPath;
     std::string warningMsg;
-    build::addRtoolsToPathIfNecessary(&newPath, &warningMsg);
+    module_context::addRtoolsToPathIfNecessary(&newPath, &warningMsg);
     core::system::setenv("PATH", newPath);
 
 #endif
@@ -1513,7 +1727,7 @@ SEXP rs_installBuildTools()
    else
    {
       ClientEvent event = browseUrlEvent(
-          "http://www.rstudio.org/links/install_osx_build_tools");
+          "https://www.rstudio.org/links/install_osx_build_tools");
       module_context::enqueClientEvent(event);
    }
    return R_NilValue;
@@ -1531,7 +1745,7 @@ SEXP rs_installBuildTools()
 
 SEXP rs_installPackage(SEXP pkgPathSEXP, SEXP libPathSEXP)
 {
-   using namespace r::sexp;
+   using namespace rstudio::r::sexp;
    Error error = module_context::installPackage(safeAsString(pkgPathSEXP),
                                                 safeAsString(libPathSEXP));
    if (error)
@@ -1544,6 +1758,17 @@ SEXP rs_installPackage(SEXP pkgPathSEXP, SEXP libPathSEXP)
 
    return R_NilValue;
 }
+
+Error getBookdownFormats(const json::JsonRpcRequest& request,
+                         json::JsonRpcResponse* pResponse)
+{
+   json::Object responseJson;
+   responseJson["output_format"] = projects::projectContext().buildOptions().websiteOutputFormat;
+   responseJson["website_output_formats"] = projects::websiteOutputFormatsJson();
+   pResponse->setResult(responseJson);
+   return Success();
+}
+
 
 
 } // anonymous namespace
@@ -1641,7 +1866,7 @@ Error initialize()
    session::projects::FileMonitorCallbacks cb;
    cb.onFilesChanged = onFilesChanged;
    projects::projectContext().subscribeToFileMonitor("", cb);
-   module_context::events().onSourceEditorFileSaved.connect(onFileChanged);
+   module_context::events().onSourceEditorFileSaved.connect(onSourceEditorFileSaved);
 
    // add suspend handler
    addSuspendHandler(module_context::SuspendHandler(boost::bind(onSuspend, _2),
@@ -1657,6 +1882,7 @@ Error initialize()
       (bind(registerRpcMethod, "get_cpp_capabilities", getCppCapabilities))
       (bind(registerRpcMethod, "install_build_tools", installBuildTools))
       (bind(registerRpcMethod, "devtools_load_all_path", devtoolsLoadAllPath))
+      (bind(registerRpcMethod, "get_bookdown_formats", getBookdownFormats))
       (bind(sourceModuleRFile, "SessionBuild.R"))
       (bind(source_cpp::initialize));
    return initBlock.execute();
@@ -1668,7 +1894,7 @@ Error initialize()
 
 namespace module_context {
 
-#ifndef _WIN32
+#ifdef __APPLE__
 namespace {
 
 bool usingSystemMake()
@@ -1723,7 +1949,7 @@ bool canBuildCpp()
    core::system::Options childEnv;
    core::system::environment(&childEnv);
    std::string warningMsg;
-   modules::build::addRtoolsToPathIfNecessary(&childEnv, &warningMsg);
+   module_context::addRtoolsToPathIfNecessary(&childEnv, &warningMsg);
    options.environment = childEnv;
 
    core::system::ProcessResult result;
@@ -1754,4 +1980,5 @@ bool installRBuildTools(const std::string& action)
 }
 
 } // namesapce session
+} // namespace rstudio
 

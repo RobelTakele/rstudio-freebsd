@@ -24,10 +24,19 @@ public class RmdTemplateData
          template_name: "Document", 
          template_formats: [ 
             {
+            format_name: "html_notebook",
+            format_ui_name: "Notebook",
+            format_extension: ".nb.html", 
+            format_options: [ "toc", "toc_depth", "code_folding", "highlight", 
+                              "theme", "css", "fig_width", "fig_height", 
+                              "fig_caption", "number_sections", "smart" ],
+            format_notes: ""
+            },
+            {
             format_name: "html_document",
             format_ui_name: "HTML",
             format_extension: "html",
-            format_options: [ "toc", "highlight", "theme", "css", "fig_width", 
+            format_options: [ "toc", "toc_depth", "highlight", "theme", "css", "fig_width", 
                               "fig_height", "fig_caption", "number_sections",
                               "smart", "self_contained", "keep_md" ],
             format_notes: "Recommended format for authoring (you can switch to PDF or Word output anytime)."
@@ -45,10 +54,10 @@ public class RmdTemplateData
             format_name: "word_document", 
             format_ui_name: "Word",
             format_extension: "docx",
-            format_options: [ "highlight", "fig_width", "fig_height", 
-                              "fig_caption" ],
+            format_options: [ "toc", "toc_depth", "highlight", "fig_width", "fig_height", 
+                              "fig_caption", "keep_md" ],
             format_notes: "Previewing Word documents requires an installation of MS Word (or Libre/Open Office on Linux)."
-            } 
+            },
          ],
          template_options: [ 
             {
@@ -62,7 +71,8 @@ public class RmdTemplateData
             option_name: "toc_depth",
             option_ui_name: "Depth of headers for table of contents", 
             option_type: "integer", 
-            option_default: "2"
+            option_transferable: true,
+            option_default: "3"
             },
             {
             option_name: "self_contained",
@@ -188,6 +198,13 @@ public class RmdTemplateData
             option_nullable: true,
             option_default: "null"
             },
+            {
+            option_name: "code_folding",
+            option_ui_name: "Fold R code chunks", 
+            option_type: "choice", 
+            option_default: "show",
+            option_list: [ "none", "hide", "show" ]
+            },
          ]
          },
          {
@@ -305,7 +322,7 @@ public class RmdTemplateData
             },
             {
             option_name: "fig_height",
-            option_ui_name: "Default figure width (in inches)", 
+            option_ui_name: "Default figure height (in inches)",
             option_category: "Figures",
             option_type: "float", 
             option_default: "4.5"
@@ -321,7 +338,7 @@ public class RmdTemplateData
             {
             option_name: "fig_height",
             option_format: "beamer_presentation",
-            option_ui_name: "Default figure width (in inches)", 
+            option_ui_name: "Default figure height (in inches)",
             option_category: "Figures",
             option_type: "float", 
             option_default: "7"
@@ -421,7 +438,7 @@ public class RmdTemplateData
             },
          ]
          }
-   ];
+      ];
    }-*/;
    
    public final static String DOCUMENT_TEMPLATE = "Document";

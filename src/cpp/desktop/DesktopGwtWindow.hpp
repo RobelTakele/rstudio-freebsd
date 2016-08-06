@@ -18,27 +18,43 @@
 
 #include "DesktopBrowserWindow.hpp"
 
+namespace rstudio {
 namespace desktop {
 
 class GwtWindow : public BrowserWindow
 {
     Q_OBJECT
 public:
-    explicit GwtWindow(bool showToolbar,
-                       bool adjustTitle,
-                       QUrl baseUrl = QUrl(),
-                       QWidget *parent = NULL);
+   explicit GwtWindow(bool showToolbar,
+                      bool adjustTitle,
+                      QString name,
+                      QUrl baseUrl = QUrl(),
+                      QWidget *parent = NULL);
+
+   const std::vector<double>& zoomLevels() const { return zoomLevels_; }
+
+public slots:
+   void zoomIn();
+   void zoomOut();
+
+protected slots:
+   virtual void onJavaScriptWindowObjectCleared();
 
 protected:
    virtual bool event(QEvent* pEvent);
+   virtual double getZoomLevel();
+   virtual void setZoomLevel(double zoomLevel);
 
 private:
    virtual void onActivated()
    {
    }
 
+   std::vector<double> zoomLevels_;
+   double zoomLevel_;
 };
 
 } // namespace desktop
+} // namespace rstudio
 
 #endif // DESKTOP_GWT_WINDOW_HPP

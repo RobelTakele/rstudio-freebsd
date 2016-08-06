@@ -21,6 +21,7 @@
 
 #include <core/system/Environment.hpp>
 
+namespace rstudio {
 namespace core {
 namespace system {
      
@@ -65,7 +66,8 @@ void addToSystemPath(const FilePath& path, bool prepend)
 
 int exitFailure(const Error& error, const ErrorLocation& loggedFromLocation)
 {
-   core::log::logError(error, loggedFromLocation);
+   if (!error.expected())
+      core::log::logError(error, loggedFromLocation);
    return EXIT_FAILURE;
 }
 
@@ -90,4 +92,5 @@ std::string generateShortenedUuid()
 
 } // namespace system
 } // namespace core
+} // namespace rstudio
 

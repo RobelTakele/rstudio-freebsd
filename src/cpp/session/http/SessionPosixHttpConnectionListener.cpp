@@ -18,6 +18,8 @@
 #include <core/system/Environment.hpp>
 #include <core/system/FileMode.hpp>
 
+#include <core/r_util/RSessionContext.hpp>
+
 #include <session/SessionConstants.hpp>
 #include <session/SessionOptions.hpp>
 #include <session/SessionLocalStreams.hpp>
@@ -25,8 +27,9 @@
 #include "SessionTcpIpHttpConnectionListener.hpp"
 #include "SessionLocalStreamHttpConnectionListener.hpp"
 
-using namespace core ;
+using namespace rstudio::core ;
 
+namespace rstudio {
 namespace session {
 
 namespace {
@@ -74,8 +77,9 @@ void initializeHttpConnectionListener()
       else
       {
          // create listener based on options
-         std::string userIdentity = options.userIdentity();
-         FilePath localStreamPath = local_streams::streamPath(userIdentity);
+         r_util::SessionContext context = options.sessionContext();
+         std::string streamFile = r_util::sessionContextFile(context);
+         FilePath localStreamPath = local_streams::streamPath(streamFile);
          s_pHttpConnectionListener = new LocalStreamHttpConnectionListener(
                                           localStreamPath,
                                           core::system::EveryoneReadWriteMode,
@@ -92,3 +96,4 @@ HttpConnectionListener& httpConnectionListener()
 
 
 } // namespace session
+} // namespace rstudio

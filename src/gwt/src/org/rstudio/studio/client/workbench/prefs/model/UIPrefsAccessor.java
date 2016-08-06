@@ -14,26 +14,31 @@
  */
 package org.rstudio.studio.client.workbench.prefs.model;
 
-import org.rstudio.core.client.BrowseCap;
-import org.rstudio.core.client.files.FileSystemItem;
 import org.rstudio.core.client.js.JsObject;
 import org.rstudio.studio.client.application.Desktop;
 import org.rstudio.studio.client.notebook.CompileNotebookPrefs;
 import org.rstudio.studio.client.notebookv2.CompileNotebookv2Prefs;
 import org.rstudio.studio.client.rmarkdown.RmdOutput;
+import org.rstudio.studio.client.rsconnect.model.RSConnectAccount;
 import org.rstudio.studio.client.shiny.model.ShinyViewerType;
 import org.rstudio.studio.client.workbench.exportplot.model.ExportPlotOptions;
+import org.rstudio.studio.client.workbench.model.SessionInfo;
 import org.rstudio.studio.client.workbench.ui.PaneConfig;
+import org.rstudio.studio.client.workbench.views.connections.model.ConnectionOptions;
 import org.rstudio.studio.client.workbench.views.plots.model.SavePlotAsPdfOptions;
+import org.rstudio.studio.client.workbench.views.source.editors.text.FoldStyle;
 import org.rstudio.studio.client.workbench.views.source.editors.text.themes.AceThemes;
 
 import com.google.gwt.core.client.JsArrayString;
 
 public class UIPrefsAccessor extends Prefs
 {
-   public UIPrefsAccessor(JsObject uiPrefs, JsObject projectUiPrefs)
+   public UIPrefsAccessor(SessionInfo sessionInfo, 
+                          JsObject uiPrefs, 
+                          JsObject projectUiPrefs)
    {
       super(uiPrefs, projectUiPrefs);
+      sessionInfo_ = sessionInfo;
    }
    
    public PrefValue<Boolean> showLineNumbers()
@@ -93,14 +98,151 @@ public class UIPrefsAccessor extends Prefs
       return bool("show_indent_guides", false);
    }
    
+   public PrefValue<Boolean> continueCommentsOnNewline()
+   {
+      return bool("continue_comments_on_newline", false);
+   }
+   
+   public static final String EDITOR_KEYBINDINGS_DEFAULT = "default";
+   public static final String EDITOR_KEYBINDINGS_VIM = "vim";
+   public static final String EDITOR_KEYBINDINGS_EMACS = "emacs";
+   
    public PrefValue<Boolean> useVimMode()
    {
       return bool("use_vim_mode", false);
    }
    
+   public PrefValue<Boolean> enableEmacsKeybindings()
+   {
+      return bool("enable_emacs_keybindings", false);
+   }
+   
    public PrefValue<Boolean> insertMatching()
    {
       return bool("insert_matching", true);
+   }
+   
+   public static final String COMPLETION_ALWAYS = "always";
+   public static final String COMPLETION_WHEN_TRIGGERED = "triggered";
+   public static final String COMPLETION_MANUAL = "manual";
+   
+   public PrefValue<Boolean> allowTabMultilineCompletion()
+   {
+      return bool("tab_multiline_completion", false);
+   }
+   
+   public PrefValue<Boolean> showFunctionTooltipOnIdle()
+   {
+      return bool("show_help_tooltip_on_idle", false);
+   }
+   
+   public static final String EDITOR_SURROUND_SELECTION_NEVER               = "never";
+   public static final String EDITOR_SURROUND_SELECTION_QUOTES              = "quotes";
+   public static final String EDITOR_SURROUND_SELECTION_QUOTES_AND_BRACKETS = "quotes_and_brackets";
+   
+   public PrefValue<String> surroundSelection()
+   {
+      return string("surround_selection", EDITOR_SURROUND_SELECTION_QUOTES_AND_BRACKETS);
+   }
+   
+   public PrefValue<Boolean> enableSnippets()
+   {
+      return bool("enable_snippets", true);
+   }
+ 
+   public PrefValue<String> codeComplete()
+   {
+      return string("code_complete", COMPLETION_ALWAYS);
+   }
+   
+   public PrefValue<String> codeCompleteOther()
+   {
+      return string("code_complete_other", COMPLETION_ALWAYS);
+   }
+   
+   public PrefValue<Boolean> alwaysCompleteInConsole()
+   {
+      return bool("always_complete_console", true);
+   }
+   
+   public PrefValue<Integer> alwaysCompleteDelayMs()
+   {
+      return integer("always_complete_delay", 250);
+   }
+   
+   public PrefValue<Integer> alwaysCompleteCharacters()
+   {
+      return integer("always_complete_characters", 3);
+   }
+   
+   public PrefValue<Boolean> insertParensAfterFunctionCompletion()
+   {
+      return bool("insert_parens_after_function_completion", true);
+   }
+   
+   public PrefValue<Boolean> insertSpacesAroundEquals()
+   {
+      return bool("insert_spaces_around_equals", true);
+   }
+   
+   public PrefValue<Boolean> showSignatureTooltips()
+   {
+      return bool("show_signature_tooltips", true);
+   }
+   
+   public PrefValue<Boolean> showDiagnosticsR()
+   {
+      return bool("show_diagnostics_r", true);
+   }
+   
+   public PrefValue<Boolean> showDiagnosticsCpp()
+   {
+      return bool("show_diagnostics_cpp", true);
+   }
+   
+   public PrefValue<Boolean> showDiagnosticsOther()
+   {
+      return bool("show_diagnostics_other", true);
+   }
+   
+   public PrefValue<Boolean> enableStyleDiagnostics()
+   {
+      return bool("enable_style_diagnostics", false);
+   }
+   
+   public PrefValue<Boolean> diagnosticsOnSave()
+   {
+      return bool("diagnostics_on_save", true);
+   }
+   
+   public PrefValue<Boolean> enableBackgroundDiagnostics()
+   {
+      return bool("enable_background_diagnostics", true);
+   }
+   
+   public PrefValue<Integer> backgroundDiagnosticsDelayMs()
+   {
+      return integer("background_diagnostics_delay_ms", 2000);
+   }
+   
+   public PrefValue<Boolean> diagnosticsInRFunctionCalls()
+   {
+      return bool("diagnostics_in_function_calls", true);
+   }
+   
+   public PrefValue<Boolean> checkArgumentsToRFunctionCalls()
+   {
+      return bool("check_arguments_to_r_function_calls", false);
+   }
+   
+   public PrefValue<Boolean> warnIfNoSuchVariableInScope()
+   {
+      return bool("warn_if_no_such_variable_in_scope", false);
+   }
+   
+   public PrefValue<Boolean> warnIfVariableDefinedButNotUsed()
+   {
+      return bool("warn_if_variable_defined_but_not_used", false);
    }
    
    public PrefValue<Boolean> autoAppendNewline()
@@ -133,9 +275,39 @@ public class UIPrefsAccessor extends Prefs
       return bool("focus_console_after_exec", false);
    }
    
+   public PrefValue<String> foldStyle()
+   {
+      return string("fold_style", FoldStyle.FOLD_MARK_BEGIN_ONLY);
+   }
+   
+   public PrefValue<Boolean> saveBeforeSourcing()
+   {
+      return bool("save_before_sourcing", true);
+   }
+   
    public PrefValue<Boolean> syntaxColorConsole()
    {
       return bool("syntax_color_console", false);
+   }
+   
+   public PrefValue<Boolean> scrollPastEndOfDocument()
+   {
+      return bool("scroll_past_end_of_document", false);
+   }
+   
+   public PrefValue<Boolean> highlightRFunctionCalls()
+   {
+      return bool("highlight_r_function_calls", false);
+   }
+   
+   public PrefValue<Integer> truncateLongLinesInConsoleHistory()
+   {
+      return integer("truncate_long_lines_in_console", 1000);
+   }
+   
+   public PrefValue<Boolean> showInlineToolbarForRCodeChunks()
+   {
+      return bool("show_inline_toolbar_for_r_code_chunks", true);
    }
    
    public PrefValue<Boolean> saveAllBeforeBuild()
@@ -170,7 +342,8 @@ public class UIPrefsAccessor extends Prefs
    
    public PrefValue<String> defaultProjectLocation()
    {
-      return string("default_project_location", FileSystemItem.HOME_PATH);
+      return string("default_project_location", 
+                    sessionInfo_.getDefaultProjectDir());
    }
    
    public PrefValue<Boolean> toolbarVisible()
@@ -246,40 +419,19 @@ public class UIPrefsAccessor extends Prefs
       return bool("use_roxygen", false);
    }
    
+   public PrefValue<Boolean> useDataImport()
+   {
+      return bool("use_dataimport", true);
+   }
+   
    public static final String PDF_PREVIEW_NONE = "none";
    public static final String PDF_PREVIEW_RSTUDIO = "rstudio";
    public static final String PDF_PREVIEW_DESKTOP_SYNCTEX = "desktop-synctex";
    public static final String PDF_PREVIEW_SYSTEM = "system";
    
-   public static boolean internalPdfPreviewSupported()
-   {
-      // PDF.js doesn't play nicely with Qt and is therefore only supported
-      // on Cocoa desktop or in server mode
-      return BrowseCap.isCocoaDesktop() || !Desktop.isDesktop();
-   }
-
    public PrefValue<String> pdfPreview()
    {
       return string("pdf_previewer", getDefaultPdfPreview());
-   }
-   
-   // provide a straight value accessor for pdfPreview which will
-   // automatically prevent the use of the internal viewer on osx
-   public String getPdfPreviewValue()
-   {
-      // get the underlying value
-      String pdfPreview = pdfPreview().getValue();
-      
-      // if this system doesn't support the internal previewer, silently map
-      // that option to the system previewer
-      if (!internalPdfPreviewSupported() && 
-          pdfPreview.equals(PDF_PREVIEW_RSTUDIO))
-      {
-         pdfPreview = PDF_PREVIEW_SYSTEM;
-      }
-      
-      // return the (potentially) adjusted value
-      return pdfPreview;
    }
    
    public PrefValue<Boolean> alwaysEnableRnwConcordance()
@@ -363,6 +515,11 @@ public class UIPrefsAccessor extends Prefs
       return string("document_author", "");
    }
    
+   public PrefValue<String> connectionsConnectVia()
+   {
+      return string("connect_via", ConnectionOptions.CONNECT_R_CONSOLE);
+   }
+   
    public PrefValue<String> rmdPreferredTemplatePath()
    {
       return string("rmd_preferred_template_path", "");
@@ -372,7 +529,67 @@ public class UIPrefsAccessor extends Prefs
    {
       return integer("rmd_viewer_type", RmdOutput.RMD_VIEWER_TYPE_WINDOW);
    }
+   
+   public PrefValue<Boolean> showPublishUi()
+   {
+      return bool("show_publish_ui", true);
+   }
 
+   public PrefValue<Boolean> enableRStudioConnect()
+   {
+      return bool("enable_rstudio_connect", false);
+   }
+   
+   public PrefValue<RSConnectAccount> preferredPublishAccount()
+   {
+      return object("preferred_publish_account");
+   }
+   
+   public PrefValue<String> connectionsDbInterface()
+   {
+      return string("connections_db_interface", 
+                    ConnectionOptions.DB_INTERFACE_DPLYR);
+   }
+     
+   public PrefValue<Boolean> showRmdChunkOutputInline()
+   {
+      return bool("rmd_chunk_output_inline", true);
+   }
+   
+   public PrefValue<Integer> preferredDocumentOutlineWidth()
+   {
+      return integer("preferred_document_outline_width", 110);
+   }
+   
+   public PrefValue<Boolean> showDocumentOutlineRmd()
+   {
+      return bool("show_doc_outline_rmd", false);
+   }
+   
+   public PrefValue<Boolean> autoRunSetupChunk()
+   {
+      return bool("auto_run_setup_chunk", true);
+   }
+   
+   public PrefValue<Boolean> hideConsoleOnChunkExecute()
+   {
+      return bool("hide_console_on_chunk_execute", true);
+   }
+   
+   public PrefValue<Boolean> executeMultiLineStatements()
+   {
+      return bool("execute_multi_line_statements", true);
+   }
+   
+   public static final String DOC_OUTLINE_SHOW_SECTIONS_ONLY = "show_sections_only";
+   public static final String DOC_OUTLINE_SHOW_SECTIONS_AND_NAMED_CHUNKS = "show_sections_and_chunks";
+   public static final String DOC_OUTLINE_SHOW_ALL = "show_all";
+   
+   public PrefValue<String> shownSectionsInDocumentOutline()
+   {
+      return string("doc_outline_show", DOC_OUTLINE_SHOW_SECTIONS_ONLY);
+   }
+   
    private String getDefaultPdfPreview()
    {
       if (Desktop.isDesktop())
@@ -383,18 +600,10 @@ public class UIPrefsAccessor extends Prefs
             return PDF_PREVIEW_DESKTOP_SYNCTEX;
          }
          
-         // otherwise default to the system viewer on linux and the internal 
-         // viewer on mac (windows will always have a desktop synctex viewer)
+         // otherwise default to the internal viewer
          else
          {
-            if (BrowseCap.isLinux())
-            {
-               return PDF_PREVIEW_SYSTEM;
-            }
-            else
-            {
-               return PDF_PREVIEW_RSTUDIO;
-            }
+            return PDF_PREVIEW_RSTUDIO;
          }
       }
       
@@ -404,4 +613,6 @@ public class UIPrefsAccessor extends Prefs
          return PDF_PREVIEW_RSTUDIO;
       }
    }
+   
+   private final SessionInfo sessionInfo_;
 }

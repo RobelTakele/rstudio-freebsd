@@ -15,29 +15,40 @@
 
 package org.rstudio.studio.client.rmarkdown.events;
 
-import com.google.gwt.event.shared.EventHandler;
-import com.google.gwt.event.shared.GwtEvent;
+import org.rstudio.core.client.js.JavaScriptSerializable;
+import org.rstudio.studio.client.application.events.CrossWindowEvent;
 
-public class RenderRmdEvent extends GwtEvent<RenderRmdEvent.Handler>
+import com.google.gwt.event.shared.EventHandler;
+
+@JavaScriptSerializable
+public class RenderRmdEvent extends CrossWindowEvent<RenderRmdEvent.Handler>
 {  
    public interface Handler extends EventHandler
    {
       void onRenderRmd(RenderRmdEvent event);
+   }
+   
+   public RenderRmdEvent()
+   {
    }
 
    public RenderRmdEvent(String sourceFile, 
                          int sourceLine,
                          String format,
                          String encoding,
+                         String paramsFile,
                          boolean asTempfile,
-                         boolean asShiny)
+                         int type,
+                         String existingOutputFile)
    {
       sourceFile_ = sourceFile;
       sourceLine_ = sourceLine;
       format_ = format;
       encoding_ = encoding;
+      paramsFile_ = paramsFile;
       asTempfile_ = asTempfile;
-      asShiny_ = asShiny;
+      type_ = type;
+      existingOutputFile_ = existingOutputFile;
    }
 
    public String getSourceFile()
@@ -60,14 +71,24 @@ public class RenderRmdEvent extends GwtEvent<RenderRmdEvent.Handler>
       return encoding_;
    }
    
+   public String getParamsFile()
+   {
+      return paramsFile_;
+   }
+   
    public boolean asTempfile()
    {
       return asTempfile_;
    }
     
-   public boolean asShiny()
+   public int getType()
    {
-      return asShiny_;
+      return type_;
+   }
+   
+   public String getExistingOutputFile()
+   {
+      return existingOutputFile_;
    }
     
    @Override
@@ -82,12 +103,14 @@ public class RenderRmdEvent extends GwtEvent<RenderRmdEvent.Handler>
       handler.onRenderRmd(this);
    }
    
-   private final String sourceFile_;
-   private final int sourceLine_;
-   private final String format_;
-   private final String encoding_;
-   private final boolean asTempfile_;
-   private final boolean asShiny_;
+   private String sourceFile_;
+   private int sourceLine_;
+   private String format_;
+   private String encoding_;
+   private String paramsFile_;
+   private boolean asTempfile_;
+   private int type_;
+   private String existingOutputFile_;
 
    public static final Type<Handler> TYPE = new Type<Handler>();
 }

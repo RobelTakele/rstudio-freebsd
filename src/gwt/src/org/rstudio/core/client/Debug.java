@@ -16,7 +16,10 @@ package org.rstudio.core.client;
 
 import com.google.gwt.core.client.GWT;
 import com.google.gwt.core.client.JavaScriptObject;
+import com.google.gwt.dom.client.Document;
+import com.google.gwt.dom.client.Element;
 import com.google.gwt.json.client.JSONObject;
+import com.google.gwt.safehtml.shared.SafeHtmlUtils;
 import com.google.gwt.user.client.ui.AttachDetachException;
 import org.rstudio.core.client.regex.Pattern;
 import org.rstudio.studio.client.server.ServerError;
@@ -38,6 +41,18 @@ public class Debug
       logToConsole(message) ;
    }
    
+   public static void logWarning(String warning)
+   {
+      printStackTrace("WARNING: " + warning);
+   }
+   
+   public static native void logObject(Object object) /*-{
+      if (typeof(console) != "undefined")
+      {
+         console.log(object);
+      }
+   }-*/;
+   
    public static native void logToConsole(String message) /*-{
     if (typeof(console) != "undefined")
     {
@@ -50,7 +65,7 @@ public class Debug
       Debug.log(label + '=' + value);
       return value;
    }
-
+   
    public static void printStackTrace(String label)
    {
       StringBuffer buf = new StringBuffer(label + "\n");
@@ -64,6 +79,11 @@ public class Debug
    public static void logError(ServerError error)
    {
       Debug.log(error.toString());
+   }
+   
+   public static void logException(Exception e)
+   {
+      Debug.log(e.toString());
    }
 
    /**
@@ -86,6 +106,11 @@ public class Debug
    {
       Debug.log(new JSONObject(object).toString());
    }
+   
+   public static native void prettyPrint(JavaScriptObject obj) /*-{
+      var str = JSON.stringify(obj, undefined, 2);
+      console.log(str);
+   }-*/ ;
 
    public static void logAttachDetachException(AttachDetachException ade)
    {
@@ -116,4 +141,23 @@ public class Debug
       }
       devlog(format);
    }
+   
+   public static void logToRConsole(String message)
+   {
+      Element consoleEl = Document.get().getElementById("rstudio_console_output");
+      if (consoleEl == null)
+         return;
+      
+      Element textEl = Document.get().createSpanElement();
+      String safe = SafeHtmlUtils.fromString(message).asString();
+      textEl.setInnerHTML("* " + safe);
+      consoleEl.appendChild(textEl);
+      consoleEl.appendChild(Document.get().createBRElement());
+      consoleEl.setScrollTop(Integer.MAX_VALUE);
+   }
+   
+   public static native void breakpoint() /*-{
+      debugger;
+   }-*/;
+      
 }

@@ -33,6 +33,7 @@
 #define FORMAT QSettings::IniFormat
 #endif
 
+namespace rstudio {
 namespace desktop {
 
 class Options;
@@ -84,14 +85,12 @@ public:
    core::FilePath scratchTempDir(core::FilePath defaultPath=core::FilePath());
    void cleanUpScratchTempDir();
 
-   bool webkitDevTools();
-
    bool runDiagnostics() { return runDiagnostics_; }
 
 private:
    Options() : settings_(FORMAT, QSettings::UserScope,
-                         QString::fromAscii("RStudio"),
-                         QString::fromAscii("desktop")),
+                         QString::fromUtf8("RStudio"),
+                         QString::fromUtf8("desktop")),
                runDiagnostics_(false)
    {
    }
@@ -107,5 +106,6 @@ private:
 };
 
 } // namespace desktop
+} // namespace rstudio
 
 #endif // DESKTOP_OPTIONS_HPP

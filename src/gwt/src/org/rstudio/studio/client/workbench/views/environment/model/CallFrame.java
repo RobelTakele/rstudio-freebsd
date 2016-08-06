@@ -85,10 +85,9 @@ public class CallFrame extends JavaScriptObject
        return this.is_hidden;
    }-*/;
    
-   public final boolean isSourceEquiv() 
-   {
-      return getFunctionName() == "eval" && hasRealSrcref();
-   }
+   public final native boolean isSourceEquiv() /*-{
+      return this.is_source_equiv;
+   }-*/;
 
    public final DebugFilePosition getRange() 
    {
@@ -109,7 +108,8 @@ public class CallFrame extends JavaScriptObject
       if (fileName.length() > 0 &&
           !fileName.equalsIgnoreCase("NULL") &&
           !fileName.equalsIgnoreCase("<tmp>") &&
-          !fileName.equalsIgnoreCase("<text>"))
+          !fileName.equalsIgnoreCase("<text>") &&
+          !fileName.equalsIgnoreCase("~/.active-rstudio-document"))
       {
          return true;
       }

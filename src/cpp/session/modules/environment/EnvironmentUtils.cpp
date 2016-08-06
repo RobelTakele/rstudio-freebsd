@@ -15,16 +15,15 @@
 
 #include "EnvironmentUtils.hpp"
 
-#include <algorithm>
-
 #include <r/RExec.hpp>
 #include <r/RJson.hpp>
 #include <core/FileSerializer.hpp>
+#include <core/FileUtils.hpp>
 #include <session/SessionModuleContext.hpp>
 
+using namespace rstudio::core;
 
-using namespace core;
-
+namespace rstudio {
 namespace session {
 namespace modules {
 namespace environment {
@@ -149,8 +148,7 @@ bool functionDiffersFromSource(
       const std::string& functionCode)
 {
    std::string fileName;
-   Error error = r::exec::RFunction(".rs.sourceFileFromRef", srcRef)
-                 .call(&fileName);
+   Error error = sourceFileFromRef(srcRef, &fileName);
    if (error)
    {
       LOG_ERROR(error);
@@ -167,6 +165,17 @@ bool functionDiffersFromSource(
    {
       return true;
    }
+
+#ifdef WIN32
+   // on Windows, check for reserved device names--attempting to read from
+   // these may hang the session. source() can put things besides file names
+   // in the source file attribute (for instance, the name of a variable
+   // containing a connection).
+   if (file_utils::isWindowsReservedName(fileName))
+   {
+       return true;
+   }
+#endif
 
    // make sure the file exists and isn't a directory
    FilePath sourceFilePath = module_context::resolveAliasedPath(fileName);
@@ -195,7 +204,13 @@ bool functionDiffersFromSource(
       LOG_ERROR(error);
       return true;
    }
-   return functionCode != fileContent;
+
+   // ignore leading/trailing whitespace
+   std::string trimmedFunctionCode(functionCode);
+   boost::algorithm::trim(trimmedFunctionCode);
+   boost::algorithm::trim(fileContent);
+
+   return trimmedFunctionCode != fileContent;
 }
 
 // given a source reference and a JSON object, add the line and character data
@@ -218,6 +233,19 @@ void sourceRefToJson(const SEXP srcref, json::Object* pObject)
    }
 }
 
+Error sourceFileFromRef(const SEXP srcref, std::string* pFileName)
+{
+   r::sexp::Protect protect;
+   SEXP fileName;
+   Error error = r::exec::RFunction(".rs.sourceFileFromRef", srcref)
+                 .call(&fileName, &protect);
+   if (error)
+       return error;
+
+   return r::sexp::extract(fileName, pFileName, true);
+}
+
 } // namespace environment
 } // namespace modules
 } // namespace session
+} // namespace rstudio

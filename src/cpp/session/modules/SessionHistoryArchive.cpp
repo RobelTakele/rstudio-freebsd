@@ -31,8 +31,9 @@
 #define kHistoryDatabase "history_database"
 #define kHistoryMaxBytes (750*1024)  // rotate/remove every 750K
 
-using namespace core;
+using namespace rstudio::core;
 
+namespace rstudio {
 namespace session {
 namespace modules { 
 namespace history {
@@ -66,6 +67,7 @@ void rotateHistoryDatabase()
 
 void writeEntry(double timestamp, const std::string& command, std::ostream* pOS)
 {
+   // write to local disk
    *pOS << std::fixed << std::setprecision(0)
         << timestamp << ":" << command;
 }
@@ -214,4 +216,5 @@ void HistoryArchive::migrateRhistoryIfNecessary()
 } // namespace history
 } // namespace modules
 } // namesapce session
+} // namespace rstudio
 

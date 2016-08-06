@@ -22,6 +22,7 @@
 #include <core/Log.hpp>
 #include <core/Thread.hpp>
 
+namespace rstudio {
 namespace core {
 namespace http {
 
@@ -75,6 +76,15 @@ boost::posix_time::ptime Request::ifModifiedSince() const
       return ptime(not_a_date_time);
    }
       
+}
+
+std::string Request::path() const
+{
+   std::string::size_type pos = uri().find('?');
+   if (pos != std::string::npos)
+      return uri().substr(0, pos);
+   else
+      return uri();
 }
 
 std::string Request::queryString() const
@@ -251,4 +261,5 @@ std::ostream& operator << (std::ostream& stream, const Request& r)
 
 } // namespacce http
 } // namespace core
+} // namespace rstudio
 

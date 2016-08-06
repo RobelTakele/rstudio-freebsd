@@ -15,12 +15,13 @@
 
 #include <server/ServerErrorCategory.hpp>
 
+namespace rstudio {
 namespace server {
 
 class ServerErrorCategory : public boost::system::error_category
 {
 public:
-   virtual const char * name() const;
+   virtual const char * name() const BOOST_NOEXCEPT;
    virtual std::string message( int ev ) const;
 };
 
@@ -30,7 +31,7 @@ const boost::system::error_category& serverCategory()
    return serverErrorCategoryConst ;
 }
 
-const char * ServerErrorCategory::name() const
+const char * ServerErrorCategory::name() const BOOST_NOEXCEPT
 {
    return "server" ;
 }
@@ -46,6 +47,10 @@ std::string ServerErrorCategory::message( int ev ) const
 
      case errc::SessionUnavailableError:
          message = "Session unavailable error";
+         break;
+
+     case errc::InvalidSessionScopeError:
+         message = "Invalid session scope error";
          break;
          
       default:
@@ -73,4 +78,13 @@ bool isSessionUnavailableError(const core::Error& error)
       return false;
 }
 
+bool isInvalidSessionScopeError(const core::Error& error)
+{
+   if (error.code() == server::errc::InvalidSessionScopeError)
+      return true;
+   else
+      return false;
+}
+
 } // namespace server
+} // namespace rstudio

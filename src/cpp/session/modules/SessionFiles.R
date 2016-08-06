@@ -35,5 +35,31 @@
 })
 
 .rs.addJsonRpcHandler("list_all_files", function(path, pattern) {
-   list.files(path, pattern=pattern, recursive=T)
+   list.files(path, pattern = pattern, recursive = TRUE)
+})
+
+.rs.addJsonRpcHandler("ensure_file_exists", function(path)
+{
+   if (!file.exists(path))
+      if (!file.create(path, recursive = TRUE))
+         return(.rs.scalar(FALSE))
+   
+   .rs.scalar(identical(file.info(path)$isdir, FALSE))
+})
+
+.rs.addFunction("scanFiles", function(path,
+                                      pattern,
+                                      asRelativePath = TRUE,
+                                      maxCount = 200L)
+{
+   .Call("rs_scanFiles",
+         as.character(path),
+         as.character(pattern),
+         as.logical(asRelativePath),
+         as.integer(maxCount))
+})
+
+.rs.addFunction("readLines", function(filePath)
+{
+   .Call("rs_readLines", path.expand(filePath))
 })

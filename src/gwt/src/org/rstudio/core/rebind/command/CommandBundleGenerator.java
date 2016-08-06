@@ -31,11 +31,13 @@ import org.xml.sax.InputSource;
 
 import javax.xml.xpath.XPathConstants;
 import javax.xml.xpath.XPathFactory;
+
 import java.io.PrintWriter;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * This generator runs at compile time (like all GWT Generators) and creates
@@ -84,7 +86,6 @@ class CommandBundleGeneratorHelper
       commandMethods_ = getMethods(true, false, false);
       menuMethods_ = getMethods(false, true, false);
       shortcutsMethods_ = getMethods(false, false, true);
-      resourceMap_ = context_.getResourcesOracle().getResourceMap();
       packageName_ = bundleType_.getPackage().getName();
    }
 
@@ -319,14 +320,15 @@ class CommandBundleGeneratorHelper
       setProperty(writer, name, props.get(name), "label");
       setProperty(writer, name, props.get(name), "buttonLabel");
       setProperty(writer, name, props.get(name), "menuLabel");
+      setProperty(writer, name, props.get(name), "windowMode");
+      setProperty(writer, name, props.get(name), "context");
       // Any additional textual properties would be added here...
 
       setPropertyBool(writer, name, props.get(name), "visible");
       setPropertyBool(writer, name, props.get(name), "enabled");
-      setPropertyBool(writer, name, props.get(name),
-                      "preventShortcutWhenDisabled");
       setPropertyBool(writer, name, props.get(name), "checkable");
       setPropertyBool(writer, name, props.get(name), "checked");
+      setPropertyBool(writer, name, props.get(name), "rebindable");
       
       if (images.hasImage(name))
       {
@@ -413,12 +415,13 @@ class CommandBundleGeneratorHelper
       factory.addImplementedInterface("ClientBundle");
       SourceWriter writer = factory.createSourceWriter(context_, printWriter);
 
+      Set<String> resourceNames = context_.getResourcesOracle().getPathNames();
       for (JMethod method : commandMethods_)
       {
          String commandId = method.getName();
 
          String key = packageName_.replace('.', '/') + "/" + commandId + ".png";
-         if (resourceMap_.containsKey(key))
+         if (resourceNames.contains(key))
          {
             writer.println("ImageResource " + commandId + "();");
             iri.addImage(commandId);
@@ -458,7 +461,7 @@ class CommandBundleGeneratorHelper
       {
          String resourceName =
                bundleType_.getQualifiedSourceName().replace('.', '/') + ".cmd.xml";
-         Resource resource = resourceMap_.get(resourceName);
+         Resource resource = context_.getResourcesOracle().getResource(resourceName);
          if (resource == null)
             return null;
 
@@ -482,7 +485,6 @@ class CommandBundleGeneratorHelper
    private final JMethod[] menuMethods_;
    @SuppressWarnings("unused")
    private final JMethod[] shortcutsMethods_;
-   private final Map<String, Resource> resourceMap_;
    private final String packageName_;
    private String simpleName_;
 }

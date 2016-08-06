@@ -20,24 +20,28 @@
 
 #include <server/ServerOptions.hpp>
 
+namespace rstudio {
 namespace server {
 namespace auth {
 
 bool validateUser(
   const std::string& username,
   const std::string& requiredGroup,
-  bool groupFailureWarning);
+  unsigned int minimumUserId,
+  bool failureWarning);
 
 inline bool validateUser(const std::string& username)
 {
    return validateUser(username,
                        server::options().authRequiredUserGroup(),
+                       server::options().authMinimumUserId(),
                        true);
 }
 
 
 } // namespace auth
 } // namespace server
+} // namespace rstudio
 
 #endif // SERVER_AUTH_VALIDATE_USER_HPP
 

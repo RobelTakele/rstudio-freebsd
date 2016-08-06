@@ -14,7 +14,11 @@
 #
 
 # target environment for rstudio supplemental tools
-.rs.Env <- attach(NULL,name="tools:rstudio")
+.rs.Env <- attach(NULL, name="tools:rstudio")
+assign(".rs.toolsEnv", envir = .rs.Env, function() { .rs.Env })
+
+# environment for completion hooks
+assign(".rs.RCompletionHooksEnv", new.env(parent = emptyenv()), envir = .rs.Env)
 
 # add a function to the tools:rstudio environment
 assign( envir = .rs.Env, ".rs.addFunction", function(
@@ -27,11 +31,25 @@ assign( envir = .rs.Env, ".rs.addFunction", function(
    environment(.rs.Env[[fullName]]) <- .rs.Env
 })
 
+# add a global (non-scoped) variable to the tools:rstudio environment
+assign(envir = .rs.Env, ".rs.addGlobalVariable", function(name, var)
+{ 
+   assign(name, var, .rs.Env)
+   environment(.rs.Env[[name]]) <- .rs.Env
+})
+
 # add a global (non-scoped) function to the tools:rstudio environment
 assign( envir = .rs.Env, ".rs.addGlobalFunction", function(name, FN)
 { 
    assign(name, FN, .rs.Env)
    environment(.rs.Env[[name]]) <- .rs.Env
+})
+
+# add an rpc handler to the tools:rstudio environment
+.rs.addFunction( "addApiFunction", function(name, FN)
+{
+   fullName = paste("api.", name, sep="")
+   .rs.addFunction(fullName, FN)
 })
 
 assign( envir = .rs.Env, ".rs.setVar", function(name, var)
@@ -47,16 +65,48 @@ assign( envir = .rs.Env, ".rs.clearVar", function(name)
    remove(list=fullName, pos=.rs.Env)
 })
 
+assign(envir = .rs.Env, ".rs.getVar", function(name)
+{
+   fullName <- paste(".rs.", name, sep = "")
+   .rs.Env[[fullName]]
+})
+
 .rs.addFunction( "evalInGlobalEnv", function(code)
 {
    eval(parse(text=code), envir=globalenv())
+})
+
+# attempts to restore the global environment from a file
+# on success, returns an empty string; on failure, returns
+# the error message
+.rs.addFunction("restoreGlobalEnvFromFile", function(path)
+{
+   status <- try(load(path, envir = .GlobalEnv), silent = TRUE)
+   if (!inherits(status, "try-error"))
+      return("")
+   
+   # older versions of R don't provide a 'condition' attribute
+   # for 'try()' errors
+   condition <- attr(status, "condition")
+   if (is.null(condition)) {
+      if (is.character(status))
+         return(paste(c(status), collapse = "\n"))
+      else
+         return("Unknown Error")
+   }
+   
+   # has condition, but no message? should not happen
+   if (!"message" %in% names(condition))
+      return("Unknown Error")
+   
+   paste(condition$message, collapse = "\n")
 })
 
 # save current state of options() to file
 .rs.addFunction( "saveOptions", function(filename)
 {
    opt = options();
-   save(opt, file=filename)
+   suppressWarnings(save(opt, file=filename))
 })
 
 # restore options() from file
@@ -124,9 +174,13 @@ assign( envir = .rs.Env, ".rs.clearVar", function(name)
 # save an environment to a file
 .rs.addFunction( "saveEnvironment", function(env, filename)
 {
-   save(list = ls(envir = env, all.names = TRUE),
-        file = filename,
-        envir = env)
+   # suppress warnings emitted here, as they are not actionable
+   # by the user (and seem to be harmless)
+   suppressWarnings(
+      save(list = ls(envir = env, all.names = TRUE),
+           file = filename,
+           envir = env)
+   )
    
    invisible (NULL)
 })
@@ -165,6 +219,23 @@ assign( envir = .rs.Env, ".rs.clearVar", function(name)
    invisible(.Call("rs_activateGD"))
 })
 
+.rs.addFunction( "newDesktopGraphicsDevice", function()
+{
+   sysName <- Sys.info()[['sysname']]
+   if (identical(sysName, "Windows"))
+      windows()
+   else if (identical(sysName, "Darwin"))
+      quartz()
+   else if (capabilities("X11"))
+      X11()
+   else {
+      warning("Unable to create a new graphics device ",
+              "(RStudio device already active and only a ",
+              "single RStudio device is supported)", 
+              call. = FALSE)
+   }
+})
+
 # record an object to a file
 .rs.addFunction( "saveGraphicsSnapshot", function(snapshot, filename)
 {
@@ -175,6 +246,22 @@ assign( envir = .rs.Env, ".rs.clearVar", function(name)
    class(plot) <- "recordedplot"
    
    save(plot, file=filename)
+})
+
+.rs.addFunction("GEplayDisplayList", function()
+{
+   tryCatch(
+      .Call("rs_GEplayDisplayList"),
+      error = function(e) warning(e)
+   )
+})
+
+.rs.addFunction("GEcopyDisplayList", function(fromDevice)
+{
+   tryCatch(
+      .Call("rs_GEcopyDisplayList", fromDevice),
+      error = function(e) warning(e)
+   )
 })
 
 # record an object to a file
@@ -356,7 +443,7 @@ assign( envir = .rs.Env, ".rs.clearVar", function(name)
 })
 
 # replacing an internal R function
-.rs.addFunction( "registerReplaceHook", function(name, package, hook)
+.rs.addFunction( "registerReplaceHook", function(name, package, hook, keepOriginal)
 {
    hookFactory <- function(original) function(...) .rs.callAs(name,
                                                              hook, 
@@ -416,12 +503,19 @@ assign( envir = .rs.Env, ".rs.clearVar", function(name)
       .rs.setCRANRepos(reposUrl)
 })
 
+
+.rs.addFunction( "isCRANReposFromSettings", function()
+{
+   !is.null(attr(getOption("repos"), "RStudio"))
+})
+
+
 .rs.addFunction( "setCRANReposFromSettings", function(reposUrl)
 {
    # only set the repository if the repository was set by us
    # in the first place (it wouldn't be if the user defined a
    # repository in .Rprofile or called setRepositories directly)
-   if (!is.null(attr(getOption("repos"), "RStudio")))
+   if (.rs.isCRANReposFromSettings())
       .rs.setCRANRepos(reposUrl)
 })
 
@@ -586,4 +680,304 @@ assign( envir = .rs.Env, ".rs.clearVar", function(name)
    } else {
       FALSE
    }
+})
+
+.rs.addFunction("rVersionString", function() {
+   as.character(getRversion())
+})
+
+.rs.addFunction("listDirs", function(dir = ".", full.names = TRUE, recursive = FALSE)
+{
+   # Normalize directory path
+   if (!file.exists(dir))
+      return(character())
+   dir <- normalizePath(dir, winslash = "/", mustWork = TRUE)
+   
+   # Shortcut if we have 'list.dirs'.
+   if (exists("list.dirs", envir = .BaseNamespaceEnv))
+      return(list.dirs(dir, full.names = full.names, recursive = recursive))
+   
+   
+   # Otherwise, use 'list.files' and filter results.
+   hasIncludeDirs <- "include.dirs" %in% names(formals(base::list.files))
+   args <- if (hasIncludeDirs)
+   {
+      list(path = dir,
+           full.names = full.names,
+           recursive = recursive,
+           include.dirs = TRUE)
+   }
+   else
+   {
+      list(path = dir,
+           full.names = full.names,
+           recursive = recursive)
+   }
+   
+   do.call(base::list.files, args)
+})
+
+.rs.addFunction("listFilesFuzzy", function(directory, token)
+{
+   pattern <- if (nzchar(token))
+      paste("^", .rs.asCaseInsensitiveRegex(.rs.escapeForRegex(token)), sep = "")
+   
+   # Manually construct a call to `list.files` which should work across
+   # versions of R >= 2.11.
+   formals <- as.list(formals(base::list.files))
+   
+   formals$path <- directory
+   formals$pattern <- pattern
+   formals$all.files <- TRUE
+   formals$full.names <- TRUE
+   
+   # NOTE: not available in older versions of R, but defaults to FALSE
+   # with newer versions.
+   if ("include.dirs" %in% names(formals))
+      formals[["include.dirs"]] <- TRUE
+   
+   # NOTE: not available with older versions of R, but defaults to FALSE
+   if ("no.." %in% names(formals))
+      formals[["no.."]] <- TRUE
+   
+   # Generate the call, and evaluate it.
+   result <- do.call(base::list.files, formals)
+   
+   # Clean up duplicated '/'.
+   absolutePaths <- gsub("/+", "/", result)
+   
+   # Remove un-needed `.` paths. These paths will look like
+   #
+   #     <path>/.
+   #     <path>/..
+   #
+   # This is only unnecessary if we couldn't use 'no..'.
+   if (!("no.." %in% names(formals)))
+   {
+      absolutePaths <- grep("/\\.+$",
+                            absolutePaths,
+                            invert = TRUE,
+                            value = TRUE)
+   }
+   
+   absolutePaths
+})
+
+.rs.addFunction("callWithRDS", function(functionName, inputLocation, outputLocation)
+{
+   params = readRDS(inputLocation)
+   result <- do.call(functionName, params)
+
+   saveRDS(file = outputLocation, object = result)
+})
+
+.rs.addFunction("readFile", function(file, binary = FALSE)
+{
+   size <- file.info(file)$size
+   if (binary)
+      readBin(file, "raw", size)
+   else
+      readChar(file, size, TRUE)
+})
+
+.rs.addFunction("fromJSON", function(string)
+{
+   .Call("rs_fromJSON", string)
+})
+
+.rs.addFunction("stringBuilder", function()
+{
+   (function() {
+      indent_ <- "  "
+      indentSize_ <- 0
+      data_ <- character()
+      
+      indented_ <- function(data) {
+         indent <- paste(character(indentSize_ + 1), collapse = indent_)
+         for (i in seq_along(data))
+            if (is.list(data[[i]]))
+               data[[i]] <- indented_(data[[i]])
+            else
+               data[[i]] <- paste(indent, data[[i]], sep = "")
+            data
+      }
+      
+      list(
+         
+         append = function(...) {
+            data_ <<- c(data_, indented_(list(...)))
+         },
+         
+         appendf = function(...) {
+            data_ <<- c(data_, indented_(sprintf(...)))
+         },
+         
+         indent = function() {
+            indentSize_ <<- indentSize_ + 1
+         },
+         
+         unindent = function() {
+            indentSize_ <<- max(0, indentSize_ - 1)
+         },
+         
+         data = function() unlist(data_)
+         
+      )
+      
+   })()
+})
+
+.rs.addFunction("listBuilder", function()
+{
+   (function() {
+      capacity_ <- 1024
+      index_ <- 0
+      data_ <- vector("list", capacity_)
+      
+      append <- function(data) {
+         
+         # increment index and check capacity
+         index_ <<- index_ + 1
+         if (index_ > capacity_) {
+            capacity_ <<- capacity_ * 2
+            data_[capacity_] <<- list(NULL)
+         }
+         
+         # append data
+         if (is.null(data))
+            data_[index_] <<- list(NULL)
+         else
+            data_[[index_]] <<- data
+      }
+      
+      data <- function() {
+         data_[seq_len(index_)]
+      }
+      
+      clear <- function() {
+         capacity_ <<- 1024
+         index_ <<- 0
+         data_ <<- vector("list", capacity_)
+      }
+      
+      empty <- function() {
+         index_ == 0
+      }
+      
+      list(append = append, clear = clear, empty = empty, data = data)
+      
+   })()
+})
+
+.rs.addFunction("regexMatches", function(pattern, x) {
+   matches <- gregexpr(pattern, x, perl = TRUE)[[1]]
+   starts <- attr(matches, "capture.start")
+   ends <- starts + attr(matches, "capture.length") - 1
+   substring(x, starts, ends)
+})
+
+.rs.addFunction("withChangedExtension", function(path, ext)
+{
+   ext <- sub("^\\.+", "", ext)
+   if (.rs.endsWith(path, ".nb.html"))
+      paste(substring(path, 1, nchar(path) - 8), ext, sep = ".")
+   else if (.rs.endsWith(path, ".tar.gz"))
+      paste(substring(path, 1, nchar(path) - 7), ext, sep = ".")
+   else
+      paste(tools::file_path_sans_ext(path), ext, sep = ".")
+})
+
+.rs.addFunction("dirExists", function(path)
+{
+   utils::file_test('-d', path)
+})
+
+.rs.addFunction("ensureDirectory", function(path)
+{
+   if (file.exists(path)) {
+      if (!utils::file_test("-d", path))
+         stop("file at path '", path, "' exists but is not a directory")
+      return(TRUE)
+   }
+   
+   success <- dir.create(path, recursive = TRUE)
+   if (!success)
+      stop("failed to create directory at path '", path, "'")
+   
+   TRUE
+})
+
+# adapted from merge_lists in the rmarkdown package
+.rs.addFunction("mergeLists", function(baseList, overlayList, recursive = TRUE) {
+  if (length(baseList) == 0)
+    overlayList
+  else if (length(overlayList) == 0)
+    baseList
+  else {
+    mergedList <- baseList
+    for (name in names(overlayList)) {
+      base <- baseList[[name]]
+      overlay <- overlayList[[name]]
+      if (is.list(base) && is.list(overlay) && recursive)
+        mergedList[[name]] <- merge_lists(base, overlay)
+      else {
+        mergedList[[name]] <- NULL
+        mergedList <- append(mergedList,
+                              overlayList[which(names(overlayList) %in% name)])
+      }
+    }
+    mergedList
+  }
+})
+
+.rs.addFunction("nBytes", function(x) {
+   nchar(x, type = "bytes")
+})
+
+.rs.addFunction("randomString", function(prefix = "",
+                                         postfix = "",
+                                         candidates = c(letters, LETTERS, 0:9),
+                                         n = 16L)
+{
+   sampled <- sample(candidates, n, TRUE)
+   paste(prefix, paste(sampled, collapse = ""), postfix, sep = "")
+})
+
+.rs.addFunction("rbindList", function(data)
+{
+   result <- do.call(mapply, c(c, data, USE.NAMES = FALSE, SIMPLIFY = FALSE))
+   names(result) <- names(data[[1]])
+   as.data.frame(result, stringsAsFactors = FALSE)
+})
+
+.rs.addFunction("replaceBinding", function(binding, package, override)
+{
+   # override in namespace
+   if (!requireNamespace(package, quietly = TRUE))
+      stop(sprintf("Failed to load namespace for package '%s'", package))
+   
+   namespace <- asNamespace(package)
+   
+   # get reference to original binding
+   original <- get(binding, envir = namespace)
+   
+   # replace the binding
+   if (is.function(override))
+      environment(override) <- namespace
+   
+   do.call("unlockBinding", list(binding, namespace))
+   assign(binding, override, envir = namespace)
+   do.call("lockBinding", list(binding, namespace))
+   
+   # if package is attached, override there as well
+   searchPathName <- paste("package", package, sep = ":")
+   if (searchPathName %in% search()) {
+      env <- as.environment(searchPathName)
+      do.call("unlockBinding", list(binding, env))
+      assign(binding, override, envir = env)
+      do.call("lockBinding", list(binding, env))
+   }
+   
+   # return original
+   original
 })

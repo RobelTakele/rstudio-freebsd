@@ -50,15 +50,19 @@ public interface ThemeStyles extends CssResource
           
    String closeTabButton();
 
+   String fixedWidthFont();
+   
    String tabLayout();
    String tabLayoutLeft();
    String tabLayoutCenter();
    String tabLayoutRight();
    String dirtyTab();
    String dirtyTabIndicator();
+   String docTabLabel();
 
    String toolbar();
    String secondaryToolbar();
+   String secondaryToolbarPanel();
    String globalToolbar();
    String desktopGlobalToolbar();
    String webGlobalToolbar();
@@ -67,7 +71,10 @@ public interface ThemeStyles extends CssResource
    String noLabel();
    String toolbarButtonPushed();
    String emptyProjectMenu();
+   String menuSubheader();
 
+   String menuRightImage();
+   
    String scrollableMenuBar();
 
    String moduleTabPanel();
@@ -80,9 +87,13 @@ public interface ThemeStyles extends CssResource
    String toolbarButtonMenu();
    String toolbarButtonMenuOnly();
    String toolbarButtonLabel();
+   String toolbarButtonInfoLabel();
    String toolbarButtonLeftImage();
    String toolbarButtonRightImage();
    String toolbarFileLabel();
+   
+   String toolbarButtonLatched();
+   String toolbarButtonLatchable();
    
    String windowFrameToolbarButton();
 
@@ -116,10 +127,9 @@ public interface ThemeStyles extends CssResource
    String applicationHeaderStrong();
           
    String environmentDataFrameCol();
+   String environmentFunctionCol();
 
    String odd();
-   
-   String linkDownArrow();
    
    String showFile();
    String showFileFixed();
@@ -129,7 +139,6 @@ public interface ThemeStyles extends CssResource
    String fileUploadTipLabel();
    
    String fileList();
-   String parentDirIcon();
 
    String locatorPanel();
 
@@ -156,4 +165,12 @@ public interface ThemeStyles extends CssResource
    String presentationNavigatorLabel();
    
    String notResizable();
+   
+   String dialogTabPanel();
+   
+   String handCursor();
+   
+   String borderedIFrame();
+   
+   String toolbarInfoLabel();
 }

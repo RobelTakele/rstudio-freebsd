@@ -14,15 +14,12 @@
  */
 package org.rstudio.studio.client.workbench.prefs.views;
 
-import com.google.gwt.dom.client.Document;
 import com.google.gwt.dom.client.Style.Unit;
-import com.google.gwt.event.dom.client.DomEvent;
 import com.google.gwt.resources.client.ImageResource;
 import com.google.gwt.user.client.ui.CheckBox;
 import com.google.gwt.user.client.ui.Label;
 import com.google.inject.Inject;
 
-import org.rstudio.core.client.BrowseCap;
 import org.rstudio.core.client.prefs.PreferencesDialogBaseResources;
 import org.rstudio.core.client.widget.HelpButton;
 import org.rstudio.core.client.widget.SelectWidget;
@@ -43,13 +40,9 @@ public class CompilePdfPreferencesPane extends PreferencesPane
       prefs_ = prefs;
       res_ = res;
       PreferencesDialogBaseResources baseRes = PreferencesDialogBaseResources.INSTANCE;
-
-      Label programDefaultsLabel = new Label(
-                           "Program defaults (when not in a project)");
-      programDefaultsLabel.addStyleName(baseRes.styles().headerLabel());
-      nudgeRight(programDefaultsLabel);
-      add(programDefaultsLabel);
-            
+   
+      add(headerLabel("Program defaults (when not in a project)"));
+     
       defaultSweaveEngine_ = new RnwWeaveSelectWidget();
       defaultSweaveEngine_.setValue(
                               prefs.defaultSweaveEngine().getGlobalValue());
@@ -70,10 +63,7 @@ public class CompilePdfPreferencesPane extends PreferencesPane
       spaced(perProjectLabel);
       add(perProjectLabel);
        
-      Label compilationOptionsLabel = new Label("LaTeX editing and compilation");
-      compilationOptionsLabel.addStyleName(baseRes.styles().headerLabel());
-      nudgeRight(compilationOptionsLabel);
-      add(compilationOptionsLabel);
+      add(headerLabel("LaTeX editing and compilation"));
       chkCleanTexi2DviOutput_ = new CheckBox(
                                      "Clean auxiliary output after compile");
       spaced(chkCleanTexi2DviOutput_);
@@ -89,11 +79,9 @@ public class CompilePdfPreferencesPane extends PreferencesPane
       spaced(chkNumberedSections);
       add(chkNumberedSections);
             
-      Label previwingOptionsLabel = new Label("PDF preview");
-      previwingOptionsLabel.addStyleName(baseRes.styles().headerLabel());
-      previwingOptionsLabel.getElement().getStyle().setMarginTop(8, Unit.PX);
-      nudgeRight(previwingOptionsLabel);
-      add(previwingOptionsLabel);
+      Label previewingOptionsLabel = headerLabel("PDF preview");
+      previewingOptionsLabel.getElement().getStyle().setMarginTop(8, Unit.PX);
+      add(previewingOptionsLabel);
      
       pdfPreview_ = new PdfPreviewSelectWidget();
       add(pdfPreview_);
@@ -157,26 +145,13 @@ public class CompilePdfPreferencesPane extends PreferencesPane
                                UIPrefsAccessor.PDF_PREVIEW_DESKTOP_SYNCTEX);
       }
       
-      if (UIPrefsAccessor.internalPdfPreviewSupported())
-      {
-         pdfPreview_.addChoice("RStudio Viewer", 
-                               UIPrefsAccessor.PDF_PREVIEW_RSTUDIO);
-      }
+      pdfPreview_.addChoice("RStudio Viewer", 
+                            UIPrefsAccessor.PDF_PREVIEW_RSTUDIO);
       
       pdfPreview_.addChoice("System Viewer",
                             UIPrefsAccessor.PDF_PREVIEW_SYSTEM);
       
-      pdfPreview_.setValue(prefs_.getPdfPreviewValue());
-      
-      // workaround qt crash on mac desktop
-      if (BrowseCap.isMacintoshDesktop())
-      {
-         DomEvent.fireNativeEvent(Document.get().createChangeEvent(), 
-                                  defaultSweaveEngine_.getListBox());
-         
-         DomEvent.fireNativeEvent(Document.get().createChangeEvent(), 
-                                  defaultLatexProgram_.getListBox());
-      }
+      pdfPreview_.setValue(prefs_.pdfPreview().getValue());
    }
    
    @Override

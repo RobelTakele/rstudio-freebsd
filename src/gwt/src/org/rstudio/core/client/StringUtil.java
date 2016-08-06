@@ -14,6 +14,7 @@
  */
 package org.rstudio.core.client;
 
+import com.google.gwt.core.client.JsArrayString;
 import com.google.gwt.i18n.client.DateTimeFormat;
 import com.google.gwt.i18n.client.NumberFormat;
 import com.google.gwt.user.client.Window;
@@ -24,10 +25,14 @@ import org.rstudio.core.client.regex.Match;
 import org.rstudio.core.client.regex.Pattern;
 import org.rstudio.core.client.regex.Pattern.ReplaceOperation;
 
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.Date;
+import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 
 public class StringUtil
 {
@@ -66,6 +71,17 @@ public class StringUtil
    public static String formatFileSize(long size)
    {
       return formatFileSize(new Long(size).intValue());
+   }
+   
+   // return a friendly (not precise) elapsed time
+   public static String formatElapsedTime(int seconds)
+   {
+      if (seconds < 60)
+         return seconds + " second" + (seconds == 1 ? "" : "s");
+      else if (seconds < 3600)
+         return (seconds / 60) + " minute" + ((seconds / 60) == 1 ? "" : "s");
+      else 
+         return (seconds / 3600) + " hour" + ((seconds / 3600) == 1 ? "" : "s");
    }
    
    // Given a raw size, convert it to a human-readable value 
@@ -191,12 +207,8 @@ public class StringUtil
 
    public static String toRSymbolName(String name)
    {
-      if (!name.matches("^[a-zA-Z_.][a-zA-Z0-9_.]*$")
-          || name.matches("^.[0-9].*$")
-          || isRKeyword(name))
-      {
+      if (!RegexUtil.isSyntacticRIdentifier(name) || isRKeyword(name))
          return "`" + name + "`";
-      }
       else
          return name;
    }
@@ -223,7 +235,17 @@ public class StringUtil
 
       return indent + str.replaceAll("\n", "\n" + indent);
    }
-
+   
+   public static String join(String delimiter, String... strings)
+   {
+      return join(strings, delimiter);
+   }
+   
+   public static String join(String[] collection, String delim)
+   {
+      return join(Arrays.asList(collection), delim);
+   }
+   
    public static String join(Collection<?> collection,
                              String delim)
    {
@@ -349,7 +371,8 @@ public class StringUtil
     * @return
     */
    public static String getCommonPrefix(String[] lines,
-                                        boolean allowPhantomWhitespace)
+                                        boolean allowPhantomWhitespace,
+                                        boolean skipWhitespaceOnlyLines)
    {
       if (lines.length == 0)
          return "";
@@ -385,6 +408,9 @@ public class StringUtil
       for (int i = 1; i < lines.length && prefix.length() > 0; i++)
       {
          String line = notNull(lines[i]);
+         if (line.trim().isEmpty() && skipWhitespaceOnlyLines)
+            continue;
+         
          int len = whitespaceExpansionAllowed ? Math.max(prefix.length(), line.length()) :
                    allowPhantomWhitespace ? prefix.length() :
                    Math.min(prefix.length(), line.length());
@@ -508,6 +534,408 @@ public class StringUtil
       return input.substring(0, 1).toUpperCase() + input.substring(1); 
    }
    
+   public static final native String capitalizeAllWords(String input)
+   /*-{
+      return input.replace(
+         /(?:^|\s)\S/g,
+         function(x) { return x.toUpperCase(); }
+      );
+   }-*/;
+   
+   public static int countMatches(String line, char chr)
+   {
+      return line.length() - line.replace(String.valueOf(chr), "").length();
+   }
+   
+   public static String stripRComment(String string)
+   {
+      boolean inSingleQuotes = false;
+      boolean inDoubleQuotes = false;
+      boolean inQuotes = false;
+      
+      char currentChar = '\0';
+      char previousChar = '\0';
+      
+      int commentIndex = string.length();
+      
+      for (int i = 0; i < string.length(); i++)
+      {
+         currentChar = string.charAt(i);
+         inQuotes = inSingleQuotes || inDoubleQuotes;
+         
+         if (i > 0)
+         {
+            previousChar = string.charAt(i - 1);
+         }
+         
+         if (currentChar == '#' && !inQuotes)
+         {
+            commentIndex = i;
+            break;
+         }
+         
+         if (currentChar == '\'' && !inQuotes)
+         {
+            inSingleQuotes = true;
+            continue;
+         }
+         
+         if (currentChar == '\'' && previousChar != '\\' && inSingleQuotes)
+         {
+            inSingleQuotes = false;
+            continue;
+         }
+         
+         if (currentChar == '"' && !inQuotes)
+         {
+            inDoubleQuotes = true;
+            continue;
+         }
+         
+         if (currentChar == '"' && previousChar != '\\' && inDoubleQuotes)
+         {
+            inDoubleQuotes = false;
+            continue;
+         }
+      }
+      return string.substring(0, commentIndex);
+   }
+   
+   public static String stripBalancedQuotes(String string)
+   {
+      if (string == null)
+         return null;
+      
+      if (string == "")
+         return "";
+      
+      boolean inSingleQuotes = false;
+      boolean inDoubleQuotes = false;
+      boolean inQuotes = false;
+
+      int stringStart = 0;
+
+      char currentChar = '\0';
+      char previousChar = '\0';
+
+      StringBuilder result = new StringBuilder();
+
+      for (int i = 0; i < string.length(); i++)
+      {
+         currentChar = string.charAt(i);
+         inQuotes = inSingleQuotes || inDoubleQuotes;
+
+         if (i > 0)
+         {
+            previousChar = string.charAt(i - 1);
+         }
+
+         if (currentChar == '\'' && !inQuotes)
+         {
+            inSingleQuotes = true;
+            result.append(string.substring(stringStart, i));
+            continue;
+         }
+
+         if (currentChar == '\'' && previousChar != '\\' && inSingleQuotes)
+         {
+            inSingleQuotes = false;
+            stringStart = i + 1;
+            continue;
+         }
+
+         if (currentChar == '"' && !inQuotes)
+         {
+            inDoubleQuotes = true;
+            result.append(string.substring(stringStart, i));
+            continue;
+         }
+
+         if (currentChar == '"' && previousChar != '\\' && inDoubleQuotes)
+         {
+            inDoubleQuotes = false;
+            stringStart = i + 1;
+            continue;
+         }
+      }
+      result.append(string.substring(stringStart, string.length()));
+      return result.toString();
+   }
+   
+   public static String maskStrings(String string)
+   {
+      return maskStrings(string, 'x');
+   }
+   
+   public static String maskStrings(String string,
+                                    char ch)
+   {
+      if (string == null)
+         return null;
+      
+      if (string.length() == 0)
+         return "";
+      
+      boolean inSingleQuotes = false;
+      boolean inDoubleQuotes = false;
+      boolean inQuotes = false;
+
+      char currentChar = '\0';
+      char previousChar = '\0';
+
+      StringBuilder result = new StringBuilder();
+
+      for (int i = 0; i < string.length(); i++)
+      {
+         currentChar = string.charAt(i);
+         inQuotes = inSingleQuotes || inDoubleQuotes;
+         
+         if (i > 0)
+         {
+            previousChar = string.charAt(i - 1);
+         }
+
+         if (currentChar == '\'' && !inQuotes)
+         {
+            inSingleQuotes = true;
+            result.append(currentChar);
+            continue;
+         }
+         else if (currentChar == '\'' && previousChar != '\\' && inSingleQuotes)
+         {
+            inSingleQuotes = false;
+            result.append(currentChar);
+            continue;
+         }
+         else if (currentChar == '"' && !inQuotes)
+         {
+            inDoubleQuotes = true;
+            result.append(currentChar);
+            continue;
+         }
+         else if (currentChar == '"' && previousChar != '\\' && inDoubleQuotes)
+         {
+            inDoubleQuotes = false;
+            result.append(currentChar);
+            continue;
+         }
+         
+         if (inSingleQuotes || inDoubleQuotes)
+            result.append(ch);
+         else
+            result.append(currentChar);
+         
+      }
+      
+      return result.toString();
+   }
+   
+   
+   public static boolean isEndOfLineInRStringState(String string)
+   {
+      if (string == null)
+         return false;
+      
+      if (string == "")
+         return false;
+      
+      boolean inSingleQuotes = false;
+      boolean inDoubleQuotes = false;
+      boolean inQuotes = false;
+
+      char currentChar = '\0';
+      char previousChar = '\0';
+
+      for (int i = 0; i < string.length(); i++)
+      {
+         currentChar = string.charAt(i);
+         inQuotes = inSingleQuotes || inDoubleQuotes;
+
+         if (i > 0)
+         {
+            previousChar = string.charAt(i - 1);
+         }
+         
+         if (currentChar == '#' && !inQuotes)
+         {
+            return false;
+         }
+
+         if (currentChar == '\'' && !inQuotes)
+         {
+            inSingleQuotes = true;
+            continue;
+         }
+
+         if (currentChar == '\'' && previousChar != '\\' && inSingleQuotes)
+         {
+            inSingleQuotes = false;
+            continue;
+         }
+
+         if (currentChar == '"' && !inQuotes)
+         {
+            inDoubleQuotes = true;
+            continue;
+         }
+
+         if (currentChar == '"' && previousChar != '\\' && inDoubleQuotes)
+         {
+            inDoubleQuotes = false;
+            continue;
+         }
+      }
+      
+      return inSingleQuotes || inDoubleQuotes;
+   }
+   
+   public static boolean isSubsequence(String self,
+         String other,
+         boolean caseInsensitive)
+   {
+      return caseInsensitive ?
+            isSubsequence(self.toLowerCase(), other.toLowerCase()) :
+            isSubsequence(self, other)
+      ;
+   }
+   
+   public static boolean isSubsequence(String self,
+         String other)
+   {
+
+      final int self_n = self.length();
+      final int other_n = other.length();
+
+      if (other_n > self_n)
+         return false;
+
+      int self_idx = 0;
+      int other_idx = 0;
+         
+      while (self_idx < self_n)
+      {
+         char selfChar = self.charAt(self_idx);
+         char otherChar = other.charAt(other_idx);
+         
+         if (otherChar == selfChar)
+         {
+            ++other_idx;
+            if (other_idx == other_n)
+            {
+               return true;
+            }
+         }
+         ++self_idx;
+      }
+      return false;
+   }
+   
+   public static List<Integer> subsequenceIndices(String sequence, String query)
+   {
+      List<Integer> result = new ArrayList<Integer>();
+      int querySize = query.length();
+      
+      int prevMatchIndex = -1;
+      for (int i = 0; i < querySize; i++)
+      {
+         int index = sequence.indexOf(query.charAt(i), prevMatchIndex + 1);
+         if (index == -1)
+            continue;
+         
+         result.add(index);
+         prevMatchIndex = index;
+      }
+      
+      return result;
+   }
+   
+   public static String getExtension(String string, int dots)
+   {
+      assert dots > 0;
+      int lastDotIndex = -1;
+      
+      if (dots == 1)
+      {
+         lastDotIndex = string.lastIndexOf('.');
+      }
+      else
+      {
+         String reversed = new StringBuilder(string).reverse().toString();
+         for (int i = 0; i < dots; i++)
+         {
+            lastDotIndex = reversed.indexOf('.', lastDotIndex);
+         }
+         lastDotIndex = string.length() - lastDotIndex;
+      }
+      
+      return lastDotIndex == -1 || lastDotIndex == string.length() - 1 ?
+            "" :
+            string.substring(lastDotIndex + 1, string.length());
+   }
+   
+   public static String getExtension(String string)
+   {
+      return getExtension(string, 1);
+   }
+   
+   public static String getToken(String string,
+                                 int pos,
+                                 String tokenRegex,
+                                 boolean expandForward,
+                                 boolean backOverWhitespace)
+   {
+      if (backOverWhitespace)
+         while (pos > 0 && string.substring(pos - 1, pos).matches("\\s"))
+            --pos;
+      
+      int startPos = Math.max(0, pos - 1);
+      int endPos = Math.min(pos, string.length());
+      
+      while (startPos >= 0 &&
+            string.substring(startPos, startPos + 1).matches(tokenRegex))
+         --startPos;
+      
+      if (expandForward)
+         while (endPos < string.length() &&
+               string.substring(endPos, endPos + 1).matches(tokenRegex))
+            ++endPos;
+      
+      if (startPos >= endPos)
+         return "";
+      
+      return string.substring(startPos + 1, endPos);
+   }
+   
+   public static String repeat(String string, int times)
+   {
+      StringBuilder builder = new StringBuilder();
+      for (int i = 0; i < times; i++)
+         builder.append(string);
+      return builder.toString();
+   }
+   
+   public static ArrayList<Integer> indicesOf(String string, char ch)
+   {
+      ArrayList<Integer> indices = new ArrayList<Integer>();
+      
+      int matchIndex = string.indexOf(ch);
+      while (matchIndex != -1)
+      {
+         indices.add(matchIndex);
+         matchIndex = string.indexOf(ch, matchIndex + 1);
+      }
+      return indices;
+   }
+   
+   @SuppressWarnings("deprecation") // GWT emulation only provides isSpace
+   public static boolean isWhitespace(String string)
+   {
+      for (int i = 0; i < string.length(); i++)
+         if (!Character.isSpace(string.charAt(i)))
+            return false;
+      return true;
+   }
+   
    private static final String[] LABELS = {
          "B",
          "KB",
@@ -515,9 +943,187 @@ public class StringUtil
          "GB",
          "TB"
    };
+   
+   public static boolean isComplementOf(String self, String other)
+   {
+      return COMPLEMENTS.get(self).equals(other);
+   }
+   
+   private static final HashMap<String, String> makeComplementsMap()
+   {
+      HashMap<String, String> map = new HashMap<String, String>();
+      
+      map.put("[", "]");
+      map.put("]", "[");
+      
+      map.put("<", ">");
+      map.put(">", "<");
+      
+      map.put("{", "}");
+      map.put("}", "{");
+      
+      map.put("(", ")");
+      map.put(")", "(");
+      return map;
+   }
+
+   public static String collapse(Map<String, String> map,
+                                 String keyValueSeparator,
+                                 String fieldSeparator)
+   {
+      StringBuilder builder = new StringBuilder();
+      int count = 0;
+      for (Map.Entry<String, String> cursor : map.entrySet())
+      {
+         if (count != 0) builder.append(fieldSeparator);
+         builder.append(cursor.getKey());
+         builder.append(keyValueSeparator);
+         builder.append(cursor.getValue());
+         count++;
+      }
+      return builder.toString();
+   }
+   
+   public static String prettyCamel(String string)
+   {
+      if (isNullOrEmpty(string))
+         return string;
+      
+      if (string.equals(string.toUpperCase()))
+         return string;
+      
+      String result = string.replaceAll("\\s*([A-Z])", " $1");
+      return result.substring(0, 1).toUpperCase() +
+             result.substring(1);
+   }
+   
+   public static native final String escapeRegex(String regexString) /*-{
+      var utils = $wnd.require("mode/utils");
+      return utils.escapeRegExp(regexString);
+   }-*/;
+   
+   public static final String getIndent(String line)
+   {
+      return RE_INDENT.match(line, 0).getGroup(0);
+   }
+   
+   public static final String truncate(String string, int targetLength, String suffix)
+   {
+      if (string.length() <= targetLength)
+         return string;
+      
+      int truncatedSize = targetLength - suffix.length();
+      if (truncatedSize < 0)
+         return string;
+      
+      return string.substring(0, truncatedSize) + suffix;
+   }
+   
+   public static boolean isOneOf(String string, String... candidates)
+   {
+      for (String candidate : candidates)
+         if (candidate.equals(string))
+            return true;
+      return false;
+   }
+   
+   public static boolean isOneOf(char ch, char... candidates)
+   {
+      for (char candidate : candidates)
+         if (ch == candidate)
+            return true;
+      return false;
+   }
+
+   public static final String makeRandomId(int length) 
+   {
+      String alphanum = "0123456789abcdefghijklmnopqrstuvwxyz";
+      String id = "";
+      for (int i = 0; i < length; i++)
+      {
+         id += alphanum.charAt((int)(Math.random() * alphanum.length()));
+      }
+      return id;
+   }
+   
+   public static String ensureQuoted(String string)
+   {
+      String[] quotes = new String[] { "\"", "'", "`" };
+      for (String quote : quotes)
+         if (string.startsWith(quote) && string.endsWith(quote))
+            return string;
+      
+      return "\"" + string.replaceAll("\"", "\\\\\"") + "\"";
+   }
+   
+   public static String stringValue(String string)
+   {
+      String[] quotes = new String[] { "\"", "'", "`" };
+      for (String quote : quotes)
+      {
+         if (string.startsWith(quote) && string.endsWith(quote))
+         {
+            String substring = string.substring(1, string.length() - 1);
+            return substring.replaceAll("\\\\" + quote, quote);
+         }
+      }
+      
+      return string;
+   }
+   
+   public static final native String encodeURI(String string) /*-{
+      return $wnd.encodeURI(string);
+   }-*/;
+   
+   public static final native String normalizeNewLines(String string) /*-{
+      return string.replace(/\r\n|\n\r|\r/g, "\n");
+   }-*/;
+   
+   public static final native JsArrayString split(String string, String delimiter) /*-{
+      return string.split(delimiter);
+   }-*/;
+   
+   public static final HashMap<String, String> COMPLEMENTS =
+         makeComplementsMap();
+   
+   /**
+    * Computes a 32-bit CRC checksum from an arbitrary string.
+    * 
+    * @param str The string on which to compute the checksum
+    * @return The checksum value, as a hexadecimal string
+    */
+   public static final native String crc32(String str)/*-{
+      // based on: https://stackoverflow.com/questions/18638900/javascript-crc32
+      var genCrc32Table = function() 
+      {
+         var c, crcTable = [];
+         for (var n = 0; n < 256; n++) 
+         {
+            c = n;
+            for (var k = 0; k < 8; k++)
+            {
+                c = ((c&1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1));
+            }
+            crcTable[n] = c;
+         }
+         return crcTable;
+      }
+
+      var crcTable = $wnd.rs_crc32Table || ($wnd.rs_crc32Table = genCrc32Table());
+      var crc = 0 ^ (-1);
+
+      for (var i = 0; i < str.length; i++ ) 
+      {
+         crc = (crc >>> 8) ^ crcTable[(crc ^ str.charCodeAt(i)) & 0xFF];
+      }
+
+      return ((crc ^ (-1)) >>> 0).toString(16);
+   }-*/;
+   
    private static final NumberFormat FORMAT = NumberFormat.getFormat("0.#");
    private static final NumberFormat PRETTY_NUMBER_FORMAT = NumberFormat.getFormat("#,##0.#####");
    private static final DateTimeFormat DATE_FORMAT
                           = DateTimeFormat.getFormat("MMM d, yyyy, h:mm a");
+   private static final Pattern RE_INDENT = Pattern.create("^\\s*", "");
 
 }

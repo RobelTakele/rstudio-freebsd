@@ -22,6 +22,7 @@
 
 #include "Util.hpp"
 
+namespace rstudio {
 namespace core {
 namespace http {
 
@@ -71,6 +72,8 @@ public:
    
    boost::posix_time::ptime ifModifiedSince() const;
    
+   std::string path() const;
+
    std::string queryString() const;
    const Fields& queryParams() const;
    std::string queryParamValue(const std::string& name) const;
@@ -156,5 +159,6 @@ std::ostream& operator << (std::ostream& stream, const Request& r) ;
 
 } // namespace http
 } // namespace core
+} // namespace rstudio
 
 #endif // CORE_HTTP_REQUEST_HPP

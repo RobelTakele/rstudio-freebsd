@@ -15,6 +15,8 @@
 
 #include "DesktopPosixApplication.hpp"
 
+#include <vector>
+
 #include <core/FilePath.hpp>
 
 #include <QProcess>
@@ -23,8 +25,9 @@
 #include "DesktopOptions.hpp"
 #include "DesktopUtils.hpp"
 
-using namespace core;
+using namespace rstudio::core;
 
+namespace rstudio {
 namespace desktop {
 
 bool PosixApplication::event(QEvent* pEvent)
@@ -58,7 +61,9 @@ bool PosixApplication::event(QEvent* pEvent)
          FilePath filePath(filename.toUtf8().constData());
          if (filePath.exists() && filePath.extensionLowerCase() == ".rproj")
          {
-            launchProjectInNewInstance(filename);
+            std::vector<std::string> args;
+            args.push_back(filePath.absolutePath());
+            launchRStudio(args);
          }
          else
          {
@@ -75,3 +80,4 @@ bool PosixApplication::event(QEvent* pEvent)
 }
 
 } // namespace desktop
+} // namespace rstudio

@@ -42,6 +42,14 @@
 #define R_NO_REMAP
 #include <Rinternals.h>
 
+// Hide macros that are always unsafe for us to use, because their
+// interface has changed between versions of R
+#undef BODY_EXPR
+#define BODY_EXPR UNSAFE_R_FUNCTION
+
+#undef PREXPR
+#define PREXPR    UNSAFE_R_FUNCTION
+
 #ifndef R_INTERNAL_FUNCTIONS
 
 // force compiler error if the client tries to call an R internal function
@@ -60,7 +68,6 @@
 #define Rf_allocList INTERNAL_R_FUNCTION
 #define Rf_allocS4Object INTERNAL_R_FUNCTION
 #define Rf_allocSExp INTERNAL_R_FUNCTION
-#define Rf_allocVector INTERNAL_R_FUNCTION
 #define Rf_applyClosure INTERNAL_R_FUNCTION
 #define Rf_arraySubscript INTERNAL_R_FUNCTION
 #define Rf_asComplex INTERNAL_R_FUNCTION
@@ -102,7 +109,6 @@
 #define R_lsInternal INTERNAL_R_FUNCTION
 #define Rf_match INTERNAL_R_FUNCTION
 #define Rf_namesgets INTERNAL_R_FUNCTION
-#define Rf_mkChar INTERNAL_R_FUNCTION
 #define Rf_mkCharLen INTERNAL_R_FUNCTION
 #define Rf_NonNullStringMatch INTERNAL_R_FUNCTION
 #define Rf_ncols INTERNAL_R_FUNCTION
@@ -112,7 +118,6 @@
 #define Rf_psmatch INTERNAL_R_FUNCTION
 #define Rf_PrintValue INTERNAL_R_FUNCTION
 #define Rf_protect INTERNAL_R_FUNCTION
-#define Rf_setAttrib INTERNAL_R_FUNCTION
 #define Rf_setSVector INTERNAL_R_FUNCTION
 #define Rf_setVar INTERNAL_R_FUNCTION
 #define Rf_str2type INTERNAL_R_FUNCTION

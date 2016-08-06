@@ -28,19 +28,23 @@ import org.rstudio.core.client.widget.MessageDialog;
 import org.rstudio.core.client.widget.Operation;
 import org.rstudio.core.client.widget.OperationWithInput;
 import org.rstudio.core.client.widget.ProgressIndicator;
+import org.rstudio.studio.client.RStudioGinjector;
 import org.rstudio.studio.client.application.events.EventBus;
 import org.rstudio.studio.client.application.events.HandleUnsavedChangesEvent;
 import org.rstudio.studio.client.application.events.HandleUnsavedChangesHandler;
+import org.rstudio.studio.client.application.events.QuitInitiatedEvent;
 import org.rstudio.studio.client.application.events.RestartStatusEvent;
 import org.rstudio.studio.client.application.events.SaveActionChangedEvent;
 import org.rstudio.studio.client.application.events.SaveActionChangedHandler;
 import org.rstudio.studio.client.application.events.SuspendAndRestartEvent;
 import org.rstudio.studio.client.application.events.SuspendAndRestartHandler;
 import org.rstudio.studio.client.application.model.ApplicationServerOperations;
+import org.rstudio.studio.client.application.model.RVersionSpec;
 import org.rstudio.studio.client.application.model.SaveAction;
 import org.rstudio.studio.client.application.model.SuspendOptions;
 import org.rstudio.studio.client.common.GlobalDisplay;
 import org.rstudio.studio.client.common.GlobalProgressDelayer;
+import org.rstudio.studio.client.common.SuperDevMode;
 import org.rstudio.studio.client.common.filetypes.FileIconResources;
 import org.rstudio.studio.client.server.ServerError;
 import org.rstudio.studio.client.server.ServerRequestCallback;
@@ -48,19 +52,21 @@ import org.rstudio.studio.client.server.VoidServerRequestCallback;
 import org.rstudio.studio.client.workbench.WorkbenchContext;
 import org.rstudio.studio.client.workbench.commands.Commands;
 import org.rstudio.studio.client.workbench.events.LastChanceSaveEvent;
+import org.rstudio.studio.client.workbench.model.UnsavedChangesItem;
 import org.rstudio.studio.client.workbench.model.UnsavedChangesTarget;
 import org.rstudio.studio.client.workbench.prefs.model.UIPrefs;
 import org.rstudio.studio.client.workbench.ui.unsaved.UnsavedChangesDialog;
 import org.rstudio.studio.client.workbench.ui.unsaved.UnsavedChangesDialog.Result;
 import org.rstudio.studio.client.workbench.views.console.events.ConsoleRestartRCompletedEvent;
 import org.rstudio.studio.client.workbench.views.console.events.SendToConsoleEvent;
+import org.rstudio.studio.client.workbench.views.source.Source;
 import org.rstudio.studio.client.workbench.views.source.SourceShim;
 
+import com.google.gwt.core.client.GWT;
 import com.google.gwt.core.client.Scheduler;
 import com.google.gwt.core.client.Scheduler.RepeatingCommand;
 import com.google.gwt.resources.client.ImageResource;
 import com.google.gwt.user.client.Command;
-
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 import com.google.inject.Singleton;
@@ -93,6 +99,9 @@ public class ApplicationQuit implements SaveActionChangedHandler,
       // bind to commands
       binder.bind(commands, this);
       
+      // only enable suspendSession() in devmode
+      commands.suspendSession().setVisible(SuperDevMode.isActive());
+      
       // subscribe to events
       eventBus.addHandler(SaveActionChangedEvent.TYPE, this);   
       eventBus.addHandler(HandleUnsavedChangesEvent.TYPE, this);
@@ -106,25 +115,19 @@ public class ApplicationQuit implements SaveActionChangedHandler,
       void onReadyToQuit(boolean saveChanges);
    }
    
-   public void forceSwitchProject(final String switchToProject)
-   {
-      ArrayList<UnsavedChangesTarget> unsavedSourceDocs = 
-                                    sourceShim_.getUnsavedChanges();
-      sourceShim_.handleUnsavedChangesBeforeExit(
-            unsavedSourceDocs,                                     
-            new Command() {
-               @Override
-               public void execute()
-               {
-                  performQuit(true, switchToProject);
-               }
-            });
-   }
-   
    public void prepareForQuit(final String caption,
                               final QuitContext quitContext)
    {
-      if (workbenchContext_.isServerBusy())
+      prepareForQuit(caption, false, quitContext);
+   }
+   
+   public void prepareForQuit(final String caption,
+                              final boolean forceSaveAll,
+                              final QuitContext quitContext)
+   {
+      eventBus_.fireEvent(new QuitInitiatedEvent());
+      
+      if (workbenchContext_.isServerBusy() && !forceSaveAll)
       {
          globalDisplay_.showYesNoMessage(
                MessageDialog.QUESTION,
@@ -134,7 +137,7 @@ public class ApplicationQuit implements SaveActionChangedHandler,
                   @Override
                   public void execute()
                   {
-                     handleUnsavedChanges(caption, quitContext);
+                     handleUnsavedChanges(caption, forceSaveAll, quitContext);
                   }}, 
                true);
       }
@@ -147,39 +150,96 @@ public class ApplicationQuit implements SaveActionChangedHandler,
                @Override
                public void execute()
                {
-                  handleUnsavedChanges(caption, quitContext);
+                  handleUnsavedChanges(caption, forceSaveAll, quitContext);
                }
             });
          }
          else
          {
-            handleUnsavedChanges(caption, quitContext);
+            handleUnsavedChanges(caption, forceSaveAll, quitContext);
          }
       }
    }
    
-   private void handleUnsavedChanges(String caption,
+     
+   private void handleUnsavedChanges(String caption, 
+                                     boolean forceSaveAll,
+                                     QuitContext quitContext)
+   {
+      handleUnsavedChanges(saveAction_.getAction(), caption, forceSaveAll,
+            sourceShim_, workbenchContext_, globalEnvTarget_, quitContext);
+   }
+   
+   
+   private static boolean handlingUnsavedChanges_;
+   public static boolean isHandlingUnsavedChanges()
+   {
+      return handlingUnsavedChanges_;
+   }
+   
+   public static void handleUnsavedChanges(final int saveAction, 
+                                     String caption,
+                                     boolean forceSaveAll,
+                                     final SourceShim sourceShim,
+                                     final WorkbenchContext workbenchContext,
+                                     final UnsavedChangesTarget globalEnvTarget,
                                      final QuitContext quitContext)
    {   
       // see what the unsaved changes situation is and prompt accordingly
-      final int saveAction = saveAction_.getAction();
       ArrayList<UnsavedChangesTarget> unsavedSourceDocs = 
-                                             sourceShim_.getUnsavedChanges();
+                        sourceShim.getUnsavedChanges(Source.TYPE_FILE_BACKED);
       
-      // no unsaved changes at all
-      if (saveAction != SaveAction.SAVEASK && unsavedSourceDocs.size() == 0)
+      // force save all
+      if (forceSaveAll)
       {
-         quitContext.onReadyToQuit(saveAction == SaveAction.SAVE);
+         // save all unsaved documents and then quit
+         sourceShim.handleUnsavedChangesBeforeExit(
+               unsavedSourceDocs,
+               new Command() {
+                  @Override
+                  public void execute()
+                  {
+                     boolean saveChanges = saveAction != SaveAction.NOSAVE;
+                     quitContext.onReadyToQuit(saveChanges);
+                  }
+               });
+         
+         return;
+      }
+      // no unsaved changes at all
+      else if (saveAction != SaveAction.SAVEASK && unsavedSourceDocs.size() == 0)
+      {
+         // define quit operation
+         final Operation quitOperation = new Operation() { public void execute() 
+         {
+            quitContext.onReadyToQuit(saveAction == SaveAction.SAVE);
+         }};
+        
+         // if this is a quit session then we always prompt
+         if (ApplicationAction.isQuit())
+         {
+            RStudioGinjector.INSTANCE.getGlobalDisplay().showYesNoMessage(
+                  MessageDialog.QUESTION,
+                  caption,
+                  "Are you sure you want to quit the R session?",
+                  quitOperation,
+                  true);
+         }
+         else
+         {
+            quitOperation.execute();
+         }
+         
          return;
       }
       
       // just an unsaved environment
-      if (unsavedSourceDocs.size() == 0) 
+      if (unsavedSourceDocs.size() == 0 && workbenchContext != null) 
       {        
          // confirm quit and do it
          String prompt = "Save workspace image to " + 
-                         workbenchContext_.getREnvironmentPath() + "?";
-         globalDisplay_.showYesNoMessage(
+                         workbenchContext.getREnvironmentPath() + "?";
+         RStudioGinjector.INSTANCE.getGlobalDisplay().showYesNoMessage(
                GlobalDisplay.MSG_QUESTION,
                caption,
                prompt,
@@ -200,13 +260,16 @@ public class ApplicationQuit implements SaveActionChangedHandler,
                true);        
       }
       
-      // a single unsaved document
+      // a single unsaved document (can be any document in desktop mode, but 
+      // must be from the main window in web mode)
       else if (saveAction != SaveAction.SAVEASK && 
-               unsavedSourceDocs.size() == 1)
+               unsavedSourceDocs.size() == 1 &&
+               (Desktop.isDesktop() || 
+                !(unsavedSourceDocs.get(0) instanceof UnsavedChangesItem)))
       {
-         sourceShim_.saveWithPrompt(
+         sourceShim.saveWithPrompt(
            unsavedSourceDocs.get(0), 
-           sourceShim_.revertUnsavedChangesBeforeExitCommand(new Command() {
+           sourceShim.revertUnsavedChangesBeforeExitCommand(new Command() {
                @Override
                public void execute()
                {
@@ -220,8 +283,8 @@ public class ApplicationQuit implements SaveActionChangedHandler,
       {
          ArrayList<UnsavedChangesTarget> unsaved = 
                                       new ArrayList<UnsavedChangesTarget>();
-         if (saveAction == SaveAction.SAVEASK)
-            unsaved.add(globalEnvTarget_);
+         if (saveAction == SaveAction.SAVEASK && globalEnvTarget != null)
+            unsaved.add(globalEnvTarget);
          unsaved.addAll(unsavedSourceDocs);
          new UnsavedChangesDialog(
             caption,
@@ -237,13 +300,14 @@ public class ApplicationQuit implements SaveActionChangedHandler,
                   // remote global env target from list (if specified) and 
                   // compute the saveChanges value
                   boolean saveGlobalEnv = saveAction == SaveAction.SAVE;
-                  if (saveAction == SaveAction.SAVEASK)
-                     saveGlobalEnv = saveTargets.remove(globalEnvTarget_);
+                  if (saveAction == SaveAction.SAVEASK && 
+                      globalEnvTarget != null)
+                     saveGlobalEnv = saveTargets.remove(globalEnvTarget);
                   final boolean saveChanges = saveGlobalEnv;
                   
                   // save specified documents and then quit
-                  sourceShim_.handleUnsavedChangesBeforeExit(
-                        saveTargets,                                     
+                  sourceShim.handleUnsavedChangesBeforeExit(
+                        saveTargets,
                         new Command() {
                            @Override
                            public void execute()
@@ -252,38 +316,54 @@ public class ApplicationQuit implements SaveActionChangedHandler,
                            }
                         });
                }
-               
             },
             
             // no cancel operation
             null
-            
             ).showModal();
       }
-      
+   }
+   
+   public void performQuit(boolean saveChanges)
+   {
+      performQuit(saveChanges, null, null);
    }
    
    public void performQuit(boolean saveChanges, 
                            String switchToProject)
    {
-      performQuit(null, saveChanges, switchToProject);
+      performQuit(saveChanges, switchToProject, null);
    }
    
-   public void performQuit(String progressMessage,
-                           boolean saveChanges, 
-                           String switchToProject)
+   public void performQuit(boolean saveChanges, 
+                           String switchToProject,
+                           RVersionSpec switchToRVersion)
    {
-      performQuit(progressMessage, saveChanges, switchToProject, null);
+      performQuit(null, saveChanges, switchToProject, switchToRVersion);
    }
    
    public void performQuit(String progressMessage,
                            boolean saveChanges, 
                            String switchToProject,
+                           RVersionSpec switchToRVersion)
+   {
+      performQuit(progressMessage, 
+                  saveChanges, 
+                  switchToProject, 
+                  switchToRVersion,
+                  null);
+   }
+   
+   public void performQuit(String progressMessage,
+                           boolean saveChanges, 
+                           String switchToProject,
+                           RVersionSpec switchToRVersion,
                            Command onQuitAcknowledged)
    {
       new QuitCommand(progressMessage, 
                       saveChanges, 
                       switchToProject,
+                      switchToRVersion,
                       onQuitAcknowledged).execute();
    }
    
@@ -330,7 +410,7 @@ public class ApplicationQuit implements SaveActionChangedHandler,
       
       // get unsaved source docs
       ArrayList<UnsavedChangesTarget> unsavedSourceDocs = 
-                                          sourceShim_.getUnsavedChanges();
+                        sourceShim_.getUnsavedChanges(Source.TYPE_FILE_BACKED);
       
       if (unsavedSourceDocs.size() == 1)
       {
@@ -373,6 +453,12 @@ public class ApplicationQuit implements SaveActionChangedHandler,
                                  SuspendOptions.createSaveMinimal(saveChanges),
                                  null));  
 
+   }
+   
+   @Handler
+   public void onSuspendSession()
+   {
+      server_.suspendSession(true, new VoidServerRequestCallback());
    }
    
    @Override
@@ -504,7 +590,7 @@ public class ApplicationQuit implements SaveActionChangedHandler,
       prepareForQuit("Quit R Session", new QuitContext() {
          public void onReadyToQuit(boolean saveChanges)
          {
-            performQuit(saveChanges, null);
+            performQuit(saveChanges);
          }   
       });
    }
@@ -551,11 +637,13 @@ public class ApplicationQuit implements SaveActionChangedHandler,
       public QuitCommand(String progressMessage, 
                          boolean saveChanges, 
                          String switchToProject,
+                         RVersionSpec switchToRVersion,
                          Command onQuitAcknowledged)
       {
          progressMessage_ = progressMessage;
          saveChanges_ = saveChanges;
          switchToProject_ = switchToProject;
+         switchToRVersion_ = switchToRVersion;
          onQuitAcknowledged_ = onQuitAcknowledged;
       }
       
@@ -585,16 +673,34 @@ public class ApplicationQuit implements SaveActionChangedHandler,
                // failed). Now do the real quit.
 
                // notify the desktop frame that we are about to quit
+               String switchToProject = new String(switchToProject_);
                if (Desktop.isDesktop())
                {
-                  Desktop.getFrame().setPendingQuit(switchToProject_ != null ?
-                           DesktopFrame.PENDING_QUIT_RESTART_AND_RELOAD :
-                           DesktopFrame.PENDING_QUIT_AND_EXIT);   
+                  if (Desktop.getFrame().isCocoa() && 
+                      switchToProject_ != null)
+                  {
+                     // on Cocoa there's an ugly intermittent crash that occurs 
+                     // when we reload, so exit this instance and start a new
+                     // one when switching projects
+                     Desktop.getFrame().setPendingProject(switchToProject_);
+                     
+                     // Since we're going to be starting a new process we don't
+                     // want to pass a switchToProject argument to quitSession
+                     switchToProject = null;
+                  }
+                  else
+                  {
+                     Desktop.getFrame().setPendingQuit(switchToProject_ != null ?
+                              DesktopFrame.PENDING_QUIT_RESTART_AND_RELOAD :
+                              DesktopFrame.PENDING_QUIT_AND_EXIT);
+                  }
                }
                
                server_.quitSession(
                   saveChanges_,
-                  switchToProject_,
+                  switchToProject,
+                  switchToRVersion_,
+                  GWT.getHostPageBaseURL(),
                   new ServerRequestCallback<Boolean>()
                   {
                      @Override
@@ -654,6 +760,7 @@ public class ApplicationQuit implements SaveActionChangedHandler,
 
       private final boolean saveChanges_;
       private final String switchToProject_;
+      private final RVersionSpec switchToRVersion_;
       private final String progressMessage_;
       private final Command onQuitAcknowledged_;
 

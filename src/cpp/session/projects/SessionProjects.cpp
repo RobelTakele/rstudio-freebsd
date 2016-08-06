@@ -20,20 +20,26 @@
 #include <core/Exec.hpp>
 #include <core/FileSerializer.hpp>
 #include <core/system/System.hpp>
+#include <core/http/URL.hpp>
 #include <core/r_util/RProjectFile.hpp>
 #include <core/r_util/RSessionContext.hpp>
 
 #include <session/SessionModuleContext.hpp>
 #include <session/SessionUserSettings.hpp>
+#include <session/SessionScopes.hpp>
+
+#include <session/projects/ProjectsSettings.hpp>
 
 #include <r/RExec.hpp>
+#include <r/RRoutines.hpp>
 #include <r/session/RSessionUtils.hpp>
 
 #include "SessionProjectFirstRun.hpp"
 #include "SessionProjectsInternal.hpp"
 
-using namespace core;
+using namespace rstudio::core;
 
+namespace rstudio {
 namespace session {
 namespace projects {
 
@@ -48,11 +54,59 @@ void onSuspend(Settings*)
    // on resume. we read this back in initalize (rather than in
    // the onResume handler) becuase we need it very early in the
    // processes lifetime and onResume happens too late
-   s_projectContext.setNextSessionProject(
-                              s_projectContext.file().absolutePath());
+   projects::ProjectsSettings(options().userScratchPath()).
+         setNextSessionProject(s_projectContext.file().absolutePath());
 }
 
 void onResume(const Settings&) {}
+
+Error validateProjectPath(const json::JsonRpcRequest& request,
+                          json::JsonRpcResponse* pResponse)
+{
+   std::string projectFile;
+   Error error = json::readParams(request.params, &projectFile);
+   if (error)
+      return error;
+
+   FilePath projectFilePath = module_context::resolveAliasedPath(projectFile);
+
+   pResponse->setResult(projectFilePath.exists());
+   return Success();
+}
+
+Error getProjectFilePath(const json::JsonRpcRequest& request,
+                         json::JsonRpcResponse* pResponse)
+{
+   std::string projectIdParam;
+   Error error = json::readParams(request.params, &projectIdParam);
+   if (error)
+      return error;
+
+   // project dir from id
+   core::r_util::ProjectId projectId(projectIdParam);
+   std::string project = session::projectIdToProject(
+            options().userScratchPath(),
+            FilePath(options().getOverlayOption(kSessionSharedStoragePath)),
+            projectId);
+
+   // resolve to project file
+   FilePath projectPath = module_context::resolveAliasedPath(project);
+   if (!project.empty() && projectPath.exists())
+   {
+      FilePath projectFile = r_util::projectFromDirectory(projectPath);
+      if (projectFile.exists())
+         pResponse->setResult(module_context::createAliasedPath(projectFile));
+      else
+         pResponse->setResult("");
+   }
+   else
+   {
+      pResponse->setResult("");
+   }
+
+   return Success();
+}
+
 
 Error getNewProjectContext(const json::JsonRpcRequest& request,
                            json::JsonRpcResponse* pResponse)
@@ -63,6 +117,8 @@ Error getNewProjectContext(const json::JsonRpcRequest& request,
    contextJson["packrat_available"] =
          module_context::packratContext().available &&
          module_context::canBuildCpp();
+   contextJson["working_directory"] = module_context::createAliasedPath(
+         r::session::utils::safeCurrentPath());
 
    pResponse->setResult(contextJson);
 
@@ -74,7 +130,8 @@ Error createProject(const json::JsonRpcRequest& request,
 {
    // read params
    std::string projectFile;
-   json::Value newPackageJson, newShinyAppJson;
+   json::Value newPackageJson;
+   json::Value newShinyAppJson;
    Error error = json::readParams(request.params,
                                   &projectFile,
                                   &newPackageJson,
@@ -83,112 +140,7 @@ Error createProject(const json::JsonRpcRequest& request,
       return error;
    FilePath projectFilePath = module_context::resolveAliasedPath(projectFile);
 
-   // package project
-   if (!newPackageJson.is_null())
-   {
-      // build list of code files
-      bool usingRcpp;
-      json::Array codeFilesJson;
-      Error error = json::readObject(newPackageJson.get_obj(),
-                                     "using_rcpp", &usingRcpp,
-                                     "code_files", &codeFilesJson);
-      if (error)
-         return error;
-      std::vector<FilePath> codeFiles;
-      BOOST_FOREACH(const json::Value codeFile, codeFilesJson)
-      {
-         if (!json::isType<std::string>(codeFile))
-         {
-            BOOST_ASSERT(false);
-            continue;
-         }
-
-         FilePath codeFilePath =
-                     module_context::resolveAliasedPath(codeFile.get_str());
-         codeFiles.push_back(codeFilePath);
-      }
-
-      // error if the package dir already exists
-      FilePath packageDir = projectFilePath.parent();
-      if (packageDir.exists())
-         return core::fileExistsError(ERROR_LOCATION);
-
-      // create a temp dir (so we can import the list of code files)
-      FilePath tempDir = module_context::tempFile("newpkg", "dir");
-      error = tempDir.ensureDirectory();
-      if (error)
-         return error;
-
-      // copy the code files into the tempDir and build up a
-      // list of the filenames for passing to package.skeleton
-      std::vector<std::string> rFileNames, cppFileNames;
-      BOOST_FOREACH(const FilePath& codeFilePath, codeFiles)
-      {
-         FilePath targetPath = tempDir.complete(codeFilePath.filename());
-         Error error = codeFilePath.copy(targetPath);
-         if (error)
-            return error;
-
-         std::string ext = targetPath.extensionLowerCase();
-         std::string file = string_utils::utf8ToSystem(targetPath.filename());
-         if (boost::algorithm::starts_with(ext,".c"))
-            cppFileNames.push_back(file);
-         else
-            rFileNames.push_back(file);
-      }
-
-
-      // if the list of code files is empty then add an empty file
-      // with the same name as the package (but don't do this for
-      // Rcpp since it generates a hello world file)
-      if (codeFiles.empty() && !usingRcpp)
-      {
-         std::string srcFileName = packageDir.filename() + ".R";
-         FilePath srcFilePath = tempDir.complete(srcFileName);
-         Error error = core::writeStringToFile(srcFilePath, "");
-         if (error)
-            return error;
-         rFileNames.push_back(string_utils::utf8ToSystem(srcFileName));
-      }
-
-      // temporarily switch to the tempDir for package creation
-      RestoreCurrentPathScope pathScope(module_context::safeCurrentPath());
-      tempDir.makeCurrentPath();
-
-      // call package.skeleton
-
-      r::exec::RFunction pkgSkeleton(usingRcpp ?
-                                       "Rcpp:::Rcpp.package.skeleton" :
-                                       "utils:::package.skeleton");
-      pkgSkeleton.addParam("name",
-                           string_utils::utf8ToSystem(packageDir.filename()));
-      pkgSkeleton.addParam("path",
-               string_utils::utf8ToSystem(packageDir.parent().absolutePath()));
-      pkgSkeleton.addParam("code_files", rFileNames);
-      if (usingRcpp && module_context::haveRcppAttributes())
-      {
-         if (!cppFileNames.empty())
-         {
-            pkgSkeleton.addParam("example_code", false);
-            pkgSkeleton.addParam("cpp_files", cppFileNames);
-         }
-         else
-         {
-            pkgSkeleton.addParam("attributes", true);
-         }
-      }
-      error = pkgSkeleton.call();
-      if (error)
-         return error;
-
-      // create the project file (allow auto-detection of the package
-      // to setup the package build type & default options)
-      return r_util::writeProjectFile(projectFilePath,
-                                      ProjectContext::buildDefaults(),
-                                      ProjectContext::defaultConfig());
-   }
-
-   else if (!newShinyAppJson.is_null())
+   if (!newShinyAppJson.is_null())
    {
       // error if the shiny app dir already exists
       FilePath appDir = projectFilePath.parent();
@@ -265,6 +217,7 @@ json::Object projectConfigJson(const r_util::RProjectConfig& config)
    configJson["num_spaces_for_tab"] = config.numSpacesForTab;
    configJson["auto_append_newline"] = config.autoAppendNewline;
    configJson["strip_trailing_whitespace"] = config.stripTrailingWhitespace;
+   configJson["line_endings"] = config.lineEndings;
    configJson["default_encoding"] = config.encoding;
    configJson["default_sweave_engine"] = config.defaultSweaveEngine;
    configJson["default_latex_program"] = config.defaultLatexProgram;
@@ -278,6 +231,7 @@ json::Object projectConfigJson(const r_util::RProjectConfig& config)
    configJson["package_check_args"] = config.packageCheckArgs;
    configJson["package_roxygenize"] = config.packageRoxygenize;
    configJson["makefile_path"] = config.makefilePath;
+   configJson["website_path"] = config.websitePath;
    configJson["custom_script_path"] = config.customScriptPath;
    configJson["tutorial_path"] = config.tutorialPath;
    return configJson;
@@ -291,7 +245,9 @@ json::Object projectBuildOptionsJson()
       LOG_ERROR(error);
    json::Object buildOptionsJson;
    buildOptionsJson["makefile_args"] = buildOptions.makefileArgs;
-
+   buildOptionsJson["preview_website"] = buildOptions.previewWebsite;
+   buildOptionsJson["live_preview_website"] = buildOptions.livePreviewWebsite;
+   buildOptionsJson["website_output_format"] = buildOptions.websiteOutputFormat;
    json::Object autoRoxJson;
    autoRoxJson["run_on_check"] = buildOptions.autoRoxygenizeForCheck;
    autoRoxJson["run_on_package_builds"] =
@@ -335,17 +291,53 @@ json::Object projectVcsContextJson()
 
 json::Object projectBuildContextJson()
 {
+   using namespace module_context;
    json::Object contextJson;
-   contextJson["roxygen2_installed"] =
-                        module_context::isPackageInstalled("roxygen2");
-   contextJson["devtools_installed"] =
-                           module_context::isPackageInstalled("devtools");
+   contextJson["roxygen2_installed"] = isMinimumRoxygenInstalled();
+   contextJson["devtools_installed"] = isMinimumDevtoolsInstalled();
+   contextJson["website_output_formats"] = websiteOutputFormatsJson();
    return contextJson;
 }
+
+void setProjectConfig(const r_util::RProjectConfig& config)
+{
+   // set it
+   s_projectContext.setConfig(config);
+
+   // sync underlying R setting
+   module_context::syncRSaveAction();
+}
+
+
+void syncProjectFileChanges()
+{
+   // read project file config
+   bool providedDefaults;
+   std::string userErrMsg;
+   r_util::RProjectConfig config;
+   Error error = r_util::readProjectFile(s_projectContext.file(),
+                                         ProjectContext::defaultConfig(),
+                                         ProjectContext::buildDefaults(),
+                                         &config,
+                                         &providedDefaults,
+                                         &userErrMsg);
+   if (error)
+   {
+      LOG_ERROR(error);
+      return;
+   }
+
+   // set config
+   setProjectConfig(config);
+}
+
 
 Error readProjectOptions(const json::JsonRpcRequest& request,
                         json::JsonRpcResponse* pResponse)
 {
+   // read the latest config from disk
+   syncProjectFileChanges();
+
    // get project config json
    json::Object configJson = projectConfigJson(s_projectContext.config());
 
@@ -363,14 +355,6 @@ Error readProjectOptions(const json::JsonRpcRequest& request,
    return Success();
 }
 
-void setProjectConfig(const r_util::RProjectConfig& config)
-{
-   // set it
-   s_projectContext.setConfig(config);
-
-   // sync underlying R setting
-   module_context::syncRSaveAction();
-}
 
 Error rProjectBuildOptionsFromJson(const json::Object& optionsJson,
                                    RProjectBuildOptions* pOptions)
@@ -379,6 +363,9 @@ Error rProjectBuildOptionsFromJson(const json::Object& optionsJson,
    Error error = json::readObject(
        optionsJson,
        "makefile_args", &(pOptions->makefileArgs),
+       "preview_website", &(pOptions->previewWebsite),
+       "live_preview_website", &(pOptions->livePreviewWebsite),
+       "website_output_format", &(pOptions->websiteOutputFormat),
        "auto_roxygenize_options", &autoRoxJson);
    if (error)
       return error;
@@ -431,7 +418,8 @@ Error writeProjectOptions(const json::JsonRpcRequest& request,
    error = json::readObject(
                     configJson,
                     "auto_append_newline", &(config.autoAppendNewline),
-                    "strip_trailing_whitespace", &(config.stripTrailingWhitespace));
+                    "strip_trailing_whitespace", &(config.stripTrailingWhitespace),
+                    "line_endings", &(config.lineEndings));
    if (error)
       return error;
 
@@ -446,6 +434,7 @@ Error writeProjectOptions(const json::JsonRpcRequest& request,
                     "package_check_args", &(config.packageCheckArgs),
                     "package_roxygenize", &(config.packageRoxygenize),
                     "makefile_path", &(config.makefilePath),
+                    "website_path", &(config.websitePath),
                     "custom_script_path", &(config.customScriptPath),
                     "tutorial_path", &(config.tutorialPath));
    if (error)
@@ -521,36 +510,8 @@ Error writeProjectVcsOptions(const json::JsonRpcRequest& request,
 
 void onQuit()
 {
-   s_projectContext.setLastProjectPath(s_projectContext.file());
-}
-
-void syncProjectFileChanges()
-{
-   // read project file config
-   bool providedDefaults;
-   std::string userErrMsg;
-   r_util::RProjectConfig config;
-   Error error = r_util::readProjectFile(s_projectContext.file(),
-                                         ProjectContext::defaultConfig(),
-                                         ProjectContext::buildDefaults(),
-                                         &config,
-                                         &providedDefaults,
-                                         &userErrMsg);
-   if (error)
-   {
-      LOG_ERROR(error);
-      return;
-   }
-
-   // set config
-   setProjectConfig(config);
-
-   // fire event to client
-   json::Object dataJson;
-   dataJson["type"] = "project";
-   dataJson["prefs"] = s_projectContext.uiPrefs();
-   ClientEvent event(client_events::kUiPrefsChanged, dataJson);
-   module_context::enqueClientEvent(event);
+   projects::ProjectsSettings(options().userScratchPath()).
+                        setLastProjectPath(s_projectContext.file());
 }
 
 void onFilesChanged(const std::vector<core::system::FileChangeEvent>& events)
@@ -561,7 +522,16 @@ void onFilesChanged(const std::vector<core::system::FileChangeEvent>& events)
       if (event.fileInfo().absolutePath() ==
           s_projectContext.file().absolutePath())
       {
+         // update project context
          syncProjectFileChanges();
+
+         // fire event to client
+         json::Object dataJson;
+         dataJson["type"] = "project";
+         dataJson["prefs"] = s_projectContext.uiPrefs();
+         ClientEvent event(client_events::kUiPrefsChanged, dataJson);
+         module_context::enqueClientEvent(event);
+
          break;
       }
    }
@@ -574,13 +544,36 @@ void onMonitoringDisabled()
    // a conveninece to have these synced we don't do this
 }
 
+FilePath resolveProjectSwitch(const std::string& projectPath)
+{
+   FilePath projectFilePath;
+
+   // clear any initial context settings which may be leftover
+   // by a re-instatiation of rsession by desktop
+   session::options().clearInitialContextSettings();
+
+   // check for special "none" value (used for close project)
+   if (projectPath == kProjectNone)
+   {
+      projectFilePath = FilePath();
+
+      // flush the last project path so restarts won't put us back into
+      // project context (see case 4015)
+      projects::ProjectsSettings(options().userScratchPath()).
+                                       setLastProjectPath(FilePath());
+   }
+   else
+   {
+      projectFilePath = module_context::resolveAliasedPath(projectPath);
+   }
+
+   return projectFilePath;
+}
+
 
 }  // anonymous namespace
 
 
-// Note that the logic here needs to be synchronized with the logic in
-// core::r_util::RSessionContext::nextSessionWorkingDir (so that both
-// reach the same conclusion about what the next working directory is)
 void startup()
 {
    // register suspend handler
@@ -590,42 +583,42 @@ void startup()
    // determine project file path
    FilePath projectFilePath;
 
-   // see if there is a project path hard-wired for the next session
-   // (this would be used for a switch to project or for the resuming of
-   // a suspended session)
-   std::string nextSessionProject = s_projectContext.nextSessionProject();
-   FilePath lastProjectPath = s_projectContext.lastProjectPath();
+   // alias some project context data
+   projects::ProjectsSettings projSettings(options().userScratchPath());
+   std::string nextSessionProject = projSettings.nextSessionProject();
+   std::string switchToProject = projSettings.switchToProjectPath();
+   FilePath lastProjectPath = projSettings.lastProjectPath();
 
-   // check for next session project path (see above for comment)
-   if (!nextSessionProject.empty())
+   // check for explicit project none scope
+   if (session::options().sessionScope().isProjectNone() || 
+       session::options().initialProjectPath().absolutePath() == kProjectNone)
    {
-      // reset next session project path so its a one shot deal
-      s_projectContext.setNextSessionProject("");
-
-      // clear any initial context settings which may be leftover
-      // by a re-instatiation of rsession by desktop
-      session::options().clearInitialContextSettings();
-
-      // check for special "none" value (used for close project)
-      if (nextSessionProject == kNextSessionProjectNone)
-      {
-         projectFilePath = FilePath();
-
-         // flush the last project path so restarts won't put us back into
-         // project context (see case 4015)
-         s_projectContext.setLastProjectPath(FilePath());
-      }
-      else
-      {
-         projectFilePath = module_context::resolveAliasedPath(
-                                                   nextSessionProject);
-      }
+      projectFilePath = resolveProjectSwitch(kProjectNone);
    }
 
-   // check for envrionment variable (file association)
+   // check for explicit request for a project (file association or url based)
    else if (!session::options().initialProjectPath().empty())
    {
       projectFilePath = session::options().initialProjectPath();
+   }
+
+   // see if there is a project path hard-wired for the next session
+   // (this would be used for resuming of a suspended session)
+   else if (!nextSessionProject.empty())
+   {
+      // reset next session project path so its a one shot deal
+      projSettings.setNextSessionProject("");
+
+      projectFilePath = resolveProjectSwitch(nextSessionProject);
+   }
+
+   // see if this is a project switch
+   else if (!switchToProject.empty())
+   {
+      // reset switch to project path so its a one shot deal
+      projSettings.setSwitchToProjectPath("");
+
+      projectFilePath = resolveProjectSwitch(switchToProject);
    }
 
    // check for other working dir override (implies a launch of a file
@@ -647,7 +640,7 @@ void startup()
       // reset it to empty so that we only attempt to load the "lastProject"
       // a single time (this will be reset to the path below after we
       // clear the s_projectContext.initialize)
-      s_projectContext.setLastProjectPath(FilePath());
+      projSettings.setLastProjectPath(FilePath());
    }
 
    // else no active project for this session
@@ -680,8 +673,45 @@ void startup()
    }
 }
 
+SEXP rs_writeProjectFile(SEXP projectFilePathSEXP)
+{
+   std::string absolutePath = r::sexp::asString(projectFilePathSEXP);
+   FilePath projectFilePath(absolutePath);
+   
+   Error error = r_util::writeProjectFile(
+            projectFilePath,
+            ProjectContext::buildDefaults(),
+            ProjectContext::defaultConfig());
+   
+   r::sexp::Protect protect;
+   return error ?
+            r::sexp::create(false, &protect) :
+            r::sexp::create(true, &protect);
+}
+
+SEXP rs_addFirstRunDoc(SEXP projectFileAbsolutePathSEXP, SEXP docRelativePathSEXP)
+{
+   std::string projectFileAbsolutePath = r::sexp::asString(projectFileAbsolutePathSEXP);
+   const FilePath projectFilePath(projectFileAbsolutePath);
+   
+   std::string docRelativePath = r::sexp::asString(docRelativePathSEXP);
+   
+   addFirstRunDoc(projectFilePath, docRelativePath);
+   return R_NilValue;
+}
+
 Error initialize()
 {
+   r::routines::registerCallMethod(
+            "rs_writeProjectFile",
+            (DL_FUNC) rs_writeProjectFile,
+            1);
+   
+   r::routines::registerCallMethod(
+            "rs_addFirstRunDoc",
+            (DL_FUNC) rs_addFirstRunDoc,
+            2);
+   
    // call project-context initialize
    Error error = s_projectContext.initialize();
    if (error)
@@ -700,7 +730,9 @@ Error initialize()
    using namespace module_context;
    ExecBlock initBlock ;
    initBlock.addFunctions()
+      (bind(registerRpcMethod, "validate_project_path", validateProjectPath))
       (bind(registerRpcMethod, "get_new_project_context", getNewProjectContext))
+      (bind(registerRpcMethod, "get_project_file_path", getProjectFilePath))
       (bind(registerRpcMethod, "create_project", createProject))
       (bind(registerRpcMethod, "read_project_options", readProjectOptions))
       (bind(registerRpcMethod, "write_project_options", writeProjectOptions))
@@ -714,6 +746,25 @@ ProjectContext& projectContext()
    return s_projectContext;
 }
 
+json::Array websiteOutputFormatsJson()
+{
+   json::Array formatsJson;
+   if (projectContext().config().buildType == r_util::kBuildTypeWebsite)
+   {
+      r::exec::RFunction getFormats(".rs.getAllOutputFormats");
+      getFormats.addParam(string_utils::utf8ToSystem(
+              projectContext().buildTargetPath().absolutePath()));
+      getFormats.addParam(projectContext().defaultEncoding());
+      std::vector<std::string> formats;
+      Error error = getFormats.call(&formats);
+      if (error)
+         LOG_ERROR(error);
+      formatsJson = json::toJsonArray(formats);
+   }
+   return formatsJson;
+}
+
 } // namespace projects
 } // namesapce session
+} // namespace rstudio
 

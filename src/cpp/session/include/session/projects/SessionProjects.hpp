@@ -38,7 +38,8 @@
 #include <core/r_util/RProjectFile.hpp>
 #include <core/r_util/RSourceIndex.hpp>
 #include <core/r_util/RPackageInfo.hpp>
- 
+
+namespace rstudio {
 namespace session {
 namespace projects {
 
@@ -62,6 +63,9 @@ struct RProjectVcsOptions
 struct RProjectBuildOptions
 {
    RProjectBuildOptions() :
+      previewWebsite(true),
+      livePreviewWebsite(true),
+      websiteOutputFormat(),
       autoRoxygenizeForCheck(true),
       autoRoxygenizeForBuildPackage(true),
       autoRoxygenizeForBuildAndReload(false)
@@ -69,6 +73,9 @@ struct RProjectBuildOptions
    }
 
    std::string makefileArgs;
+   bool previewWebsite;
+   bool livePreviewWebsite;
+   std::string websiteOutputFormat;
    bool autoRoxygenizeForCheck;
    bool autoRoxygenizeForBuildPackage;
    bool autoRoxygenizeForBuildAndReload;
@@ -92,18 +99,13 @@ public:
    // these functions can be called even when there is no project
    bool hasProject() const { return !file_.empty(); }
 
-   // next session project path -- low level value used by suspend
-   // and switch-to-project
-   std::string nextSessionProject() const;
-   void setNextSessionProject(const std::string& nextSessionProject);
-
-   // last project path -- used to implement restore last project user setting
-   core::FilePath lastProjectPath() const;
-   void setLastProjectPath(const core::FilePath& lastProjectPath);
-
    const core::FilePath& file() const { return file_; }
    const core::FilePath& directory() const { return directory_; }
    const core::FilePath& scratchPath() const { return scratchPath_; }
+   const core::FilePath& sharedScratchPath() const 
+   { 
+      return sharedScratchPath_; 
+   }
 
    core::FilePath oldScratchPath() const;
 
@@ -121,6 +123,9 @@ public:
 
    core::Error readBuildOptions(RProjectBuildOptions* pOptions);
    core::Error writeBuildOptions(const RProjectBuildOptions& options);
+
+   // update the website output type
+   void setWebsiteOutputFormat(const std::string& websiteOutputFormat);
 
    // code which needs to rely on the encoding should call this method
    // rather than getting the encoding off of the config (because the
@@ -147,11 +152,12 @@ public:
       return buildOptions_;
    }
 
-   // current package info (if this is a package)
    const core::r_util::RPackageInfo& packageInfo() const
    {
       return packageInfo_;
    }
+   
+   bool isPackageProject();
 
    // does this project context have a file monitor? (might not have one
    // if the user has disabled code indexing or if file monitoring failed
@@ -167,6 +173,12 @@ public:
    // occur during module initialization
    void subscribeToFileMonitor(const std::string& featureName,
                                const FileMonitorCallbacks& cb);
+
+   // can this project be shared with other users?
+   bool supportsSharing();
+
+   // can we browse in the parent directories of this project?
+   bool parentBrowseable();
 
 public:
    static core::r_util::RProjectBuildDefaults buildDefaults();
@@ -198,6 +210,7 @@ private:
    core::FilePath file_;
    core::FilePath directory_;
    core::FilePath scratchPath_;
+   core::FilePath sharedScratchPath_;
    core::r_util::RProjectConfig config_;
    std::string defaultEncoding_;
    core::FilePath buildTargetPath_;
@@ -214,8 +227,10 @@ private:
 
 ProjectContext& projectContext();
 
+core::json::Array websiteOutputFormatsJson();
 
 } // namespace projects
 } // namesapce session
+} // namespace rstudio
 
 #endif // SESSION_PROJECTS_PROJECTS_HPP

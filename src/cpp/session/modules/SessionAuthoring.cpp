@@ -42,8 +42,9 @@
 #include "tex/SessionSynctex.hpp"
 #include "tex/SessionViewPdf.hpp"
 
-using namespace core;
+using namespace rstudio::core;
 
+namespace rstudio {
 namespace session {
 namespace modules { 
 namespace authoring {
@@ -148,11 +149,14 @@ Error compilePdfClosed(const json::JsonRpcRequest& request,
    return Success();
 }
 
-SEXP rs_rnwTangle(SEXP filePathSEXP, SEXP rnwWeaveSEXP)
+SEXP rs_rnwTangle(SEXP filePathSEXP,
+                  SEXP encodingSEXP,
+                  SEXP rnwWeaveSEXP)
 {
    try
    {
       modules::tex::rnw_weave::runTangle(r::sexp::asString(filePathSEXP),
+                                         r::sexp::asString(encodingSEXP),
                                          r::sexp::asString(rnwWeaveSEXP));
    }
    catch(const r::exec::RErrorException& e)
@@ -207,7 +211,7 @@ Error initialize()
    R_CallMethodDef methodDef ;
    methodDef.name = "rs_rnwTangle" ;
    methodDef.fun = (DL_FUNC) rs_rnwTangle ;
-   methodDef.numArgs = 2;
+   methodDef.numArgs = 3;
    r::routines::addCallMethod(methodDef);
 
    // install rpc methods
@@ -234,4 +238,5 @@ Error initialize()
 } // namespace authoring
 } // namespace modules
 } // namesapce session
+} // namespace rstudio
 

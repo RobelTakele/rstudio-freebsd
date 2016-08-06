@@ -28,8 +28,9 @@
 #include <r/RExec.hpp>
 #include <r/session/RGraphics.hpp>
 
-using namespace core ;
+using namespace rstudio::core ;
 
+namespace rstudio {
 namespace r {
 namespace session {
 namespace graphics {
@@ -127,7 +128,7 @@ Error Plot::renderFromDisplay()
    {
       return Success();
    }
-    
+   
    // generate a new storage uuid
    std::string storageUuid = core::system::generateUuid();
    
@@ -301,6 +302,7 @@ void Plot::saveManipulator(const std::string& storageUuid) const
 } // namespace graphics
 } // namespace session
 } // namespace r
+} // namespace rstudio
 
 
 

@@ -18,11 +18,13 @@
 #include <r/RSexp.hpp>
 #include <r/RInterface.hpp>
 #include <session/SessionModuleContext.hpp>
+#include <session/SessionUserSettings.hpp>
 
 #include "EnvironmentUtils.hpp"
 
-using namespace core;
+using namespace rstudio::core;
 
+namespace rstudio {
 namespace session {
 namespace modules {
 namespace environment {
@@ -118,7 +120,11 @@ bool EnvironmentMonitor::hasEnvironment()
 void EnvironmentMonitor::listEnv(std::vector<r::sexp::Variable>* pEnv)
 {
    r::sexp::Protect rProtect;
-   r::sexp::listEnvironment(getMonitoredEnvironment(), false, &rProtect, pEnv);
+   r::sexp::listEnvironment(getMonitoredEnvironment(),
+                            false,
+                            userSettings().showLastDotValue(),
+                            &rProtect,
+                            pEnv);
 }
 
 void EnvironmentMonitor::checkForChanges()
@@ -234,3 +240,4 @@ void EnvironmentMonitor::checkForChanges()
 } // namespace environment
 } // namespace modules
 } // namespace session
+} // namespace rstudio

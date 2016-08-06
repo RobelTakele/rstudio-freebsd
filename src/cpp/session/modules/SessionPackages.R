@@ -62,7 +62,14 @@ if (identical(as.character(Sys.info()["sysname"]), "Darwin") &&
       .Call("rs_packageUnloaded", pkgname)
    }
    
-   sapply(.packages(TRUE), function(packageName) 
+   # NOTE: `list.dirs()` was introduced with R 2.13 but was buggy until 3.0
+   # (the 'full.names' argument was not properly respected)
+   pkgNames <- if (getRversion() >= "3.0.0")
+      base::list.dirs(.libPaths(), full.names = FALSE, recursive = FALSE)
+   else
+      .packages(TRUE)
+   
+   sapply(pkgNames, function(packageName)
    {
       if ( !(packageName %in% .rs.hookedPackages) )
       {
@@ -113,11 +120,14 @@ if (identical(as.character(Sys.info()["sysname"]), "Darwin") &&
       if (!is.null(repos) && !packratMode && .rs.loadedPackageUpdates(pkgs)) {
 
          # attempt to determine the install command
-         if (length(sys.calls()) > 7) {
-            installCall <- sys.call(-7)
-            installCmd <- format(installCall)
-         } else {
-            installCmd <- NULL
+         installCmd <- NULL
+         for (i in seq_along(sys.calls()))
+         {
+           if (identical(deparse(sys.call(i)[[1]]), "install.packages"))
+           {
+             installCmd <- format(sys.call(i))
+             break
+           }
          }
 
          # call back into rsession to send an event to the client
@@ -240,11 +250,6 @@ if (identical(as.character(Sys.info()["sysname"]), "Darwin") &&
   }
 })
 
-.rs.addFunction("libPathsString", function()
-{
-   paste(.libPaths(), collapse = .Platform$path.sep)
-})
-
 .rs.addFunction("packageVersion", function(name, libPath, pkgs)
 {
    pkgs <- subset(pkgs, Package == name & LibPath == libPath)
@@ -265,41 +270,6 @@ if (identical(as.character(Sys.info()["sysname"]), "Darwin") &&
 {
    if (!.rs.defaultLibPathIsWriteable())
       .rs.initDefaultUserLibrary()
-})
-
-.rs.addFunction( "initializeRStudioPackages", function(libDir,
-                                                       pkgSrcDir,
-                                                       rsVersion,
-                                                       force) {
-  
-  if (getRversion() >= "3.0.0") {
-    
-    # make sure the default library is writeable
-    .rs.ensureWriteableUserLibrary()
-
-    # function to update a package if necessary
-    updateIfNecessary <- function(pkgName) {
-      isInstalled <- .rs.isPackageInstalled(pkgName, .rs.defaultLibraryPath())
-      if (force || !isInstalled || (.rs.getPackageVersion(pkgName) != rsVersion)) {
-        
-        # remove if necessary
-        if (isInstalled)
-          utils::remove.packages(pkgName, .rs.defaultLibraryPath())
-        
-        # call back into rstudio to install
-        .Call("rs_installPackage", 
-              file.path(pkgSrcDir, pkgName),
-              .rs.defaultLibraryPath())
-      }
-    }
-    
-    updateIfNecessary("rstudio")
-    updateIfNecessary("manipulate")
-    
-  } else {
-    .rs.libPathsAppend(libDir)
-  }
-  
 })
 
 .rs.addFunction("listInstalledPackages", function()
@@ -388,22 +358,52 @@ if (identical(as.character(Sys.info()["sysname"]), "Darwin") &&
 
 .rs.addJsonRpcHandler( "get_cran_mirrors", function()
 {
-   # RStudio mirror
-   rstudioDF <- data.frame(name = "Global (CDN)",
-                           host = "RStudio",
-                           url = "http://cran.rstudio.com",
-                           country = "us",
-                           stringsAsFactors = FALSE)
-
-   # CRAN mirrors
-   cranMirrors <- utils::getCRANmirrors()
+   # get CRAN mirrors (securely if we are configured to do so)
+   haveSecureMethod <- .rs.haveSecureDownloadFileMethod()
+   protocol <- ifelse(haveSecureMethod, "https", "http")
+   cranMirrors <- try(silent = TRUE, {
+      mirrors_csv_url <- paste(protocol, "://cran.r-project.org/CRAN_mirrors.csv",
+                               sep = "")
+      mirrors_csv <- tempfile("mirrors", fileext = ".csv")
+      download.file(mirrors_csv_url, destfile = mirrors_csv, quiet = TRUE)
+      
+      # read them
+      read.csv(mirrors_csv, as.is = TRUE, encoding = "UTF-8")
+   })
+   
+   # if we got an error then use local only
+   if (is.null(cranMirrors) || inherits(cranMirrors, "try-error"))
+      cranMirrors <- utils::getCRANmirrors(local.only = TRUE)
+   
+   # create data frame
    cranDF <- data.frame(name = cranMirrors$Name,
                         host = cranMirrors$Host,
                         url = cranMirrors$URL,
                         country = cranMirrors$CountryCode,
+                        ok = cranMirrors$OK,
                         stringsAsFactors = FALSE)
 
-   # return mirrors
+   # filter by OK status
+   cranDF <- cranDF[as.logical(cranDF$ok), ]
+
+   # filter by mirror type supported by the current download.file.method
+   # (also verify that https urls are provided inline -- if we didn't do
+   # this and CRAN changed the format we could end up with no mirrors)
+   secureMirror <- grepl("^https", cranDF[, "url"])
+   useHttpsURL <- haveSecureMethod && any(secureMirror)
+   if (useHttpsURL)
+      cranDF <- cranDF[secureMirror,]
+   else
+      cranDF <- cranDF[!secureMirror,]
+
+   # prepend RStudio mirror and return
+   rstudioDF <- data.frame(name = "Global (CDN)",
+                           host = "RStudio",
+                           url = paste(ifelse(useHttpsURL, "https", "http"), 
+                                       "://cran.rstudio.com/", sep=""),
+                           country = "us",
+                           ok = TRUE,
+                           stringsAsFactors = FALSE)
    rbind(rstudioDF, cranDF)
 })
 
@@ -547,3 +547,590 @@ if (identical(as.character(Sys.info()["sysname"]), "Darwin") &&
    return(NULL)
 })
 
+.rs.addFunction("getCachedAvailablePackages", function(contribUrl)
+{
+   .Call("rs_getCachedAvailablePackages", contribUrl)
+})
+
+.rs.addFunction("downloadAvailablePackages", function(contribUrl)
+{
+   .Call("rs_downloadAvailablePackages", contribUrl)
+})
+
+.rs.addJsonRpcHandler("package_skeleton", function(packageName,
+                                                   packageDirectory,
+                                                   sourceFiles,
+                                                   usingRcpp)
+{
+   # sourceFiles is passed in as a list -- convert back to
+   # character vector
+   sourceFiles <- as.character(sourceFiles)
+   
+   # Make sure we expand the aliased path if necessary
+   # (note this is a no-op if there is no leading '~')
+   packageDirectory <- path.expand(packageDirectory)
+   
+   ## Validate the package name -- note that we validate this upstream
+   ## but it is sensible to validate it once more here
+   if (!grepl("^[[:alpha:]][[:alnum:].]*", packageName))
+      return(.rs.error(
+         "Invalid package name: the package name must start ",
+         "with a letter and follow with only alphanumeric characters"))
+   
+   ## Validate the package directory -- if it exists, make sure it's empty,
+   ## otherwise, try to create it
+   if (file.exists(packageDirectory))
+   {
+      containedFiles <- list.files(packageDirectory) ## what about hidden files?
+      if (length(containedFiles))
+      {
+         return(.rs.error(
+            "Folder '", packageDirectory, "' ",
+            "already exists and is not empty"))
+      }
+   }
+   
+   # Otherwise, create it
+   else
+   {
+      if (!dir.create(packageDirectory, recursive = TRUE))
+         return(.rs.error(
+            "Failed to create directory '", packageDirectory, "'"))
+   }
+   
+   ## Create a DESCRIPTION file
+   
+   # Fill some bits based on devtools options if they're available.
+   # Protect against vectors with length > 1
+   getDevtoolsOption <- function(optionName, default, collapse = " ")
+   {
+      devtoolsDesc <- getOption("devtools.desc")
+      if (!length(devtoolsDesc))
+         return(default)
+      
+      option <- devtoolsDesc[[optionName]]
+      if (is.null(option))
+         return(default)
+      
+      paste(option, collapse = collapse)
+   }
+   
+   
+   Author <- getDevtoolsOption("Author", "Who wrote it")
+   
+   Maintainer <- getDevtoolsOption(
+      "Maintainer",
+      "The package maintainer <yourself@somewhere.net>"
+   )
+   
+   License <- getDevtoolsOption(
+      "License",
+      "What license is it under?",
+      ", "
+   )
+   
+   DESCRIPTION <- list(
+      Package = packageName,
+      Type = "Package",
+      Title = "What the Package Does (Title Case)",
+      Version = "0.1.0",
+      Author = Author,
+      Maintainer = Maintainer,
+      Description = c(
+         "More about what it does (maybe more than one line)",
+         "Use four spaces when indenting paragraphs within the Description."
+      ),
+      License = License,
+      Encoding = "UTF-8",
+      LazyData = "true"
+   )
+   
+   # Create a NAMESPACE file
+   NAMESPACE <- c(
+      'exportPattern("^[[:alpha:]]+")'
+   )
+   
+   # If we are using Rcpp, update DESCRIPTION and NAMESPACE
+   if (usingRcpp)
+   {
+      dir.create(file.path(packageDirectory, "src"), showWarnings = FALSE)
+      
+      rcppImportsStatement <- "Rcpp"
+      
+      # We'll enforce Rcpp > (installed version)
+      ip <- installed.packages()
+      if ("Rcpp" %in% rownames(ip))
+         rcppImportsStatement <- sprintf("Rcpp (>= %s)", ip["Rcpp", "Version"])
+      
+      DESCRIPTION$Imports <- c(DESCRIPTION$Imports, rcppImportsStatement)
+      DESCRIPTION$LinkingTo <- c(DESCRIPTION$LinkingTo, "Rcpp")
+      
+      # Add an import from Rcpp, and also useDynLib
+      NAMESPACE <- c(
+         NAMESPACE,
+         "importFrom(Rcpp, evalCpp)",
+         sprintf("useDynLib(%s)", packageName)
+      )
+   }
+   
+   # Get other fields from devtools options
+   if (length(getOption("devtools.desc.suggests")))
+      DESCRIPTION$Suggests <- getOption("devtools.desc.suggests")
+   
+   if (length(getOption("devtools.desc")))
+   {
+      devtools.desc <- getOption("devtools.desc")
+      for (i in seq_along(devtools.desc))
+      {
+         name <- names(devtools.desc)[[i]]
+         value <- devtools.desc[[i]]
+         DESCRIPTION[[name]] <- value
+      }
+   }
+   
+   # If we are using 'testthat' and 'devtools' is available, use it to
+   # add test infrastructure
+   if ("testthat" %in% DESCRIPTION$Suggests)
+   {
+      dir.create(file.path(packageDirectory, "tests"))
+      dir.create(file.path(packageDirectory, "tests", "testthat"))
+      
+      if ("devtools" %in% rownames(installed.packages()))
+      {
+         # NOTE: Okay to load devtools as we will restart the R session
+         # soon anyhow
+         ns <- asNamespace("devtools")
+         if (exists("render_template", envir = ns))
+         {
+            tryCatch(
+               writeLines(
+                  devtools:::render_template(
+                     "testthat.R",
+                     list(name = packageName)
+                  ),
+                  file.path(packageDirectory, "tests", "testthat.R")
+               ), error = function(e) NULL
+            )
+         }
+      }
+   }
+   
+   # If we are using the MIT license, add the template
+   if (grepl("MIT\\s+\\+\\s+file\\s+LICEN[SC]E", DESCRIPTION$License, perl = TRUE))
+   {
+      # Guess the copyright holder
+      holder <- if (!is.null(getOption("devtools.name")))
+         Author
+      else
+         "<Copyright holder>"
+      
+      msg <- c(
+         paste("YEAR:", format(Sys.time(), "%Y")),
+         paste("COPYRIGHT HOLDER:", holder)
+      )
+      
+      cat(msg,
+          file = file.path(packageDirectory, "LICENSE"),
+          sep = "\n")
+   }
+   
+   # Always create 'R/', 'man/' directories
+   dir.create(file.path(packageDirectory, "R"), showWarnings = FALSE)
+   dir.create(file.path(packageDirectory, "man"))
+   
+   # If there were no source files specified, create a simple 'hello world'
+   # function -- but only if the user hasn't implicitly opted into the 'devtools'
+   # ecosystem
+   if ((!length(getOption("devtools.desc"))) &&
+       (!length(sourceFiles)))
+   {
+      
+      # Some simple shortcuts that authors should know
+      sysname <- Sys.info()[["sysname"]]
+      
+      buildShortcut <- if (sysname == "Darwin")
+         "Cmd + Shift + B"
+      else
+         "Ctrl + Shift + B"
+      
+      checkShortcut <- if (sysname == "Darwin")
+         "Cmd + Shift + E"
+      else
+         "Ctrl + Shift + E"
+      
+      testShortcut <- if (sysname == "Darwin")
+         "Cmd + Shift + T"
+      else
+         "Ctrl + Shift + T"
+      
+      helloWorld <- .rs.trimCommonIndent('
+         # Hello, world!
+         #
+         # This is an example function named \'hello\' 
+         # which prints \'Hello, world!\'.
+         #
+         # You can learn more about package authoring with RStudio at:
+         #
+         #   http://r-pkgs.had.co.nz/
+         #
+         # Some useful keyboard shortcuts for package authoring:
+         #
+         #   Build and Reload Package:  \'%s\'
+         #   Check Package:             \'%s\'
+         #   Test Package:              \'%s\'
+         
+         hello <- function() {
+           print(\"Hello, world!\")
+         }
+      ', buildShortcut, checkShortcut, testShortcut)
+      
+      cat(helloWorld,
+          file = file.path(packageDirectory, "R", "hello.R"),
+          sep = "\n")
+      
+      # Similarly, create a simple example .Rd for this 'hello world' function
+      helloWorldRd <- .rs.trimCommonIndent('
+         \\name{hello}
+         \\alias{hello}
+         \\title{Hello, World!}
+         \\usage{
+         hello()
+         }
+         \\description{
+         Prints \'Hello, world!\'.
+         }
+         \\examples{
+         hello()
+         }
+      ')
+      
+      cat(helloWorldRd,
+          file = file.path(packageDirectory, "man", "hello.Rd"),
+          sep = "\n")
+      
+      if (usingRcpp)
+      {
+         ## Ensure 'src/' directory exists
+         if (!file.exists(file.path(packageDirectory, "src")))
+            dir.create(file.path(packageDirectory, "src"))
+         
+         ## Write a 'hello world' for C++
+         helloWorldCpp <- .rs.trimCommonIndent('
+            #include <Rcpp.h>
+            using namespace Rcpp;
+            
+            // This is a simple function using Rcpp that creates an R list
+            // containing a character vector and a numeric vector.
+            //
+            // Learn more about how to use Rcpp at:
+            //
+            //   http://www.rcpp.org/
+            //   http://adv-r.had.co.nz/Rcpp.html
+            //
+            // and browse examples of code using Rcpp at:
+            // 
+            //   http://gallery.rcpp.org/
+            //
+
+            // [[Rcpp::export]]
+            List rcpp_hello() {
+              CharacterVector x = CharacterVector::create("foo", "bar");
+              NumericVector y   = NumericVector::create(0.0, 1.0);
+              List z            = List::create(x, y);
+              return z;
+            }
+
+         ')
+
+         helloWorldDoc <- .rs.trimCommonIndent('
+            \\name{rcpp_hello}
+            \\alias{rcpp_hello}
+            \\title{Hello, Rcpp!}
+            \\usage{
+            rcpp_hello()
+            }
+            \\description{
+            Returns an \\R \\code{list} containing the character vector
+            \\code{c("foo", "bar")} and the numeric vector \\code{c(0, 1)}.
+            }
+            \\examples{
+            rcpp_hello()
+            }
+         ')
+         
+         cat(helloWorldCpp,
+             file = file.path(packageDirectory, "src", "rcpp_hello.cpp"),
+             sep = "\n")
+
+         cat(helloWorldDoc,
+             file = file.path(packageDirectory, "man", "rcpp_hello.Rd"),
+             sep = "\n")
+         
+      }
+   }
+   else if (length(sourceFiles))
+   {
+      # Copy the source files to the appropriate sub-directory
+      sourceFileExtensions <- tolower(gsub(".*\\.", "", sourceFiles, perl = TRUE))
+      sourceDirs <- .rs.swap(
+         sourceFileExtensions,
+         "R" = c("r", "q", "s"),
+         "src" = c("c", "cc", "cpp", "h", "hpp"),
+         "vignettes" = c("rmd", "rnw"),
+         "man" = "rd",
+         "data" = c("rda", "rdata"),
+         default = ""
+      )
+      
+      copyPaths <- gsub("/+", "/", file.path(
+         packageDirectory,
+         sourceDirs,
+         basename(sourceFiles)
+      ))
+      
+      dirPaths <- dirname(copyPaths)
+      
+      success <- unlist(lapply(dirPaths, function(path) {
+         
+         if (isTRUE(file.info(path)$isdir))
+            return(TRUE)
+         
+         dir.create(path, recursive = TRUE, showWarnings = FALSE)
+         
+      }))
+      
+      if (!all(success))
+         return(.rs.error("Failed to create package directory structure"))
+      
+      success <- file.copy(sourceFiles, copyPaths)
+      
+      if (!all(success))
+         return(.rs.error("Failed to copy one or more source files"))
+   }
+   
+   # Write various files out
+   
+   # NOTE: write.dcf mangles whitespace so we manually construct
+   # the text we wish to write out
+   DESCRIPTION <- lapply(DESCRIPTION, function(field) {
+      paste(field, collapse = "\n    ")
+   })
+   
+   names <- names(DESCRIPTION)
+   values <- unlist(DESCRIPTION)
+   text <- paste(names, ": ", values, sep = "", collapse = "\n")
+   cat(text, file = file.path(packageDirectory, "DESCRIPTION"))
+   
+   cat(NAMESPACE, file = file.path(packageDirectory, "NAMESPACE"), sep = "\n")
+   
+   RprojPath <- file.path(
+      packageDirectory,
+      paste(packageName, ".Rproj", sep = "")
+   )
+   
+   if (!.Call("rs_writeProjectFile", RprojPath))
+      return(.rs.error("Failed to create package .Rproj file"))
+   
+   # Ensure new packages get AutoAppendNewLine + StripTrailingWhitespace
+   Rproj <- readLines(RprojPath)
+   
+   appendNewLineIndex <- grep("AutoAppendNewline:", Rproj, fixed = TRUE)
+   if (length(appendNewLineIndex))
+      Rproj[appendNewLineIndex] <- "AutoAppendNewline: Yes"
+   else
+      Rproj <- c(Rproj, "AutoAppendNewline: Yes")
+   
+   stripTrailingWhitespace <- grep("StripTrailingWhitespace:", Rproj, fixed = TRUE)
+   if (length(appendNewLineIndex))
+      Rproj[appendNewLineIndex] <- "StripTrailingWhitespace: Yes"
+   else
+      Rproj <- c(Rproj, "StripTrailingWhitespace: Yes")
+   
+   cat(Rproj, file = RprojPath, sep = "\n")
+   
+   # NOTE: this file is not always generated (e.g. people who have implicitly opted
+   # into using devtools won't need the template file)
+   if (file.exists(file.path(packageDirectory, "R", "hello.R")))
+      .Call("rs_addFirstRunDoc", RprojPath, "R/hello.R")
+
+   ## NOTE: This must come last to ensure the other package
+   ## infrastructure bits have been generated; otherwise
+   ## compileAttributes can fail
+   if (usingRcpp &&
+       .rs.isPackageVersionInstalled("Rcpp", "0.10.1") &&
+       require(Rcpp, quietly = TRUE))
+   {
+      Rcpp::compileAttributes(packageDirectory)
+      if (file.exists(file.path(packageDirectory, "src/rcpp_hello.cpp")))
+         .Call("rs_addFirstRunDoc", RprojPath, "src/rcpp_hello.cpp")
+   }
+   
+   .rs.success()
+   
+})
+
+
+.rs.addFunction("secureDownloadMethod", function()
+{
+   # Function to determine whether R checks for 404 in libcurl calls
+   libcurlHandles404 <- function() {
+      getRversion() >= "3.3" && .rs.haveRequiredRSvnRev(69197)
+   }
+
+   # Check whether we are running R 3.2 and whether we have libcurl
+   isR32 <- getRversion() >= "3.2"
+   haveLibcurl <- isR32 && capabilities("libcurl") && libcurlHandles404()
+   
+   # Utility function to bind to libcurl or a fallback utility (e.g. wget)
+   posixMethod <- function(utility) {
+      if (haveLibcurl)
+         "libcurl"
+      else if (nzchar(Sys.which(utility)))
+         utility
+      else
+         ""
+   }
+   
+   # Determine the right secure download method per-system
+   sysName <- Sys.info()[['sysname']]
+   
+   # For windows we prefer binding directly to wininet if we can (since
+   # that doesn't rely on the value of setInternet2). If it's R <= 3.1
+   # then we can use "internal" for https so long as internet2 is enabled 
+   # (we don't use libcurl on Windows because it doesn't check certs).
+   if (identical(sysName, "Windows")) {
+      if (isR32)
+         "wininet"
+      else if (setInternet2(NA))
+         "internal"
+      else
+         ""
+   }
+   
+   # For Darwin and Linux we use libcurl if we can and then fall back
+   # to curl or wget as appropriate. We prefer libcurl because it honors
+   # the same proxy configuration that "internal" does so it less likely
+   # to break downloads for users behind proxy servers. 
+   
+   else if (identical(sysName, "Darwin")) {
+      posixMethod("curl")
+   }
+   
+   else if (identical(sysName, "Linux")) {
+      method <- posixMethod("wget")
+      if (!nzchar(method))
+         method <- posixMethod("curl")
+      method
+   } 
+   
+   # Another OS, don't even attempt detection since RStudio currently
+   # only runs on Windows, Linux, and Mac
+   else {
+      ""
+   }
+})
+
+.rs.addFunction("autoDownloadMethod", function() {
+   if (capabilities("http/ftp"))
+      "internal"
+   else if (nzchar(Sys.which("wget")))
+      "wget"
+   else if (nzchar(Sys.which("curl")))
+      "curl"
+   else
+      ""
+})
+
+.rs.addFunction("isDownloadMethodSecure", function(method) {
+   
+   # resolve auto if needed
+   if (identical(method, "auto"))
+      method <- .rs.autoDownloadMethod()
+   
+   # check for methods known to work securely
+   if (method %in% c("wininet", "libcurl", "wget", "curl")) {
+      TRUE
+   }
+   
+   # if internal then see if were using windows internal with inet2
+   else if (identical(method, "internal")) {
+      identical(Sys.info()[['sysname']], "Windows") && setInternet2(NA)
+   }
+   
+   # method with unknown properties (e.g. "lynx") or unresolved auto
+   else {
+      FALSE
+   }
+})
+
+.rs.addFunction("haveSecureDownloadFileMethod", function() {
+   .rs.isDownloadMethodSecure(getOption("download.file.method", "auto"))
+})
+
+.rs.addFunction("showSecureDownloadWarning", function() {
+   is.na(Sys.getenv("RSTUDIO_DISABLE_SECURE_DOWNLOAD_WARNING", unset = NA))
+})
+
+.rs.addFunction("insecureReposWarning", function(msg) {
+   if (.rs.showSecureDownloadWarning()) {
+      message("WARNING: ", msg, " You should either switch to a repository ",
+              "that supports HTTPS or change your RStudio options to not require HTTPS ",
+              "downloads.\n\nTo learn more and/or disable this warning ",
+              "message see the \"Use secure download method for HTTP\" option ",
+              "in Tools -> Global Options -> Packages.")
+   }
+})
+
+.rs.addFunction("insecureDownloadWarning", function(msg) {
+   if (.rs.showSecureDownloadWarning()) {
+      message("WARNING: ", msg,
+              "\n\nTo learn more and/or disable this warning ",
+              "message see the \"Use secure download method for HTTP\" option ",
+              "in Tools -> Global Options -> Packages.")
+   }
+})
+
+.rs.addFunction("initSecureDownload", function() {
+      
+   # check if the user has already established a download.file.method and
+   # if so verify that it is secure
+   method <- getOption("download.file.method")
+   if (!is.null(method)) {
+      if (!.rs.isDownloadMethodSecure(method)) {
+         .rs.insecureDownloadWarning(
+             paste("The download.file.method option is \"", method, "\" ",
+                   "however that method cannot provide secure (HTTPS) downloads ",
+                   "on this platform. ", 
+                   "This option was likely specified in .Rprofile or ",
+                   "Rprofile.site so if you wish to change it you may need ",
+                   "to edit one of those files.",
+                   sep = "")
+         )
+      }
+   } 
+   
+   # no user specified method, automatically set a secure one if we can
+   else {
+      secureMethod <- .rs.secureDownloadMethod()
+      if (nzchar(secureMethod)) {
+         options(download.file.method = secureMethod) 
+         if (secureMethod == "curl")
+            options(download.file.extra = .rs.downloadFileExtraWithCurlArgs())
+      }
+      else {
+         .rs.insecureDownloadWarning(
+            paste("Unable to set a secure (HTTPS) download.file.method (no",
+                  "compatible method available in this installation of R).")
+         )
+      }
+   }
+})
+   
+
+.rs.addFunction("downloadFileExtraWithCurlArgs", function() {
+   curlArgs <- "-L -f"
+   existingArgs <- getOption("download.file.extra")
+   if (!is.null(existingArgs) && !grepl(curlArgs, existingArgs, fixed = TRUE))
+      curlArgs <- paste(existingArgs, curlArgs)
+   curlArgs
+})

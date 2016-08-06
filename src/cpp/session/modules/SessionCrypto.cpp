@@ -27,10 +27,14 @@
 
 #include <core/system/Crypto.hpp>
 
+#include <r/RSexp.hpp>
+#include <r/RRoutines.hpp>
+
 #include <session/SessionModuleContext.hpp>
 
-using namespace core;
+using namespace rstudio::core;
 
+namespace rstudio {
 namespace session {
 namespace modules { 
 namespace crypto {
@@ -75,4 +79,5 @@ Error initialize()
 } // namespace crypto
 } // namespace modules
 } // namesapce session
+} // namespace rstudio
 

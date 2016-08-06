@@ -28,9 +28,11 @@
 #include <core/FileSerializer.hpp>
 
 #include <session/SessionModuleContext.hpp>
+#include <session/projects/SessionProjects.hpp>
 
-using namespace core ;
+using namespace rstudio::core ;
 
+namespace rstudio {
 namespace session {  
 namespace modules {
 namespace build {
@@ -91,10 +93,12 @@ FilePath scanForRSourceFile(const FilePath& basePath,
    return FilePath();
 }
 
-std::vector<CompileError> parseRErrors(const FilePath& basePath,
+std::vector<module_context::SourceMarker> parseRErrors(
+                                       const FilePath& basePath,
                                        const std::string& output)
 {
-   std::vector<CompileError> errors;
+   using namespace module_context;
+   std::vector<SourceMarker> errors;
 
    boost::regex re("^Error in parse\\(outFile\\) : ([0-9]+?):([0-9]+?): (.+?)\\n"
                    "([0-9]+?): (.*?)\\n([0-9]+?): (.+?)$");
@@ -123,11 +127,11 @@ std::vector<CompileError> parseRErrors(const FilePath& basePath,
          if (!rSrcFile.empty())
          {
             // create error and add it
-            CompileError err(CompileError::Error,
+            SourceMarker err(SourceMarker::Error,
                              rSrcFile,
                              core::safe_convert::stringTo<int>(line, 1),
                              core::safe_convert::stringTo<int>(column, 1),
-                             message,
+                             core::html_utils::HTML(message),
                              false);
             errors.push_back(err);
          }
@@ -140,10 +144,21 @@ std::vector<CompileError> parseRErrors(const FilePath& basePath,
 }
 
 
-std::vector<CompileError> parseGccErrors(const FilePath& basePath,
-                                         const std::string& output)
+std::vector<module_context::SourceMarker> parseGccErrors(
+                                           const FilePath& basePath,
+                                           const std::string& output)
 {
-   std::vector<CompileError> errors;
+   // check to see if we are in a package
+   std::string pkgInclude;
+   using namespace projects;
+   if (projectContext().hasProject() &&
+       (projectContext().config().buildType == r_util::kBuildTypePackage))
+   {
+      pkgInclude = "/" + projectContext().packageInfo().name() + "/include/";
+   }
+
+   using namespace module_context;
+   std::vector<SourceMarker> errors;
 
    // parse standard gcc errors and warning lines but also pickup "from"
    // prefixed errors and substitute the from file for the error/warning file
@@ -181,7 +196,12 @@ std::vector<CompileError> parseGccErrors(const FilePath& basePath,
       if (FilePath::isRootPath(file))
          filePath = FilePath(file);
       else
-         filePath = basePath.complete(file);
+         filePath = basePath.childPath(file);
+
+      // skip if the file doesn't exist
+      if (!filePath.exists())
+         continue;
+
       FilePath realPath;
       Error error = core::system::realPath(filePath, &realPath);
       if (error)
@@ -189,20 +209,38 @@ std::vector<CompileError> parseGccErrors(const FilePath& basePath,
       else
          filePath = realPath;
 
+      // if we are in a package and the file where the error occurred
+      // has /<package-name>/include/ in it then it might be a template
+      // instantiation error. in that case re-map it to the appropriate
+      // source file within the package
+      if (!pkgInclude.empty())
+      {
+         std::string path = filePath.absolutePath();
+         size_t pos = path.find(pkgInclude);
+         if (pos != std::string::npos)
+         {
+            // advance to end and calculate relative path
+            pos += pkgInclude.length();
+            std::string relativePath = path.substr(pos);
+
+            // does this file exist? if so substitute it
+            FilePath includePath = projectContext().buildTargetPath()
+                             .childPath("inst/include/" + relativePath);
+            if (includePath.exists())
+               filePath = includePath;
+         }
+      }
+
       // don't show warnings from Makeconf
       if (filePath.filename() == "Makeconf")
          continue;
 
-      // resolve type
-      CompileError::Type errType = (type == "warning") ? CompileError::Warning :
-                                                         CompileError::Error;
-
-      // create error and add it
-      CompileError err(errType,
+      // create marker and add it
+      SourceMarker err(module_context::sourceMarkerTypeFromString(type),
                        filePath,
                        core::safe_convert::stringTo<int>(line, 1),
                        core::safe_convert::stringTo<int>(column, 1),
-                       message,
+                       core::html_utils::HTML(message),
                        true);
       errors.push_back(err);
    }
@@ -210,33 +248,7 @@ std::vector<CompileError> parseGccErrors(const FilePath& basePath,
    return errors;
 }
 
-// NOTE: sync changes with SessionCompilePdf.cpp logEntryJson
-json::Value compileErrorJson(const CompileError& compileError)
-{
-   json::Object obj;
-   obj["type"] = static_cast<int>(compileError.type);
-   obj["path"] = module_context::createAliasedPath(compileError.path);
-   obj["line"] = compileError.line;
-   obj["column"] = compileError.column;
-   obj["message"] = compileError.message;
-   obj["log_path"] = "";
-   obj["log_line"] = -1;
-   obj["show_error_list"] = compileError.showErrorList;
-   return obj;
-}
-
-
 } // anonymous namespace
-
-json::Array compileErrorsAsJson(const std::vector<CompileError>& errors)
-{
-   json::Array errorsJson;
-   std::transform(errors.begin(),
-                  errors.end(),
-                  std::back_inserter(errorsJson),
-                  compileErrorJson);
-   return errorsJson;
-}
 
 CompileErrorParser gccErrorParser(const FilePath& basePath)
 {
@@ -252,3 +264,4 @@ CompileErrorParser rErrorParser(const FilePath& basePath)
 } // namespace build
 } // namespace modules
 } // namespace session
+} // namespace rstudio

@@ -18,11 +18,14 @@
 
 #include <string>
 
+namespace rstudio {
 namespace core {
    class FilePath;
    class Error;
 }
+}
 
+namespace rstudio {
 namespace r {
 namespace util {
    
@@ -42,8 +45,12 @@ core::Error iconvstr(const std::string& value,
                      bool allowSubstitution,
                      std::string* result);
 
+bool isRKeyword(const std::string& name);
+bool isWindowsOnlyFunction(const std::string& name);
+
 } // namespace util   
 } // namespace r
+} // namespace rstudio
 
 
 #endif // R_UTIL_HPP 

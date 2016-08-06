@@ -17,7 +17,7 @@
  * AGPL (http://www.gnu.org/licenses/agpl-3.0.txt) for more details.
  *
  */
-define("mode/r", function(require, exports, module)
+define("mode/r", ["require", "exports", "module"], function(require, exports, module)
 {
    var Editor = require("ace/editor").Editor;
    var EditSession = require("ace/edit_session").EditSession;
@@ -33,22 +33,30 @@ define("mode/r", function(require, exports, module)
    var AutoBraceInsert = require("mode/auto_brace_insert").AutoBraceInsert;
    var unicode = require("ace/unicode");
 
-   var Mode = function(suppressHighlighting, doc, session)
+   var Mode = function(suppressHighlighting, session)
    {
       if (suppressHighlighting)
          this.$tokenizer = new Tokenizer(new TextHighlightRules().getRules());
       else
          this.$tokenizer = new Tokenizer(new RHighlightRules().getRules());
 
-      this.codeModel = new RCodeModel(doc, this.$tokenizer, null);
+      this.codeModel = new RCodeModel(session, this.$tokenizer);
       this.foldingRules = this.codeModel;
+      this.$outdent = new RMatchingBraceOutdent(this.codeModel);
    };
    oop.inherits(Mode, TextMode);
 
    (function()
    {
-      oop.implement(this, RMatchingBraceOutdent);
 
+      this.checkOutdent = function(state, line, input) {
+         return this.$outdent.checkOutdent(state, line, input);
+      };
+
+      this.autoOutdent = function(state, session, row) {
+         return this.$outdent.autoOutdent(state, session, row);
+      };
+      
       this.tokenRe = new RegExp("^["
           + unicode.packages.L
           + unicode.packages.Mn + unicode.packages.Mc
@@ -60,22 +68,24 @@ define("mode/r", function(require, exports, module)
           + unicode.packages.L
           + unicode.packages.Mn + unicode.packages.Mc
           + unicode.packages.Nd
-          + unicode.packages.Pc + "._]|\s])+", "g"
+          + unicode.packages.Pc + "._]|\\s])+", "g"
       );
 
+      // NOTE: these override fields used for 'auto_brace_insert'
       this.$complements = {
                "(": ")",
                "[": "]",
                '"': '"',
                "'": "'",
-               "{": "}"
+               "{": "}",
+               "`": "`"
             };
-      this.$reOpen = /^[(["'{]$/;
-      this.$reClose = /^[)\]"'}]$/;
+      this.$reOpen  = /^[{(\["'`]$/;
+      this.$reClose = /^[})\]"'`]$/;
 
-      this.getNextLineIndent = function(state, line, tab, tabSize, row)
+      this.getNextLineIndent = function(state, line, tab, row)
       {
-         return this.codeModel.getNextLineIndent(row, line, state, tab, tabSize);
+         return this.codeModel.getNextLineIndent(state, line, tab, row);
       };
 
       this.allowAutoInsert = this.smartAllowAutoInsert;
@@ -106,6 +116,8 @@ define("mode/r", function(require, exports, module)
          }
          return false;
       };
+
+      this.$id = "mode/r";
    }).call(Mode.prototype);
    exports.Mode = Mode;
 });

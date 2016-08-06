@@ -32,6 +32,7 @@
 #include <core/system/Process.hpp>
 #include <core/system/Environment.hpp>
 
+namespace rstudio {
 namespace core {
 namespace r_util {
 
@@ -65,7 +66,6 @@ FilePath scanForRScript(const std::vector<std::string>& rScriptPaths,
 
    // didn't find it
    *pErrMsg = "Unable to locate R binary by scanning standard locations";
-   LOG_ERROR_MESSAGE(*pErrMsg);
    return FilePath();
 }
 
@@ -215,13 +215,11 @@ FilePath systemDefaultRScript(std::string* pErrMsg)
       if (error)
       {
          *pErrMsg = "Error calling which R: " + error.summary();
-         LOG_ERROR_MESSAGE(*pErrMsg);
       }
       else
       {
          *pErrMsg = "Unable to find an installation of R on the system "
                     "(which R didn't return valid output)";
-         LOG_ERROR_MESSAGE(*pErrMsg);
       }
 
       // scan in standard locations as a fallback
@@ -729,7 +727,7 @@ std::string rLibraryPath(const FilePath& rHomePath,
    libraryPath.append(ldLibraryPath);
    if (!libraryPath.empty())
       libraryPath.append(":");
-   libraryPath.append(rLibPath.absolutePath());
+   libraryPath = rLibPath.absolutePath() + ":" + libraryPath;
    std::string extraPaths = extraLibraryPaths(ldPathsScript,
                                               rHomePath.absolutePath());
    if (!extraPaths.empty())
@@ -748,10 +746,11 @@ Error rVersion(const FilePath& rHomePath,
    core::system::setenv(&env, "R_HOME", rHomePath.absolutePath());
    options.environment = env;
    core::system::ProcessResult result;
-   Error error = core::system::runCommand(rScriptPath.absolutePath() +
-                                          " --slave --vanilla --version",
-                                          options,
-                                          &result);
+   Error error = core::system::runCommand(
+      rScriptPath.absolutePath() +
+      " --slave --vanilla -e 'cat(R.Version()$major,R.Version()$minor, sep=\".\")'",
+      options,
+      &result);
    if (error)
    {
       error.addProperty("r-script", rScriptPath);
@@ -760,7 +759,7 @@ Error rVersion(const FilePath& rHomePath,
    else
    {
       std::string versionInfo = boost::algorithm::trim_copy(result.stdOut);
-      boost::regex re("^[^\\d]+([\\d\\.]+)");
+      boost::regex re("^([\\d\\.]+)$");
       boost::smatch match;
       if (boost::regex_search(versionInfo, match, re))
       {
@@ -778,8 +777,61 @@ Error rVersion(const FilePath& rHomePath,
    }
 }
 
+/*
+We've observed that Ubuntu 14.10 no longer passes the LANG environment
+variable to daemon processes so we lose the automatic inheritence of
+LANG from the system default. For this case we'll do automatic detection
+and setting of LANG.
+*/
+#if !defined(__APPLE__)
+void ensureLang()
+{
+   // if no LANG environment variable is already defined
+   if (core::system::getenv("LANG").empty())
+   {
+      // try to read the LANG from the various places it might be defined
+      std::vector<std::pair<std::string,std::string> > langDefs;
+      langDefs.push_back(std::make_pair("LANG", "/etc/default/locale"));
+      langDefs.push_back(std::make_pair("LANG", "/etc/sysconfig/i18n"));
+      langDefs.push_back(std::make_pair("LANG", "/etc/locale.conf"));
+      langDefs.push_back(std::make_pair("RC_LANG", "/etc/sysconfig/language"));
+      for (size_t i = 0; i<langDefs.size(); i++)
+      {
+         std::string var = langDefs[i].first;
+         std::string file = langDefs[i].second;
+         std::map<std::string,std::string> vars;
+         Error error = config_utils::extractVariables(FilePath(file), &vars);
+         if (error)
+         {
+            if (!core::isPathNotFoundError(error))
+               LOG_ERROR(error);
+            continue;
+         }
+         std::string value = vars[var];
+         if (!value.empty())
+         {
+            core::system::setenv("LANG", value);
+            break;
+         }
+      }
+
+      // log a warning if it's still empty
+      if (core::system::getenv("LANG").empty())
+      {
+         LOG_WARNING_MESSAGE(
+            "Unable to determine LANG (proceeding with no LANG set");
+      }
+   }   
+}
+#else
+void ensureLang()
+{
+}
+#endif
+
 } // namespace r_util
 } // namespace core 
+} // namespace rstudio
 
 
 

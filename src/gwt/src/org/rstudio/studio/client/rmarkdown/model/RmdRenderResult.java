@@ -14,7 +14,7 @@
  */
 package org.rstudio.studio.client.rmarkdown.model;
 
-import org.rstudio.studio.client.common.compile.CompileError;
+import org.rstudio.studio.client.common.sourcemarkers.SourceMarker;
 
 import com.google.gwt.core.client.JsArray;
 
@@ -34,10 +34,12 @@ public class RmdRenderResult extends RmdSlideNavigationInfo
         output_url: doc.url, 
         output_format: doc.output_format, 
         rpubs_published: false, 
+        force_maximize: false,
         knitr_errors: [],
         is_shiny_document: true,
         preview_slide: doc.preview_slide,
-        slide_navigation: doc.slide_navigation
+        slide_navigation: doc.slide_navigation,
+        viewed: false
      };
    }-*/;
   
@@ -73,6 +75,10 @@ public class RmdRenderResult extends RmdSlideNavigationInfo
       return this.rpubs_published;
    }-*/;
    
+   public native final boolean getForceMaximize() /*-{
+      return this.force_maximize;
+   }-*/;
+   
    public final boolean isHtml()
    {
       return getOutputFile().toLowerCase().endsWith(".html");
@@ -83,7 +89,7 @@ public class RmdRenderResult extends RmdSlideNavigationInfo
       return getFormat().getFormatName();
    }
    
-   public final native JsArray<CompileError> getKnitrErrors() /*-{
+   public final native JsArray<SourceMarker> getKnitrErrors() /*-{
       return this.knitr_errors;
    }-*/;
    
@@ -94,11 +100,30 @@ public class RmdRenderResult extends RmdSlideNavigationInfo
    public final native boolean hasShinyContent() /*-{
       return this.has_shiny_content;
    }-*/;
+   
+   public final native boolean viewed() /*-{
+      return !!this.viewed;
+   }-*/;
+   
+   public final native boolean setViewed(boolean viewed) /*-{
+      this.viewed = viewed;
+   }-*/;
 
    public final boolean isHtmlPresentation()
    {
       return (isShinyDocument() || isHtml()) && getFormatName().endsWith(
                   RmdOutputFormat.OUTPUT_PRESENTATION_SUFFIX);
+   }
+   
+   public final boolean isHtmlDashboard()
+   {
+      return (isShinyDocument() || isHtml()) && getFormatName().endsWith(
+            RmdOutputFormat.OUTPUT_DASHBOARD_SUFFIX);
+   }
+   
+   public final boolean getRestoreAnchor()
+   {
+      return isHtmlPresentation() || isHtmlDashboard();
    }
    
    // indicates whether this result represents the same *output* document as

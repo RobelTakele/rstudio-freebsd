@@ -25,11 +25,14 @@
 
 #include "SessionRnwConcordance.hpp"
 
+namespace rstudio {
 namespace core {
    class Error;
    class FilePath;
 }
+}
  
+namespace rstudio {
 namespace session {
 namespace modules { 
 namespace tex {
@@ -76,7 +79,9 @@ struct Result
 
 typedef boost::function<void(const Result&)> CompletedFunction;
 
-void runTangle(const std::string& filePath, const std::string& rnwWeave);
+void runTangle(const std::string& filePath,
+               const std::string& encoding,
+               const std::string& rnwWeave);
 
 void runWeave(const core::FilePath& filePath,
               const std::string& encoding,
@@ -89,5 +94,6 @@ void runWeave(const core::FilePath& filePath,
 } // namespace tex
 } // namespace modules
 } // namesapce session
+} // namespace rstudio
 
 #endif // SESSION_MODULES_RNW_WEAVE_HPP

@@ -14,22 +14,28 @@
  */
 package org.rstudio.studio.client.workbench.views.source.model;
 
+import com.google.gwt.core.client.JsArray;
 import com.google.gwt.core.client.JsArrayString;
 
 import org.rstudio.core.client.js.JsObject;
 import org.rstudio.studio.client.common.codetools.CodeToolsServerOperations;
+import org.rstudio.studio.client.events.GetEditorContextEvent;
 import org.rstudio.studio.client.htmlpreview.model.HTMLPreviewServerOperations;
 import org.rstudio.studio.client.notebook.CompileNotebookOptions;
 import org.rstudio.studio.client.notebook.CompileNotebookResult;
+import org.rstudio.studio.client.rsconnect.model.RSConnectServerOperations;
 import org.rstudio.studio.client.server.ServerRequestCallback;
 import org.rstudio.studio.client.server.Void;
 import org.rstudio.studio.client.workbench.codesearch.model.CodeSearchServerOperations;
 import org.rstudio.studio.client.workbench.views.buildtools.model.BuildServerOperations;
 import org.rstudio.studio.client.workbench.views.files.model.FilesServerOperations;
+import org.rstudio.studio.client.workbench.views.output.lint.model.LintServerOperations;
 import org.rstudio.studio.client.workbench.views.presentation.model.PresentationServerOperations;
 import org.rstudio.studio.client.workbench.views.source.editors.text.IconvListResult;
+import org.rstudio.studio.client.workbench.views.source.editors.text.rmd.ChunkDefinition;
 
 import java.util.HashMap;
+import java.util.List;
 
 /**
  * The server manages a "working list" of documents that are being edited by
@@ -40,10 +46,13 @@ import java.util.HashMap;
 public interface SourceServerOperations extends FilesServerOperations, 
                                                 CodeToolsServerOperations,
                                                 CodeSearchServerOperations,
+                                                CppServerOperations,
                                                 TexServerOperations,
                                                 HTMLPreviewServerOperations,
                                                 BuildServerOperations,
-                                                PresentationServerOperations
+                                                PresentationServerOperations,
+                                                LintServerOperations,
+                                                RSConnectServerOperations
 {
    /**
     * Create a new, empty document, without a path but with a unique ID, and
@@ -83,6 +92,7 @@ public interface SourceServerOperations extends FilesServerOperations,
                      String fileType,
                      String encoding,
                      String foldSpec,
+                     JsArray<ChunkDefinition> chunkOutput,
                      String contents,
                      ServerRequestCallback<String> requestCallback);
 
@@ -103,6 +113,7 @@ public interface SourceServerOperations extends FilesServerOperations,
                          String fileType,
                          String encoding,
                          String foldSpec,
+                         JsArray<ChunkDefinition> chunkOutput,
                          String replacement,
                          int offset,
                          int length,
@@ -149,6 +160,9 @@ public interface SourceServerOperations extends FilesServerOperations,
     */
    void modifyDocumentProperties(String id, HashMap<String, String> properties,
                                  ServerRequestCallback<Void> requestCallback);
+   
+   void getDocumentProperties(String path, 
+                              ServerRequestCallback<JsObject> requestCallback);
 
    void revertDocument(String id,
                        String fileType,
@@ -186,4 +200,40 @@ public interface SourceServerOperations extends FilesServerOperations,
    void getScriptRunCommand(String interpreter,
                             String path,
                             ServerRequestCallback<String> requestCallback);
+   
+   void getMinimalSourcePath(String path, 
+                             ServerRequestCallback<String> requestCallback);
+   
+   void setDocOrder(
+         List<String> order, ServerRequestCallback<Void> requestCallback); 
+   
+   void removeCachedData(String cacheKey, 
+                         ServerRequestCallback<Void> requestCallback);
+   
+   void ensureFileExists(String path,
+                         ServerRequestCallback<Boolean> requestCallback);
+   
+   public void getFileContents(String path,
+                               String encoding,
+                               ServerRequestCallback<String> requestCallback);
+   
+   public void executeRCode(String code,
+                            ServerRequestCallback<String> requestCallback);
+   
+   public void getSourceDocument(String docId,
+                ServerRequestCallback<SourceDocument> requestCallback);
+   
+   public void createShinyApp(String appName,
+                              String appType,
+                              String appDir,
+                              ServerRequestCallback<JsArrayString> requestCallback);
+   
+   public void getEditorContextCompleted(GetEditorContextEvent.SelectionData data,
+                                         ServerRequestCallback<Void> requestCallback);
+   
+   public void setSourceDocumentDirty(String docId, boolean dirty,
+         ServerRequestCallback<Void> requestCallback);
+   
+   public void extractRmdFromNotebook(String inputPath,
+         ServerRequestCallback<SourceDocumentResult> requestCallback);
 }

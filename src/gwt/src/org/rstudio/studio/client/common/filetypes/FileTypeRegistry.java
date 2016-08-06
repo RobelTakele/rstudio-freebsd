@@ -21,13 +21,14 @@ import org.rstudio.core.client.files.FileSystemItem;
 import org.rstudio.studio.client.application.Desktop;
 import org.rstudio.studio.client.application.events.EventBus;
 import org.rstudio.studio.client.common.GlobalDisplay;
-import org.rstudio.studio.client.common.filetypes.events.OpenSourceFileEvent.NavigationMethod;
+import org.rstudio.studio.client.common.filetypes.model.NavigationMethods;
 import org.rstudio.studio.client.common.reditor.EditorLanguage;
 import org.rstudio.studio.client.common.satellite.Satellite;
 import org.rstudio.studio.client.server.ServerError;
 import org.rstudio.studio.client.server.ServerRequestCallback;
 import org.rstudio.studio.client.workbench.model.Session;
 import org.rstudio.studio.client.workbench.views.files.model.FilesServerOperations;
+import org.rstudio.studio.client.workbench.views.source.SourceSatellite;
 
 import com.google.gwt.core.client.JavaScriptObject;
 import com.google.gwt.resources.client.ImageResource;
@@ -44,7 +45,7 @@ public class FileTypeRegistry
          new TextFileType("text", "Text File", EditorLanguage.LANG_PLAIN, "",
                           ICONS.iconText(),
                           true,
-                          false, false, false, false, false, false, false, false, false, true, false);
+                          false, false, false, false, false, false, false, false, false, true, false, false);
 
    public static final TextFileType R =
          new RFileType("r_source", "R Script", EditorLanguage.LANG_R, ".R",
@@ -59,17 +60,25 @@ public class FileTypeRegistry
                        true, // preview html
                        false, false, false, false,
                        true, // check spelling
+                       false,
                        false);
 
    public static final TextFileType DCF =
          new TextFileType("dcf", "DCF", EditorLanguage.LANG_DCF, ".dcf",
-                          ICONS.iconText(), false, false, false, false, false,
-                          false, false, false, false, false, false, false);
+                          ICONS.iconDCF(), false, false, false, false, false,
+                          false, false, false, false, false, false, false, false);
+   
+   public static final TextFileType STAN = new StanFileType();
+   
+   public static final TextFileType MERMAID = new MermaidFileType();
+   
+   public static final TextFileType GRAPHVIZ = new GraphvizFileType();
+
 
    public static final TextFileType NAMESPACE =
      new TextFileType("r_namespace", "NAMESPACE", EditorLanguage.LANG_R, "",
                       ICONS.iconText(), false, false, false, false, false,
-                      false, false, false, false, false, false, false);
+                      false, false, false, false, false, false, false, false);
 
    public static final TextFileType SWEAVE =
       new SweaveFileType("sweave", "R Sweave",
@@ -87,6 +96,10 @@ public class FileTypeRegistry
    public static final RWebContentFileType RMARKDOWN =
          new RWebContentFileType("r_markdown", "R Markdown", EditorLanguage.LANG_RMARKDOWN,
                               ".Rmd", ICONS.iconRmarkdown(), true);
+   
+   public static final RWebContentFileType RNOTEBOOK =
+         new RWebContentFileType("r_notebook", "R Notebook", EditorLanguage.LANG_RMARKDOWN,
+                                 ".nb.html", ICONS.iconRnotebook(), true);
 
    public static final RWebContentFileType RPRESENTATION = new RPresentationFileType();
 
@@ -107,13 +120,20 @@ public class FileTypeRegistry
          new TextFileType("css", "CSS", EditorLanguage.LANG_CSS, ".css",
                           ICONS.iconCss(),
                           true,
-                          false, false, false, false, false, false, false, false, false, false, false);
+                          false, false, false, false, false, false, false, false, false, false, false, false);
 
    public static final TextFileType JS =
          new TextFileType("js", "JavaScript", EditorLanguage.LANG_JAVASCRIPT, ".js",
                           ICONS.iconJavascript(),
                           true,
-                          false, false, false, false, false, false, false, false, false, false, false);
+                          false, false, false, false, false, false, false, false, false, false, false, false);
+   
+   public static final TextFileType JSON =
+         new TextFileType("json", "JSON", EditorLanguage.LANG_JAVASCRIPT, ".json",
+                          ICONS.iconJavascript(),
+                          true,
+                          false, false, false, false, false, false, false, false, false, false, false, false);
+   
 
    public static final TextFileType PYTHON = new ScriptFileType(
      "python", "Python", EditorLanguage.LANG_PYTHON, ".py",ICONS.iconPython(),
@@ -122,33 +142,123 @@ public class FileTypeRegistry
    public static final TextFileType SQL =
          new TextFileType("sql", "SQL", EditorLanguage.LANG_SQL, ".sql",
                           ICONS.iconSql(), false, false, false, false, false,
-                          false, false, false, false, false, false, false);
+                          false, false, false, false, false, false, false, false);
 
    public static final TextFileType SH = new ScriptFileType(
          "sh", "Shell", EditorLanguage.LANG_SH, ".sh", ICONS.iconSh(),
          null, false);
-
+   
    public static final TextFileType YAML =
          new TextFileType("yaml", "YAML", EditorLanguage.LANG_YAML, ".yaml",
                           ICONS.iconYaml(), false, false, false, false, false,
-                          false, false, false, false, false, false, false);
+                          false, false, false, false, false, false, false, false);
 
    public static final TextFileType XML =
          new TextFileType("xml", "XML", EditorLanguage.LANG_XML, ".xml",
                           ICONS.iconXml(), false, false, false, false, false,
-                          false, false, false, false, false, false, false);
-
-
-
-
-
-   public static final TextFileType H = new CppFileType("h", ".h", ICONS.iconH(), false);
-   public static final TextFileType C = new CppFileType("c", ".c", ICONS.iconC(), false);
-   public static final TextFileType HPP = new CppFileType("hpp", ".hpp", ICONS.iconHpp(), true);
-   public static final TextFileType CPP = new CppFileType("cpp", ".cpp", ICONS.iconCpp(), true);
-
-
-
+                          false, false, false, false, false, false, false, false);
+   
+   public static final TextFileType H = new CppFileType("h", ".h", ICONS.iconH(), true, false);
+   public static final TextFileType C = new CppFileType("c", ".c", ICONS.iconC(), false, false);
+   public static final TextFileType HPP = new CppFileType("hpp", ".hpp", ICONS.iconHpp(), true, false);
+   public static final TextFileType CPP = new CppFileType("cpp", ".cpp", ICONS.iconCpp(), true, true);
+   
+   public static final TextFileType CLOJURE = 
+         new TextFileType("clojure", "Clojure", EditorLanguage.LANG_CLOJURE, ".clj", ICONS.iconClojure(),
+               false, false, false, false, false,
+               false, false, false, false, false, false, false, false);
+   
+   public static final TextFileType COFFEE = 
+         new TextFileType("coffee", "Coffee", EditorLanguage.LANG_COFFEE, ".coffee", ICONS.iconCoffee(),
+               false, false, false, false, false,
+               false, false, false, false, false, false, false, false);
+   
+   public static final TextFileType CSHARP = 
+         new TextFileType("csharp", "C#", EditorLanguage.LANG_CSHARP, ".cs", ICONS.iconCsharp(),
+               false, false, false, false, false,
+               false, false, false, false, false, false, false, false);
+   
+   
+   public static final TextFileType GITIGNORE = 
+         new TextFileType("gitignore", "Gitignore", EditorLanguage.LANG_GITIGNORE, ".gitignore", ICONS.iconGitignore(),
+               false, false, false, false, false,
+               false, false, false, false, false, false, false, false);
+   
+   public static final TextFileType GO = 
+         new TextFileType("go", "Go", EditorLanguage.LANG_GO, ".go", ICONS.iconGo(),
+               false, false, false, false, false,
+               false, false, false, false, false, false, false, false);
+   
+   public static final TextFileType GROOVY = 
+         new TextFileType("groovy", "Groovy", EditorLanguage.LANG_GROOVY, ".groovy", ICONS.iconGroovy(),
+               false, false, false, false, false,
+               false, false, false, false, false, false, false, false);
+   
+   public static final TextFileType HASKELL = 
+         new TextFileType("haskell", "Haskell", EditorLanguage.LANG_HASKELL, ".haskell", ICONS.iconHaskell(),
+               false, false, false, false, false,
+               false, false, false, false, false, false, false, false);
+   
+   public static final TextFileType HAXE = 
+         new TextFileType("haxe", "Haxe", EditorLanguage.LANG_HAXE, ".haxe", ICONS.iconHaxe(),
+               false, false, false, false, false,
+               false, false, false, false, false, false, false, false);
+   
+   public static final TextFileType JAVA = 
+         new TextFileType("java", "Java", EditorLanguage.LANG_JAVA, ".java", ICONS.iconJava(),
+               false, false, false, false, false,
+               false, false, false, false, false, false, false, false);
+   
+   public static final TextFileType JULIA = 
+         new TextFileType("julia", "Julia", EditorLanguage.LANG_JULIA, ".julia", ICONS.iconJulia(),
+               false, false, false, false, false,
+               false, false, false, false, false, false, false, false);
+   
+   public static final TextFileType LISP = 
+         new TextFileType("lisp", "Lisp", EditorLanguage.LANG_LISP, ".lisp", ICONS.iconLisp(),
+               false, false, false, false, false,
+               false, false, false, false, false, false, false, false);
+   
+   public static final TextFileType LUA = 
+         new TextFileType("lua", "Lua", EditorLanguage.LANG_LUA, ".lua", ICONS.iconLua(),
+               false, false, false, false, false,
+               false, false, false, false, false, false, false, false);
+   
+   public static final TextFileType MAKEFILE = 
+         new TextFileType("makefile", "Makefile", EditorLanguage.LANG_MAKEFILE, ".makefile", ICONS.iconMakefile(),
+               false, false, false, false, false,
+               false, false, false, false, false, false, false, false);
+   
+   public static final TextFileType MATLAB = 
+         new TextFileType("matlab", "Matlab", EditorLanguage.LANG_MATLAB, ".m", ICONS.iconMatlab(),
+               false, false, false, false, false,
+               false, false, false, false, false, false, false, false);
+   
+   public static final TextFileType PERL = 
+         new TextFileType("perl", "Perl", EditorLanguage.LANG_PERL, ".pl", ICONS.iconPerl(),
+               false, false, false, false, false,
+               false, false, false, false, false, false, false, false);
+   
+   public static final TextFileType RUBY = 
+         new TextFileType("ruby", "Ruby", EditorLanguage.LANG_RUBY, ".rb", ICONS.iconRuby(),
+               false, false, false, false, false,
+               false, false, false, false, false, false, false, false);
+   
+   public static final TextFileType RUST = 
+         new TextFileType("rust", "Rust", EditorLanguage.LANG_RUST, ".rs", ICONS.iconRust(),
+               false, false, false, false, false,
+               false, false, false, false, false, false, false, false);
+   
+   public static final TextFileType SCALA = 
+         new TextFileType("scala", "Scala", EditorLanguage.LANG_SCALA, ".scala", ICONS.iconScala(),
+               false, false, false, false, false,
+               false, false, false, false, false, false, false, false);
+   
+   public static final TextFileType SNIPPETS =
+         new TextFileType("snippets", "Snippets", EditorLanguage.LANG_SNIPPETS, ".snippets", ICONS.iconSnippets(),
+               false, false, false, false, false,
+               false, false, false, false, false, false, false, false);
+   
    public static final RDataType RDATA = new RDataType();
    public static final RProjectType RPROJECT = new RProjectType();
 
@@ -172,7 +282,7 @@ public class FileTypeRegistry
       session_ = session;
       globalDisplay_ = globalDisplay;
 
-      if (!satellite_.isCurrentWindowSatellite())
+      if (!Satellite.isCurrentWindowSatellite())
          exportEditFileCallback();
 
       FileIconResources icons = ICONS;
@@ -183,20 +293,44 @@ public class FileTypeRegistry
       register("README", TEXT, icons.iconText());
       register(".gitignore", TEXT, icons.iconText());
       register(".Rbuildignore", TEXT, icons.iconText());
-      register("packrat.lock", DCF, icons.iconText());
+      register("packrat.lock", DCF, icons.iconDCF());
       register("*.r", R, icons.iconRdoc());
       register("*.q", R, icons.iconRdoc());
       register("*.s", R, icons.iconRdoc());
-      register(".rprofile", R, icons.iconRprofile());
+      register(".Rprofile", R, icons.iconRprofile());
       register("Rprofile.site", R, icons.iconRprofile());
-      register("DESCRIPTION", DCF, icons.iconText());
+      register(".Renviron", SH, icons.iconSh());
+      register("Renviron.site", SH, icons.iconSh());
+      register("DESCRIPTION", DCF, icons.iconDCF());
+      register("INDEX", TEXT, icons.iconText());
+      register("LICENCE", TEXT, icons.iconText());
+      register("MD5", TEXT, icons.iconText());
+      register("NEWS", TEXT, icons.iconText());
+      register("PORTING", TEXT, icons.iconText());
+      register("COPYING", TEXT, icons.iconText());
+      register("COPYING.LIB", TEXT, icons.iconText());
+      register("BUGS", TEXT, icons.iconText());
+      register("CHANGES", TEXT, icons.iconText());
+      register("CHANGELOG", TEXT, icons.iconText());
+      register("INSTALL", SH, icons.iconSh());
+      register("TODO", TEXT, icons.iconText());
+      register("THANKS", TEXT, icons.iconText());
       register("configure", SH, icons.iconSh());
+      register("configure.win", SH, icons.iconSh());
       register("cleanup", SH, icons.iconSh());
-      register("TUTORIAL", DCF, icons.iconText());
+      register("cleanup.win", SH, icons.iconSh());
+      register("Makefile", MAKEFILE, icons.iconMakefile());
+      register("Makefile.in", MAKEFILE, icons.iconMakefile());
+      register("Makefile.win", MAKEFILE, icons.iconMakefile());
+      register("Makevars", MAKEFILE, icons.iconMakefile());
+      register("Makevars.in", MAKEFILE, icons.iconMakefile());
+      register("Makevars.win", MAKEFILE, icons.iconMakefile());
+      register("TUTORIAL", DCF, icons.iconDCF());
       register("NAMESPACE", NAMESPACE, icons.iconText());
       register("*.rhistory", RHISTORY, icons.iconRhistory());
       register("*.rproj", RPROJECT, icons.iconRproject());
       register("*.rnw", SWEAVE, icons.iconRsweave());
+      register("*.rtex", SWEAVE, icons.iconRsweave());
       register("*.snw", SWEAVE, icons.iconRsweave());
       register("*.nw", SWEAVE, icons.iconRsweave());
       register("*.tex", TEX, icons.iconTex());
@@ -211,8 +345,10 @@ public class FileTypeRegistry
       register("*.html", HTML, icons.iconHTML());
       register("*.css", CSS, icons.iconCss());
       register("*.js", JS, icons.iconJavascript());
+      register("*.json", JSON, icons.iconJavascript());
       register("*.rmd", RMARKDOWN, icons.iconRmarkdown());
       register("*.rmarkdown", RMARKDOWN, icons.iconRmarkdown());
+      register("*.nb.html", RNOTEBOOK, icons.iconRnotebook());
       register("*.rpres", RPRESENTATION, icons.iconRpresentation());
       register("*.md", MARKDOWN, icons.iconMarkdown());
       register("*.mdtxt", MARKDOWN, icons.iconMarkdown());
@@ -220,6 +356,7 @@ public class FileTypeRegistry
       register("*.bib", TEXT, icons.iconText());
       register("*.c", C, icons.iconC());
       register("*.cpp", CPP, icons.iconCpp());
+      register("*.cc", CPP, icons.iconCpp());
       register("*.h", H, icons.iconH());
       register("*.hpp", HPP, icons.iconHpp());
       register("*.f", TEXT, icons.iconText());
@@ -228,12 +365,41 @@ public class FileTypeRegistry
       register("*.rdata", RDATA, icons.iconRdata());
       register("*.rda", RDATA, icons.iconRdata());
       register("*.Rproj", RPROJECT, icons.iconRproject());
-      register("*.dcf", DCF, icons.iconText());
+      register("*.dcf", DCF, icons.iconDCF());
+      register("*.mmd", MERMAID, icons.iconMermaid());
+      register("*.gv", GRAPHVIZ, icons.iconGraphviz());
+      register("*.dot", GRAPHVIZ, icons.iconGraphviz());
       register("*.py", PYTHON, icons.iconPython());
       register("*.sql", SQL, icons.iconSql());
       register("*.sh", SH, icons.iconSh());
+      register("*.yml", YAML, icons.iconYaml());
       register("*.yaml", YAML, icons.iconYaml());
       register("*.xml", XML, icons.iconXml());
+      register("*.stan", STAN, icons.iconStan());
+      
+      register("*.clj", CLOJURE, icons.iconClojure());
+      register("*.cloj", CLOJURE, icons.iconClojure());
+      register("*.clojure", CLOJURE, icons.iconClojure());
+      register("*.coffee", COFFEE, icons.iconCoffee());
+      register("*.cs", CSHARP, icons.iconCsharp());
+      register(".gitignore", GITIGNORE, icons.iconGitignore());
+      register("*.go", GO, icons.iconGo());
+      register("*.groovy", GROOVY, icons.iconGroovy());
+      register("*.haskell", HASKELL, icons.iconHaskell());
+      register("*.haxe", HAXE, icons.iconHaxe());
+      register("*.java", JAVA, icons.iconJava());
+      register("*.julia", JULIA, icons.iconJulia());
+      register("*.lisp", LISP, icons.iconLisp());
+      register(".emacs", LISP, icons.iconLisp());
+      register("*.el", LISP, icons.iconLisp());
+      register("*.lua", LUA, icons.iconLua());
+      register("*.m", MATLAB, icons.iconMatlab());
+      register("*.pl", PERL, icons.iconPerl());
+      register("*.rb", RUBY, icons.iconRuby());
+      register("*.rs", RUST, icons.iconRust());
+      register("*.scala", SCALA, icons.iconScala());
+      register("*.snippets", SNIPPETS, icons.iconSnippets());
+      register("*.Rprofvis", PROFILER, icons.iconRprofile());
 
       registerIcon(".jpg", icons.iconPng());
       registerIcon(".jpeg", icons.iconPng());
@@ -326,7 +492,10 @@ public class FileTypeRegistry
                         FilePosition position,
                         boolean highlightLine)
    {
-      if (satellite_.isCurrentWindowSatellite())
+      // edit the file in the main window unless this is a source satellite
+      // (in which case we want to edit it locally)
+      if (Satellite.isCurrentWindowSatellite() && 
+          !satellite_.getSatelliteName().startsWith(SourceSatellite.NAME_PREFIX))
       {
          satellite_.focusMainWindow();
          callSatelliteEditFile(file.cast(), position.cast(), highlightLine);
@@ -334,15 +503,19 @@ public class FileTypeRegistry
       else
       {
          FileType fileType = getTypeForFile(file);
-         if (fileType != null && !(fileType instanceof TextFileType))
+         if (fileType != null
+            && !(fileType instanceof TextFileType) 
+            && !(fileType instanceof ProfilerType))
+         {
             fileType = TEXT;
+         }
 
          if (fileType != null)
             fileType.openFile(file,
                   position,
                   highlightLine ?
-                        NavigationMethod.HighlightLine :
-                        NavigationMethod.Default,
+                        NavigationMethods.HIGHLIGHT_LINE :
+                        NavigationMethods.DEFAULT,
                   eventBus_);
       }
    }

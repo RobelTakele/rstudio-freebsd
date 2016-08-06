@@ -40,9 +40,12 @@ then
    case $(command -v curl || command -v fetch || command -v wget) in
      *curl)  curl -L $BOOST_URL > $BOOST_TAR ;;
      *fetch) fetch -o $BOOST_TAR $BOOST_URL ;;
-     *wget)  wget -O $BOOST_TAR $BOOST_URL ;;
+     *wget)  wget -c $BOOST_URL -O $BOOST_TAR ;;
      *)      echo 'ERROR: need curl, fetch, or wget' 1>&2; exit 1 ;;
    esac
+   
+   # remove existing boost installation
+   sudo rm -rf $BOOST_DIR
   
    # untar source (remove existing)
    sudo rm -rf $BOOST_BUILD_DIR
@@ -69,9 +72,9 @@ then
         CXX_STDLIB_FLAGS=""
      fi
 
-     sudo ./bjam --prefix=$BOOST_DIR toolset=clang $CXX_STDLIB_FLAGS variant=release threading=multi link=static install
+     sudo ./bjam ${BOOST_BJAM_FLAGS} --prefix=$BOOST_DIR toolset=clang $CXX_STDLIB_FLAGS variant=release threading=multi link=static install
    else
-     sudo ./bjam --prefix=$BOOST_DIR variant=release install
+     sudo ./bjam ${BOOST_BJAM_FLAGS} --prefix=$BOOST_DIR variant=release install
    fi
 
    # go back to the original install dir and remove build dir

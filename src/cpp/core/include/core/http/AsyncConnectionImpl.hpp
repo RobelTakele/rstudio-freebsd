@@ -34,6 +34,7 @@
 #include <core/http/RequestParser.hpp>
 #include <core/http/AsyncConnection.hpp>
 
+namespace rstudio {
 namespace core {
 namespace http {
    
@@ -48,15 +49,15 @@ public:
          boost::shared_ptr<AsyncConnectionImpl<ProtocolType> >,
          http::Request*)> Handler;
 
-   typedef boost::function<void(http::Response*)> ResponseFilter;
-
 public:
    AsyncConnectionImpl(boost::asio::io_service& ioService,
                        const Handler& handler,
-                       const ResponseFilter& responseFilter =ResponseFilter())
+                       const RequestFilter& requestFilter = RequestFilter(),
+                       const ResponseFilter& responseFilter = ResponseFilter())
       : ioService_(ioService),
         socket_(ioService),
         handler_(handler),
+        requestFilter_(requestFilter),
         responseFilter_(responseFilter)
         
    {
@@ -96,7 +97,7 @@ public:
 
       // call the response filter if we have one
       if (responseFilter_)
-         responseFilter_(&response_);
+         responseFilter_(originalUri_, &response_);
 
       // write
       boost::asio::async_write(
@@ -178,8 +179,28 @@ private:
             // got valid request -- handle it 
             else
             {
-               handler_(AsyncConnectionImpl<ProtocolType>::shared_from_this(),
-                        &request_);
+               // record the original uri
+               originalUri_ = request_.absoluteUri();
+
+               // call the request filter if we have one
+               if (requestFilter_)
+               {
+                  // call the filter (passing a continuation to be invoked
+                  // once the filter is completed)
+                  requestFilter_(
+                     ioService(),
+                     &request_,
+                     boost::bind(
+                        &AsyncConnectionImpl<ProtocolType>::requestFilterContinuation,
+                        AsyncConnectionImpl<ProtocolType>::shared_from_this(),
+                        _1
+                     ));
+               }
+               else
+               {
+                  // call the handler directly
+                  callHandler();
+               }
             }
          }
          else // error reading
@@ -203,6 +224,24 @@ private:
       CATCH_UNEXPECTED_EXCEPTION
    }
    
+   void requestFilterContinuation(boost::shared_ptr<http::Response> response)
+   {
+      if (response)
+      {
+         response_.assign(*response);
+         writeResponse();
+      }
+      else
+      {
+         callHandler();
+      }
+   }
+
+   void callHandler()
+   {
+      handler_(AsyncConnectionImpl<ProtocolType>::shared_from_this(),
+               &request_);
+   }
 
    void handleWrite(const boost::system::error_code& e, bool close)
    {
@@ -248,9 +287,11 @@ private:
    boost::asio::io_service& ioService_;
    typename ProtocolType::socket socket_;
    Handler handler_;
+   RequestFilter requestFilter_;
    ResponseFilter responseFilter_;
    boost::array<char, 8192> buffer_ ;
    RequestParser requestParser_ ;
+   std::string originalUri_;
    http::Request request_;
    http::Response response_;
 };
@@ -258,6 +299,7 @@ private:
 
 } // namespace http
 } // namespace core
+} // namespace rstudio
 
 #endif // CORE_HTTP_ASYNC_CONNECTION_IMPL_HPP
 

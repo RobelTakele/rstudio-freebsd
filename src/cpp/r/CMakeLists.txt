@@ -15,14 +15,13 @@
 
 project (R)
 
-# custom R packages for RStudio
-add_subdirectory(R/packages)
-
 # include files
 file(GLOB_RECURSE R_HEADER_FILES "*.h*")
 
 # source files
 set (R_SOURCE_FILES
+   RCntxt.cpp
+   RCntxtUtils.cpp
    RErrorCategory.cpp
    RExec.cpp
    RFunctionHook.cpp
@@ -53,7 +52,6 @@ set (R_SOURCE_FILES
    session/graphics/RGraphicsHandler.cpp
    session/graphics/RShadowPngGraphicsHandler.cpp
 )
-
 
 # UNIX specific
 if (UNIX)

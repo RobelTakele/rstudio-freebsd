@@ -1,6 +1,7 @@
 .link {
+	overflow: hidden;
+	text-overflow: ellipsis;
 	color: #0000AA;
-	cursor: pointer;
 }
 
 .linkUnderlined {

@@ -27,6 +27,7 @@
 
 #include <session/SessionClientEvent.hpp>
 
+namespace rstudio {
 namespace session {
    
 // initialization
@@ -35,7 +36,7 @@ void initializeClientEventQueue();
 // singleton
 class ClientEventQueue;
 ClientEventQueue& clientEventQueue();
-      
+
 class ClientEventQueue : boost::noncopyable
 {   
 private:
@@ -62,9 +63,15 @@ public:
    
    // has an event been added since the specified time
    bool eventAddedSince(const boost::posix_time::ptime& time);
+
+   // set the active console to be attached to console events; returns true if
+   // the active console changed
+   bool setActiveConsole(const std::string& console);
       
 private:   
    void flushPendingConsoleOutput();
+
+   void enqueueClientOutputEvent(int event, const std::string& text);
  
 private:
    // synchronization objects. heap based so they are never destructed
@@ -77,6 +84,7 @@ private:
 
    // instance data
    std::string pendingConsoleOutput_ ;
+   std::string activeConsole_;
    std::vector<ClientEvent> pendingEvents_ ; 
    boost::posix_time::ptime lastEventAddTime_;
    
@@ -84,5 +92,6 @@ private:
 };
 
 } // namespace session
+} // namespace rstudio
 
 #endif // SESSION_SESSION_CLIENT_EVENT_QUEUE_HPP

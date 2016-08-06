@@ -51,12 +51,15 @@
 
 #include "presentation/SlideRequestHandler.hpp"
 
+#include "SessionHelpHome.hpp"
+
 // protect R against windows TRUE/FALSE defines
 #undef TRUE
 #undef FALSE
 
-using namespace core;
+using namespace rstudio::core;
 
+namespace rstudio {
 namespace session {
 namespace modules { 
 namespace help {
@@ -281,9 +284,11 @@ void setDynamicContentResponse(const std::string& content,
    if (request.acceptsEncoding(http::kGzipEncoding))
       pResponse->setContentEncoding(http::kGzipEncoding);
    
-   // if the response doesn't already have Cache-Control then
-   // send an eTag back and force revalidation
-   if (!pResponse->containsHeader("Cache-Control"))
+   // if the response doesn't already have Cache-Control then send an eTag back
+   // and force revalidation (not for desktop mode since it doesn't handle
+   // eTag-based caching)
+   if (!pResponse->containsHeader("Cache-Control") &&
+       options().programMode() == kSessionProgramModeServer)
    {
       // force cache revalidation since this is dynamic content
       pResponse->setCacheWithRevalidationHeaders();
@@ -395,9 +400,6 @@ void handleHttpdResult(SEXP httpdSEXP,
          // get file path
          FilePath filePath(fileName);
          
-         // cache with revalidation
-         pResponse->setCacheWithRevalidationHeaders();
-         
          // read file contents
          std::string contents;
          Error error = readStringFromFile(filePath, &contents);
@@ -406,15 +408,24 @@ void handleHttpdResult(SEXP httpdSEXP,
             pResponse->setError(error);
             return;
          }
-          
+
+         if (options().programMode() == kSessionProgramModeServer)
+            pResponse->setCacheWithRevalidationHeaders();
+
          // set body (apply filter to html)
          if (pResponse->contentType() == kTextHtml)
          {
-            pResponse->setCacheableBody(contents, request, htmlFilter);
+            if (options().programMode() == kSessionProgramModeServer)
+               pResponse->setCacheableBody(contents, request, htmlFilter);
+            else
+               pResponse->setBody(contents, htmlFilter);
          }
          else
          {
-            pResponse->setCacheableBody(contents, request);
+            if (options().programMode() == kSessionProgramModeServer)
+               pResponse->setCacheableBody(contents, request);
+            else
+               pResponse->setBody(contents);
          }
       }
       else // from dynamic content
@@ -566,12 +577,19 @@ SEXP callHandler(const std::string& path,
    pProtect->add(argsSEXP);
 
    // form the call expression
-   SEXP callSEXP;
-   pProtect->add(callSEXP = Rf_lang3(
+   SEXP innerCallSEXP;
+   pProtect->add(innerCallSEXP = Rf_lang3(
          Rf_install("try"),
          Rf_lcons( (handlerSource(path)), argsSEXP),
          trueSEXP));
-   SET_TAG(CDR(CDR(callSEXP)), Rf_install("silent"));
+   SET_TAG(CDR(CDR(innerCallSEXP)), Rf_install("silent"));
+   
+   // suppress warnings
+   SEXP suppressWarningsSEXP;
+   pProtect->add(suppressWarningsSEXP = r::sexp::findFunction("suppressWarnings", "base"));
+   
+   SEXP callSEXP;
+   pProtect->add(callSEXP = Rf_lang2(suppressWarningsSEXP, innerCallSEXP));
 
    // execute and return
    SEXP resultSEXP;
@@ -705,6 +723,23 @@ void handleHttpdRequest(const std::string& location,
          pResponse->setFile(helpFile, request, filter);
          return;
       }
+   }
+   
+   // roxygen help
+   if (path == "/doc/roxygen_help.html")
+   {
+      core::FilePath helpFile = options().rResourcesPath().childPath("roxygen_help.html");
+      if (helpFile.exists())
+      {
+         pResponse->setFile(helpFile, request, filter);
+         return;
+      }
+   }
+
+   if (boost::algorithm::starts_with(path, "/doc/home/"))
+   {
+      handleHelpHomeRequest(request, kJsCallbacks, pResponse);
+      return;
    }
 
    // evalute the handler
@@ -847,7 +882,7 @@ SEXP rs_previewRd(SEXP rdFileSEXP)
 {
    std::string rdFile = r::sexp::safeAsString(rdFileSEXP);
    boost::format fmt("help/preview?file=%1%");
-   std::string url = boost::str(fmt % http::util::urlEncode(rdFile));
+   std::string url = boost::str(fmt % http::util::urlEncode(rdFile, true));
    ClientEvent event(client_events::kShowHelp, url);
    module_context::enqueClientEvent(event);
    return R_NilValue;
@@ -872,7 +907,7 @@ Error initialize()
    using boost::bind;
    using core::http::UriHandler;
    using namespace module_context;
-   using namespace r::function_hook ;
+   using namespace rstudio::r::function_hook ;
    ExecBlock initBlock ;
    initBlock.addFunctions()
       (bind(registerRBrowseUrlHandler, handleLocalHttpUrl))
@@ -912,4 +947,5 @@ Error initialize()
 } // namepsace help
 } // namespace modules
 } // namesapce session
+} // namespace rstudio
 

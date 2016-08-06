@@ -1,0 +1,161 @@
+/*
+ * RSConnectDeploy.css
+ *
+ * Copyright (C) 2009-15 by RStudio, Inc.
+ *
+ * Unless you have received this program directly from RStudio pursuant
+ * to the terms of a commercial license agreement with RStudio, then
+ * this program is licensed to you under the terms of version 3 of the
+ * GNU Affero General Public License. This program is distributed WITHOUT
+ * ANY EXPRESS OR IMPLIED WARRANTY, INCLUDING THOSE OF NON-INFRINGEMENT,
+ * MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE. Please refer to the
+ * AGPL (http://www.gnu.org/licenses/agpl-3.0.txt) for more details.
+ *
+ */
+ 
+@external .gwt-CheckBox;
+
+.sourceDestLabels
+{
+   color: #808080;
+}
+
+.gridControl
+{
+   display: block;
+   width: 240px;
+   padding: 4px;
+}
+
+.source
+{
+   font-weight: bold;
+   padding-top: 10px;
+}
+
+.statusLabel
+{
+   font-weight: bold;
+}
+
+.transferArrow
+{
+   margin-top: 10px;
+   margin-left: 50px;
+}
+
+.normalStatus
+{
+   color: green;
+}
+
+.otherStatus
+{
+   color: red;
+}
+
+.launchCheck
+{
+   display: block;
+   margin-top: 7px;
+}
+
+.fileList
+{
+   background-color: #ffffff;
+   border: 1px solid #999999;
+   height: 165px;
+   width: 250px;
+   padding: 7px;
+   margin-top: 5px;
+   margin-bottom: 10px;
+   margin-right: 30px;
+   overflow: hidden;
+}
+
+.wizard .fileList
+{
+   height: 140px;
+}
+
+.fileList .gwt-CheckBox,
+.fileList .gwt-CheckBox label 
+{
+   white-space: nowrap;
+}
+
+.deployLabel
+{
+   font-weight: bold;
+}
+
+.rootCell
+{
+   vertical-align: top;
+}
+
+.controlLabel
+{
+   margin-top: 10px;
+   margin-bottom: 3px;
+}
+
+.urlAnchor
+{
+   display: block;
+   width: 100%;
+   overflow: hidden;
+   white-space: nowrap;
+   text-overflow: ellipsis;
+   font-size: x-small;
+   margin-top: 3px;
+   margin-bottom: 3px;
+}
+
+.accountList
+{
+   height: 100px;
+   width: 250px;
+}
+
+.accountAnchor
+{
+   text-align: right;
+   font-size: x-small;
+   display: block;
+   margin-top: 5px;
+   cursor: pointer;
+}
+
+.firstControlLabel
+{
+   margin-bottom: 5px;
+}
+
+.progressPanel
+{
+   margin-top: 15px;
+   width: 250px;
+}
+
+.appDetailsPanel
+{
+   border: 1px solid #999999;
+   background-color: white;
+   padding: 5px;
+   margin: 0px;
+   white-space: nowrap;
+   text-overflow: ellipsis;
+   overflow: hidden;
+   width: 238px;
+}
+
+.descriptionPanel
+{
+   text-align: center;
+}
+
+.wizardDeployPage
+{
+   width: 583px;
+}

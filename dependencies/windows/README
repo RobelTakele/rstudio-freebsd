@@ -6,48 +6,42 @@ Building RStudio requires installations of a number of applications
 (including R). These applications include:
 
 R:         http://www.r-project.org/
+Rtools:    http://cran.r-project.org/bin/windows/Rtools/
 CMake:     http://www.cmake.org/ (choose "Add to system path" during install)
 Java:      http://www.oracle.com/technetwork/java/javase/downloads
 Ant:       http://code.google.com/p/winant
 NSIS:      http://nsis.sourceforge.net
+Qt:        http://www.qt.io/
 
-Installing QT
+Installing Qt
 =============================================================================
 
-Qt installation involves both the Qt SDK and MinGW compiler
-as well as version Qt 4.8.3 of the Qt Framework. First, install
-the QtSDK from this URL:
+RStudio currently builds against Qt 5.4.1 on Windows. You can download it here:
 
-https://s3.amazonaws.com/rstudio-buildtools/QtSdk-online-win-x86-v1_2_1.exe
+http://download.qt.io/official_releases/qt/5.4/5.4.1/qt-opensource-windows-x86-mingw491_opengl-5.4.1.exe
 
-Note that Mingw 4.4 and the MinGW version of Qt are not installed
-by default so you need to perform a custom installation and
-modify the following defaults:
 
-- Under Development Tools, select the MinGW variant of the Qt
-framework (the last of the variants listed)
-- Under Miscellaneous, specify that Mingw4.4 be installed
+Installing Rtools
+=============================================================================
 
-RStudio is built against version 4.8.3 of the Qt Framework, so you should
-install it from here:
+RStudio currently builds against the MinGW toolchains packaged with Rtools 3.3.
+You can download this at:
 
-http://download.qt-project.org/archive/qt/4.8/4.8.3/qt-win-opensource-4.8.3-mingw.exe
+https://cran.r-project.org/bin/windows/Rtools/Rtools33.exe
+
+Install this into the default location, at C:\Rtools, to ensure that RStudio's
+CMake configuration scripts automatically discover the associated tools.
 
 
 Update System Path
 =============================================================================
 
-Building RStudio requires that the CMake, Qt, and MingGW executables be
-accessible via the system path (note that CMake should already be accessible
-via the CMake installer if the "Add to system path" option was chosen during
-installation). For Qt and MinGW you should ensure that the following
-additional directories are available on the path:
+Building RStudio requires that the CMake executables are accessible via the
+system path  (note that CMake should already be accessible via the CMake
+installer if the "Add to system path" option was chosen during installation).
 
-C:\Qt\4.8.3\bin
-C:\QtSDK\mingw\bin
-
-Finally, you should also ensure that your R installation's bin
-directory is on the system path. For example:
+You should also ensure that your R installation's bin directory is on the
+system path. For example:
 
 C:\Program Files\R\R-2.15.1\bin\i386
 
@@ -55,7 +49,50 @@ C:\Program Files\R\R-2.15.1\bin\i386
 Satisfy Additional Dependencies
 =============================================================================
 
-Additional dependencies (boost, mingw64, GWT, and gin) can be satisfied by
+Additional dependencies (boost, GWT, and gin) can be satisfied by
 running the following script:
 
 install-dependencies.cmd
+
+
+Installing Boost
+=============================================================================
+
+RStudio provides an R script that automatically downloads and builds Boost.
+Find this script at:
+
+https://www.github.com/rstudio/rstudio/tree/master/dependencies/windows/install-boost/install-boost.R
+
+Running this script currently produces a packaged zipfile of Boost 1.50 (32bit
+and 64bit), built using the MinGW toolchain provided as part of Rtools 3.3.
+
+
+NOTE: Getting boost to work with mingw64
+=============================================================================
+
+See the following article for general approach/guidelines:
+
+http://sourceforge.net/apps/trac/mingw-w64/wiki/Building%20Boost
+
+In order to build rstudio with boost under win32 we had to apply the 
+following patch (so that boost can correctly detect mingw64 as distinct
+from another mingw distribution:
+
+https://svn.boost.org/trac/boost/changeset/79334
+
+This should be fixed in more recent versions of boost, see:
+
+https://svn.boost.org/trac/boost/ticket/4258
+
+Note that in order to build rstudio with boost under win64 we had to make
+the following additional accomodations:
+
+1) define BOOST_USE_WINDOWS_H to eliminate errors compiling boost::thread
+   (see thread: http://lists.boost.org/boost-users/2010/02/55945.php)
+
+2) #undef BOOST_USE_WINDOWS_H prior to including <boost/interprocess/*>
+within BoostErrors.hpp
+
+3) add a dummy definitions for boost::thread::tss_cleanup_implemented
+   (see ticket: https://svn.boost.org/trac/boost/ticket/4258)
+

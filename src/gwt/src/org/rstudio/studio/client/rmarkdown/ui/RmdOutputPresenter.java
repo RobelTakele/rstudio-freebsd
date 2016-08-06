@@ -18,18 +18,18 @@ import org.rstudio.core.client.StringUtil;
 import org.rstudio.core.client.command.CommandBinder;
 import org.rstudio.core.client.command.Handler;
 import org.rstudio.core.client.dom.WindowEx;
-import org.rstudio.core.client.files.FileSystemItem;
 import org.rstudio.studio.client.application.events.EventBus;
 import org.rstudio.studio.client.common.GlobalDisplay;
 import org.rstudio.studio.client.common.SuperDevMode;
 import org.rstudio.studio.client.common.presentation.SlideNavigationPresenter;
-import org.rstudio.studio.client.common.rpubs.RPubsPresenter;
 import org.rstudio.studio.client.common.satellite.Satellite;
 import org.rstudio.studio.client.rmarkdown.model.RmdPreviewParams;
 import org.rstudio.studio.client.shiny.ShinyDisconnectNotifier;
 import org.rstudio.studio.client.shiny.ShinyDisconnectNotifier.ShinyDisconnectSource;
 import org.rstudio.studio.client.workbench.commands.Commands;
 import org.rstudio.studio.client.workbench.model.Session;
+import org.rstudio.studio.client.workbench.model.SessionUtils;
+import org.rstudio.studio.client.workbench.prefs.model.UIPrefs;
 
 import com.google.gwt.core.client.JavaScriptObject;
 import com.google.gwt.event.logical.shared.CloseEvent;
@@ -40,7 +40,6 @@ import com.google.inject.Inject;
 
 public class RmdOutputPresenter implements 
    IsWidget, 
-   RPubsPresenter.Context,
    ShinyDisconnectSource
 {
    public interface Binder 
@@ -51,28 +50,29 @@ public class RmdOutputPresenter implements
                                     SlideNavigationPresenter.Display
    {
       void showOutput(RmdPreviewParams params, boolean showPublish, 
-                      boolean showDeploy, boolean refresh);
+                      boolean refresh);
       int getScrollPosition();
       void refresh();
       String getTitle();
       String getAnchor();
+      void focusFind();
    }
    
    @Inject
    public RmdOutputPresenter(Display view,
                              Binder binder,
                              GlobalDisplay globalDisplay,
-                             RPubsPresenter rpubsPresenter,
                              Session session,
                              Commands commands,
                              EventBus eventBus,
-                             Satellite satellite)
+                             Satellite satellite,
+                             UIPrefs prefs)
    {
       view_ = view;
       globalDisplay_ = globalDisplay;
       session_ = session;
+      prefs_ = prefs;
       
-      rpubsPresenter.setContext(this);
       slideNavigationPresenter_ = new SlideNavigationPresenter(view_);
       disconnectNotifier_ = new ShinyDisconnectNotifier(this);
       
@@ -113,45 +113,6 @@ public class RmdOutputPresenter implements
    }
    
    @Override
-   public String getContextId()
-   {
-      return "RMarkdownPreview";
-   }
-
-   @Override
-   public String getTitle()
-   {
-      String title = view_.getTitle();
-      if (title != null && !title.isEmpty())
-         return title;
-      
-      String htmlFile = getHtmlFile();
-      if (htmlFile != null)
-      {
-         FileSystemItem fsi = FileSystemItem.createFile(htmlFile);
-         return fsi.getStem();
-      }
-      else
-      {
-         return "(Untitled)";
-      }
-   }
-
-   @Override
-   public String getHtmlFile()
-   {
-      return params_ == null ? 
-         null : params_.getOutputFile();
-   }
-
-   @Override
-   public boolean isPublished()
-   {
-      return params_ == null ?
-          false : params_.getResult().getRpubsPublished();
-   }
-
-   @Override
    public String getShinyUrl()
    {
       return StringUtil.makeAbsoluteUrl(params_.getOutputUrl());
@@ -183,6 +144,12 @@ public class RmdOutputPresenter implements
    {
       SuperDevMode.reload();
    }
+   
+   @Handler
+   public void onFindReplace()
+   {
+      view_.focusFind();
+   }
 
    public void showOutput(RmdPreviewParams params) 
    {
@@ -190,8 +157,8 @@ public class RmdOutputPresenter implements
       boolean refresh = params_ != null && 
             params_.getResult().equals(params.getResult());
       params_ = params;
-      view_.showOutput(params, session_.getSessionInfo().getAllowRpubsPublish(), 
-                       session_.getSessionInfo().getShinyappsAvailable(), refresh);
+      view_.showOutput(params, SessionUtils.showPublishUi(session_, prefs_), 
+                       refresh);
    }
    
    private native void initializeEvents() /*-{  
@@ -222,6 +189,7 @@ public class RmdOutputPresenter implements
    private final Display view_;
    private final GlobalDisplay globalDisplay_;
    private final Session session_;
+   private final UIPrefs prefs_;
   
    private final SlideNavigationPresenter slideNavigationPresenter_;
    private final ShinyDisconnectNotifier disconnectNotifier_;

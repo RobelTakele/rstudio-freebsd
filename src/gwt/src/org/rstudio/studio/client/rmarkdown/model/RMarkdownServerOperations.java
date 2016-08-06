@@ -1,7 +1,7 @@
 /*
  * RMarkdownServerOperations.java
  *
- * Copyright (C) 2009-14 by RStudio, Inc.
+ * Copyright (C) 2009-16 by RStudio, Inc.
  *
  * Unless you have received this program directly from RStudio pursuant
  * to the terms of a commercial license agreement with RStudio, then
@@ -14,6 +14,8 @@
  */
 package org.rstudio.studio.client.rmarkdown.model;
 
+import org.rstudio.core.client.files.FileSystemItem;
+import org.rstudio.core.client.js.JsObject;
 import org.rstudio.studio.client.common.crypto.CryptoServerOperations;
 import org.rstudio.studio.client.server.ServerRequestCallback;
 import org.rstudio.studio.client.server.Void;
@@ -24,13 +26,17 @@ public interface RMarkdownServerOperations extends CryptoServerOperations
 {
    void getRMarkdownContext(
             ServerRequestCallback<RMarkdownContext> requestCallback);
-    
+       
    void renderRmd(String file, int line, String format, String encoding,
-                  boolean asTempfile, boolean asShiny,
+                  String paramsFile, boolean asTempfile, int type,
+                  String existingOutputFile,
                   ServerRequestCallback<Boolean> requestCallback);
    
    void renderRmdSource(String source,
                         ServerRequestCallback<Boolean> requestCallback);
+   
+   void maybeCopyWebsiteAsset(String file,
+                         ServerRequestCallback<Boolean> requestCallback);
    
    void terminateRenderRmd(boolean normal, 
                            ServerRequestCallback<Void> requestCallback);
@@ -56,4 +62,45 @@ public interface RMarkdownServerOperations extends CryptoServerOperations
                        ServerRequestCallback<RmdTemplateContent> requestCallback);
    
    public String getApplicationURL(String pathName);
+   
+   public String getFileUrl(FileSystemItem file);
+   
+   void prepareForRmdChunkExecution(String id,
+                ServerRequestCallback<RmdExecutionState> requestCallback);
+
+   void getRmdOutputInfo(String target,
+                ServerRequestCallback<RmdOutputInfo> resultCallback);
+   
+   void refreshChunkOutput(String docPath, String docId, String contextId,
+                           String requestId, 
+                           ServerRequestCallback<NotebookDocQueue> requestCallback);
+   
+   void setChunkConsole(String docId, String chunkId, int commitMode, 
+                        int execMode, int execScope, String options, 
+                        int pixelWidth, int characterWidth, 
+                        ServerRequestCallback<RmdChunkOptions> requestCallback);
+   
+   void createNotebookFromCache(String rmdPath, String outputPath, 
+         ServerRequestCallback<NotebookCreateResult> requestCallback);
+   
+   void replayNotebookPlots(String docId, String initialChunkId, int pixelWidth, 
+         ServerRequestCallback<Boolean> requestCallback);
+   
+   void executeNotebookChunks(NotebookDocQueue queue, 
+         ServerRequestCallback<Void> requestCallback);
+   
+   void updateNotebookExecQueue(NotebookQueueUnit unit, int op, 
+         String beforeChunkId, ServerRequestCallback<Void> requestCallback);
+   
+   void executeAlternateEngineChunk(String docId,
+                                    String chunkId,
+                                    int commitMode,
+                                    String engine,
+                                    String code,
+                                    JsObject options,
+                                    ServerRequestCallback<String> requestCallback);
+   
+   void interruptChunk(String docId,
+                       String chunkId,
+                       ServerRequestCallback<Void> requestCallback);
 }

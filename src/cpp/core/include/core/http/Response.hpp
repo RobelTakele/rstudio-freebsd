@@ -34,6 +34,7 @@
 #include "Request.hpp"
 #include "Util.hpp"
 
+namespace rstudio {
 namespace core {
    
 class ErrorLocation;
@@ -112,7 +113,7 @@ public:
    void setPrivateCacheForeverHeaders();
    void setNoCacheHeaders();
    
-   void setChromeFrameCompatible(const Request& request);
+   void setBrowserCompatible(const Request& request);
 
    void addCookie(const Cookie& cookie) ;
    
@@ -358,5 +359,6 @@ std::ostream& operator << (std::ostream& stream, const Response& r) ;
 
 } // namespace http
 } // namespace core
+} // namespace rstudio
 
 #endif // CORE_HTTP_RESPONSE_HPP

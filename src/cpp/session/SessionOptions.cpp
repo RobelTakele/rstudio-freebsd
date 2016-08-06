@@ -27,21 +27,48 @@
 #include <core/Error.hpp>
 #include <core/Log.hpp>
 
+#include <core/r_util/RProjectFile.hpp>
+#include <core/r_util/RUserData.hpp>
 #include <core/r_util/RSessionContext.hpp>
+#include <core/r_util/RActiveSessions.hpp>
+#include <core/r_util/RVersionsPosix.hpp>
 
 #include <monitor/MonitorConstants.hpp>
 
 #include <r/session/RSession.hpp>
 
 #include <session/SessionConstants.hpp>
+#include <session/SessionScopes.hpp>
+#include <session/projects/SessionProjectSharing.hpp>
 
-using namespace core ;
+#include "session-config.h"
 
+using namespace rstudio::core ;
+
+namespace rstudio {
 namespace session {  
 
 namespace {
 const char* const kDefaultPandocPath = "bin/pandoc";
 const char* const kDefaultPostbackPath = "bin/postback/rpostback";
+const char* const kDefaultRsclangPath = "bin/rsclang";
+
+void ensureDefaultDirectory(std::string* pDirectory,
+                            const std::string& userHomePath)
+{
+   if (*pDirectory != "~")
+   {
+      FilePath dir = FilePath::resolveAliasedPath(*pDirectory,
+                                                  FilePath(userHomePath));
+      Error error = dir.ensureDirectory();
+      if (error)
+      {
+         LOG_ERROR(error);
+         *pDirectory = "~";
+      }
+   }
+}
+
 } // anonymous namespace
 
 Options& options()
@@ -59,8 +86,7 @@ core::ProgramStatus Options::read(int argc, char * const argv[])
    core::system::unsetenv(kMonitorSharedSecretEnvVar);
 
    // compute the resource path
-   FilePath resourcePath;
-   Error error = core::system::installPath("..", argv[0], &resourcePath);
+   Error error = core::system::installPath("..", argv[0], &resourcePath_);
    if (error)
    {
       LOG_ERROR_MESSAGE("Unable to determine install path: "+error.summary());
@@ -69,21 +95,28 @@ core::ProgramStatus Options::read(int argc, char * const argv[])
 
    // detect running in OSX bundle and tweak resource path
 #ifdef __APPLE__
-   if (resourcePath.complete("Info.plist").exists())
-      resourcePath = resourcePath.complete("Resources");
+   if (resourcePath_.complete("Info.plist").exists())
+      resourcePath_ = resourcePath_.complete("Resources");
 #endif
 
    // detect running in x64 directory and tweak resource path
 #ifdef _WIN32
-   if (resourcePath.complete("x64").exists())
-      resourcePath = resourcePath.parent();
+   if (resourcePath_.complete("x64").exists())
+      resourcePath_ = resourcePath_.parent();
 #endif
+   
+   // run tests flag
+   options_description runTests("tests");
+   runTests.add_options()
+         (kRunTestsSessionOption,
+          value<bool>(&runTests_)->default_value(false)->implicit_value(true),
+          "run unit tests");
 
    // verify installation flag
    options_description verify("verify");
    verify.add_options()
      (kVerifyInstallationSessionOption,
-     value<bool>(&verifyInstallation_)->default_value(false),
+     value<bool>(&verifyInstallation_)->default_value(false)->implicit_value(true),
      "verify the current installation");
 
    // program - name and execution
@@ -97,7 +130,7 @@ core::ProgramStatus Options::read(int argc, char * const argv[])
    options_description log("log");
    log.add_options()
       ("log-stderr",
-      value<bool>(&logStderr_)->default_value(true),
+      value<bool>(&logStderr_)->default_value(false),
       "write log entries to stderr");
 
    // agreement
@@ -158,7 +191,16 @@ core::ProgramStatus Options::read(int argc, char * const argv[])
           "default user setting for running Rprofile on resume")
       ("session-save-action-default",
        value<std::string>(&saveActionDefault)->default_value(""),
-          "default save action (yes, no, or ask)");
+         "default save action (yes, no, or ask)")
+      ("session-default-working-dir",
+       value<std::string>(&defaultWorkingDir_)->default_value("~"),
+       "default working directory for new sessions")
+      ("session-default-new-project-dir",
+       value<std::string>(&defaultProjectDir_)->default_value("~"),
+       "default directory for new projects")
+      ("show-help-home",
+       value<bool>(&showHelpHome_)->default_value(false),
+         "show help home page at startup");
 
    // allow options
    options_description allow("allow");
@@ -186,7 +228,16 @@ core::ProgramStatus Options::read(int argc, char * const argv[])
          "allow removal of the user public folder")
       ("allow-rpubs-publish",
          value<bool>(&allowRpubsPublish_)->default_value(true),
-        "allow publishing to rpubs");
+        "allow publishing content to external services")
+      ("allow-external-publish",
+         value<bool>(&allowExternalPublish_)->default_value(true),
+        "allow publishing content to external services")
+      ("allow-publish",
+         value<bool>(&allowPublish_)->default_value(true),
+        "allow publishing content")
+      ("allow-presentation-commands",
+         value<bool>(&allowPresentationCommands_)->default_value(false),
+       "allow presentation commands");
 
    // r options
    bool rShellEscape; // no longer works but don't want to break any
@@ -203,9 +254,6 @@ core::ProgramStatus Options::read(int argc, char * const argv[])
       ("r-session-library",
          value<std::string>(&sessionLibraryPath_)->default_value("R/library"),
          "R library path")
-      ("r-session-packages",
-         value<std::string>(&sessionPackagesPath_)->default_value("R/packages"),
-         "R packages path")
       ("r-session-package-archives",
           value<std::string>(&sessionPackageArchivesPath_)->default_value("R/packages"),
          "R package archives path")
@@ -219,7 +267,7 @@ core::ProgramStatus Options::read(int argc, char * const argv[])
          value<bool>(&autoReloadSource_)->default_value(false),
          "Reload R source if it changes during the session")
       ("r-compatible-graphics-engine-version",
-         value<int>(&rCompatibleGraphicsEngineVersion_)->default_value(10),
+         value<int>(&rCompatibleGraphicsEngineVersion_)->default_value(11),
          "Maximum graphics engine version we are compatible with")
       ("r-resources-path",
          value<std::string>(&rResourcesPath_)->default_value("resources"),
@@ -263,23 +311,34 @@ core::ProgramStatus Options::read(int argc, char * const argv[])
        value<std::string>(&gnugrepPath_)->default_value("bin/gnugrep"),
        "Path to gnugrep utilities (windows-only)")
       ("external-msysssh-path",
-       value<std::string>(&msysSshPath_)->default_value("bin/msys_ssh"),
+       value<std::string>(&msysSshPath_)->default_value("bin/msys-ssh-1000-18"),
        "Path to msys_ssh utilities (windows-only)")
       ("external-sumatra-path",
        value<std::string>(&sumatraPath_)->default_value("bin/sumatra"),
        "Path to SumatraPDF (windows-only)")
+      ("external-winutils-path",
+       value<std::string>(&winutilsPath_)->default_value("bin/winutils"),
+       "Path to Hadoop Winutils (windows-only)")
       ("external-hunspell-dictionaries-path",
        value<std::string>(&hunspellDictionariesPath_)->default_value("resources/dictionaries"),
        "Path to hunspell dictionaries")
       ("external-mathjax-path",
-        value<std::string>(&mathjaxPath_)->default_value("resources/mathjax-23"),
+        value<std::string>(&mathjaxPath_)->default_value("resources/mathjax-26"),
         "Path to mathjax library")
       ("external-pandoc-path",
         value<std::string>(&pandocPath_)->default_value(kDefaultPandocPath),
-        "Path to pandoc binaries");
+        "Path to pandoc binaries")
+      ("external-libclang-path",
+        value<std::string>(&libclangPath_)->default_value(kDefaultRsclangPath),
+        "Path to libclang shared library")
+      ("external-libclang-headers-path",
+        value<std::string>(&libclangHeadersPath_)->default_value(
+                                       "resources/libclang/builtin-headers"),
+        "Path to libclang builtin headers");
 
    // user options (default user identity to current username)
    std::string currentUsername = core::system::username();
+   std::string project, scopeId;
    options_description user("user") ;
    user.add_options()
       (kUserIdentitySessionOption "," kUserIdentitySessionOptionShort,
@@ -287,7 +346,13 @@ core::ProgramStatus Options::read(int argc, char * const argv[])
        "user identity" )
       (kShowUserIdentitySessionOption,
        value<bool>(&showUserIdentity_)->default_value(true),
-       "show the user identity");
+       "show the user identity")
+      (kProjectSessionOption "," kProjectSessionOptionShort,
+       value<std::string>(&project)->default_value(""),
+       "active project" )
+      (kScopeSessionOption "," kScopeSessionOptionShort,
+        value<std::string>(&scopeId)->default_value(""),
+       "session scope id");
 
    // overlay options
    options_description overlay("overlay");
@@ -301,6 +366,7 @@ core::ProgramStatus Options::read(int argc, char * const argv[])
                                                          configFile);
 
    optionsDesc.commandLine.add(verify);
+   optionsDesc.commandLine.add(runTests);
    optionsDesc.commandLine.add(program);
    optionsDesc.commandLine.add(log);
    optionsDesc.commandLine.add(agreement);
@@ -312,6 +378,7 @@ core::ProgramStatus Options::read(int argc, char * const argv[])
    optionsDesc.commandLine.add(limits);
    optionsDesc.commandLine.add(external);
    optionsDesc.commandLine.add(user);
+   optionsDesc.commandLine.add(overlay);
 
    // define groups included in config-file processing
    optionsDesc.configFile.add(program);
@@ -339,6 +406,10 @@ core::ProgramStatus Options::read(int argc, char * const argv[])
       LOG_ERROR_MESSAGE("invalid program mode: " + programMode_);
       return ProgramStatus::exitFailure();
    }
+
+   // resolve scope
+   scope_ = r_util::SessionScope::fromProjectId(project, scopeId);
+   scopeState_ = core::r_util::ScopeValid;
 
    // call overlay hooks
    resolveOverlayOptions();
@@ -385,6 +456,10 @@ core::ProgramStatus Options::read(int argc, char * const argv[])
    if (standalone())
       core::system::setenv("HOME", userHomePath_);
 
+   // ensure that default working dir and default project dir exist
+   ensureDefaultDirectory(&defaultWorkingDir_, userHomePath_);
+   ensureDefaultDirectory(&defaultProjectDir_, userHomePath_);
+
    // session timeout seconds is always -1 in desktop mode
    if (programMode_ == kSessionProgramModeDesktop)
       timeoutMinutes_ = 0;
@@ -404,28 +479,40 @@ core::ProgramStatus Options::read(int argc, char * const argv[])
          ERROR_LOCATION);
       saveActionDefault_ = r::session::kSaveActionAsk;
    }
-
+   
    // convert relative paths by completing from the app resource path
-   resolvePath(resourcePath, &rResourcesPath_);
-   resolvePath(resourcePath, &agreementFilePath_);
-   resolvePath(resourcePath, &wwwLocalPath_);
-   resolvePath(resourcePath, &wwwSymbolMapsPath_);
-   resolvePath(resourcePath, &coreRSourcePath_);
-   resolvePath(resourcePath, &modulesRSourcePath_);
-   resolvePath(resourcePath, &sessionLibraryPath_);
-   resolvePath(resourcePath, &sessionPackagesPath_);
-   resolvePath(resourcePath, &sessionPackageArchivesPath_);
-   resolvePostbackPath(resourcePath, &rpostbackPath_);
+   resolvePath(resourcePath_, &rResourcesPath_);
+   resolvePath(resourcePath_, &agreementFilePath_);
+   resolvePath(resourcePath_, &wwwLocalPath_);
+   resolvePath(resourcePath_, &wwwSymbolMapsPath_);
+   resolvePath(resourcePath_, &coreRSourcePath_);
+   resolvePath(resourcePath_, &modulesRSourcePath_);
+   resolvePath(resourcePath_, &sessionLibraryPath_);
+   resolvePath(resourcePath_, &sessionPackageArchivesPath_);
+   resolvePostbackPath(resourcePath_, &rpostbackPath_);
 #ifdef _WIN32
-   resolvePath(resourcePath, &consoleIoPath_);
-   resolvePath(resourcePath, &gnudiffPath_);
-   resolvePath(resourcePath, &gnugrepPath_);
-   resolvePath(resourcePath, &msysSshPath_);
-   resolvePath(resourcePath, &sumatraPath_);
+   resolvePath(resourcePath_, &consoleIoPath_);
+   resolvePath(resourcePath_, &gnudiffPath_);
+   resolvePath(resourcePath_, &gnugrepPath_);
+   resolvePath(resourcePath_, &msysSshPath_);
+   resolvePath(resourcePath_, &sumatraPath_);
+   resolvePath(resourcePath_, &winutilsPath_);
 #endif
-   resolvePath(resourcePath, &hunspellDictionariesPath_);
-   resolvePath(resourcePath, &mathjaxPath_);
-   resolvePandocPath(resourcePath, &pandocPath_);
+   resolvePath(resourcePath_, &hunspellDictionariesPath_);
+   resolvePath(resourcePath_, &mathjaxPath_);
+   resolvePath(resourcePath_, &libclangHeadersPath_);
+   resolvePandocPath(resourcePath_, &pandocPath_);
+
+   // rsclang
+   if (libclangPath_ != kDefaultRsclangPath)
+   {
+#ifdef _WIN32
+      libclangPath_ += "/3.4";
+#else
+      libclangPath_ += "/3.5";
+#endif
+   }
+   resolveRsclangPath(resourcePath_, &libclangPath_);
 
    // shared secret with parent
    secret_ = core::system::getenv("RS_SHARED_SECRET");
@@ -439,6 +526,14 @@ core::ProgramStatus Options::read(int argc, char * const argv[])
       the name of the pipe is in an environment variable. */
    //core::system::unsetenv("RS_SHARED_SECRET");
 
+   // show user home page
+   showUserHomePage_ = core::system::getenv(kRStudioUserHomePage) == "1";
+   core::system::unsetenv(kRStudioUserHomePage);
+
+   // multi session
+   multiSession_ = (programMode_ == kSessionProgramModeDesktop) ||
+                   (core::system::getenv(kRStudioMultiSession) == "1");
+
    // initial working dir override
    initialWorkingDirOverride_ = core::system::getenv(kRStudioInitialWorkingDir);
    core::system::unsetenv(kRStudioInitialWorkingDir);
@@ -447,9 +542,29 @@ core::ProgramStatus Options::read(int argc, char * const argv[])
    initialEnvironmentFileOverride_ = core::system::getenv(kRStudioInitialEnvironment);
    core::system::unsetenv(kRStudioInitialEnvironment);
 
-   // initial project
-   initialProjectPath_ = core::system::getenv(kRStudioInitialProject);
-   core::system::unsetenv(kRStudioInitialProject);
+   // project sharing enabled
+   projectSharingEnabled_ =
+                core::system::getenv(kRStudioDisableProjectSharing).empty();
+
+   // initial project (can either be a command line param or via env)
+   r_util::SessionScope scope = sessionScope();
+   if (!scope.empty())
+   {
+        scopeState_ = r_util::validateSessionScope(
+                       scope,
+                       userHomePath(),
+                       userScratchPath(),
+                       session::projectIdToFilePath(userScratchPath(), 
+                                 FilePath(getOverlayOption(
+                                       kSessionSharedStoragePath))),
+                       projectSharingEnabled(),
+                       &initialProjectPath_);
+   }
+   else
+   {
+      initialProjectPath_ = core::system::getenv(kRStudioInitialProject);
+      core::system::unsetenv(kRStudioInitialProject);
+   }
 
    // limit rpc client uid
    limitRpcClientUid_ = -1;
@@ -458,6 +573,28 @@ core::ProgramStatus Options::read(int argc, char * const argv[])
    {
       limitRpcClientUid_ = core::safe_convert::stringTo<int>(limitUid, -1);
       core::system::unsetenv(kRStudioLimitRpcClientUid);
+   }
+
+   // get R versions path
+   rVersionsPath_ = core::system::getenv(kRStudioRVersionsPath);
+   core::system::unsetenv(kRStudioRVersionsPath);
+
+   // capture default R version environment variables
+   defaultRVersion_ = core::system::getenv(kRStudioDefaultRVersion);
+   core::system::unsetenv(kRStudioDefaultRVersion);
+   defaultRVersionHome_ = core::system::getenv(kRStudioDefaultRVersionHome);
+   core::system::unsetenv(kRStudioDefaultRVersionHome);
+   
+   // capture auth environment variables
+   authMinimumUserId_ = 0;
+   if (programMode_ == kSessionProgramModeServer)
+   {
+      authRequiredUserGroup_ = core::system::getenv(kRStudioRequiredUserGroup);
+      core::system::unsetenv(kRStudioRequiredUserGroup);
+
+      authMinimumUserId_ = safe_convert::stringTo<unsigned int>(
+                              core::system::getenv(kRStudioMinimumUserId), 100);
+      core::system::unsetenv(kRStudioMinimumUserId);
    }
 
    // return status
@@ -510,6 +647,20 @@ void Options::resolvePandocPath(const FilePath& resourcePath,
    }
 }
 
+void Options::resolveRsclangPath(const FilePath& resourcePath,
+                                 std::string* pPath)
+{
+   if (*pPath == kDefaultRsclangPath)
+   {
+      FilePath path = resourcePath.parent().complete("MacOS/rsclang");
+      *pPath = path.absolutePath();
+   }
+   else
+   {
+      resolvePath(resourcePath, pPath);
+   }
+}
+
 #else
 
 void Options::resolvePostbackPath(const FilePath& resourcePath,
@@ -524,8 +675,12 @@ void Options::resolvePandocPath(const FilePath& resourcePath,
    resolvePath(resourcePath, pPath);
 }
 
-
-
+void Options::resolveRsclangPath(const FilePath& resourcePath,
+                                 std::string* pPath)
+{
+   resolvePath(resourcePath, pPath);
+}
 #endif
    
 } // namespace session
+} // namespace rstudio

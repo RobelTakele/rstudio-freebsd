@@ -24,8 +24,8 @@
 
 #include <core/Log.hpp>
 #include <core/Error.hpp>
-
 #include <core/Thread.hpp>
+#include <core/PeriodicCommand.hpp>
 
 #include <core/system/System.hpp>
 #include <core/system/FileScanner.hpp>
@@ -37,6 +37,7 @@
 // practice we can't think of an easy way for the user to specify the
 // non case-sensitive variant of a file
 
+namespace rstudio {
 namespace core {
 namespace system {
 namespace file_monitor {
@@ -677,9 +678,27 @@ void checkForChanges()
       callback();
 }
 
+namespace {
+
+bool executeCheckForChanges()
+{
+   checkForChanges();
+   return true;
+}
+
+} // anonymous namespace
+
+boost::shared_ptr<ScheduledCommand> checkForChangesCommand(
+                       const boost::posix_time::time_duration& interval)
+{
+   return boost::shared_ptr<ScheduledCommand>(
+             new PeriodicCommand(interval, executeCheckForChanges, false));
+}
+
 } // namespace file_monitor
 } // namespace system
 } // namespace core 
+} // namespace rstudio
 
    
 

@@ -30,7 +30,7 @@ public class UrlContentEditingTargetWidget extends Composite
    {
       commands_ = commands;
 
-      frame_ = new RStudioFrame(url);
+      frame_ = new RStudioFrame(url, true, "");
       frame_.setSize("100%", "100%");
 
       PanelWithToolbars panel = new PanelWithToolbars(createToolbar(),
@@ -42,8 +42,7 @@ public class UrlContentEditingTargetWidget extends Composite
 
    private Toolbar createToolbar()
    {
-      Toolbar toolbar = new EditingTargetToolbar(commands_);
-      toolbar.addLeftWidget(commands_.popoutDoc().createToolbarButton());  
+      Toolbar toolbar = new EditingTargetToolbar(commands_, true);
       return toolbar;
    }
 

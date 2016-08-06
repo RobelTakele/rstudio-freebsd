@@ -28,8 +28,9 @@
 
 #include <session/SessionModuleContext.hpp>
 
-using namespace core;
+using namespace rstudio::core;
 
+namespace rstudio {
 namespace session {
 namespace modules { 
 namespace lists {
@@ -38,9 +39,11 @@ namespace {
 
 // list names
 const char * const kFileMru = "file_mru";
-const char * const kProjectMru = "project_mru";
+const char * const kProjectMru = kProjectMruList;
 const char * const kHelpHistory = "help_history_links";
 const char * const kUserDictioanry = "user_dictionary";
+const char * const kPlotPublishMru = "plot_publish_mru";
+const char * const kAddinsMru = "addins_mru";
 
 // path to lists dir
 FilePath s_listsPath;
@@ -323,14 +326,16 @@ json::Object allListsAsJson()
 Error initialize()
 {  
    // register lists / max sizes
-   s_lists[kFileMru] = 10;
-   s_lists[kProjectMru] = 10;
+   s_lists[kFileMru] = 15;
+   s_lists[kProjectMru] = 15;
    s_lists[kHelpHistory] = 15;
+   s_lists[kPlotPublishMru] = 15;
    s_lists[kUserDictioanry] = 10000;
+   s_lists[kAddinsMru] = 15;
 
    // monitor the lists directory
    s_listsPath = module_context::registerMonitoredUserScratchDir(
-                                                      "lists",
+                                                      kListsPath,
                                                       onListsFileChanged);
 
    using boost::bind;
@@ -351,4 +356,5 @@ Error initialize()
 } // namespace lists
 } // namespace modules
 } // namesapce session
+} // namespace rstudio
 

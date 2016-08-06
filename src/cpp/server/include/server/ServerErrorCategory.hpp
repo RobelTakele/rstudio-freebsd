@@ -18,23 +18,26 @@
 
 #include <boost/system/error_code.hpp>
 
+namespace rstudio {
 namespace server {
 namespace errc {
 
 enum errc_t {
    Success = 0,
    AuthenticationError,
-   SessionUnavailableError
+   SessionUnavailableError,
+   InvalidSessionScopeError
 };
 
 } // namespace errc
 } // namespace r
+} // namespace rstudio
 
 
 namespace boost {
 namespace system {
 template <>
-struct is_error_code_enum<server::errc::errc_t>
+struct is_error_code_enum<rstudio::server::errc::errc_t>
  { static const bool value = true; };
 } // namespace system
 } // namespace boost
@@ -42,6 +45,7 @@ struct is_error_code_enum<server::errc::errc_t>
 
 #include <core/Error.hpp>
 
+namespace rstudio {
 namespace server {
 
 const boost::system::error_category& serverCategory() ;
@@ -64,7 +68,10 @@ bool isAuthenticationError(const core::Error& error);
 
 bool isSessionUnavailableError(const core::Error& error);
 
+bool isInvalidSessionScopeError(const core::Error& error);
+
 } // namespace server
+} // namespace rstudio
 
 
 #endif // SERVER_SERVER_ERROR_CATEGORY_HPP

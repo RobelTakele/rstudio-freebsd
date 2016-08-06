@@ -28,6 +28,7 @@ public interface PreferencesDialogResources extends ClientBundle
       String sshKeyWidget();
       String usingVcsHelp();
       String newSection();
+      String alwaysCompletePanel();
    }
 
    @Source("PreferencesDialog.css")
@@ -36,4 +37,5 @@ public interface PreferencesDialogResources extends ClientBundle
    ImageResource iconAppearance();
    ImageResource iconPanes();
    ImageResource iconPackages();
+   ImageResource iconRMarkdown();
 }

@@ -26,6 +26,7 @@
 #include <core/FilePath.hpp>
 #include <core/FileSerializer.hpp>
 
+namespace rstudio {
 namespace core {
 namespace config_utils {
 
@@ -59,6 +60,10 @@ void extractVariables(const std::string& vars, Variables* pVariables)
 
 Error extractVariables(const FilePath& file, Variables* pVariables)
 {
+   // return path not found if necessary
+   if (!file.exists())
+      return core::pathNotFoundError(file.absolutePath(), ERROR_LOCATION);
+
    // read in the file
    std::string contents;
    Error error = readStringFromFile(file,
@@ -74,6 +79,7 @@ Error extractVariables(const FilePath& file, Variables* pVariables)
 
 } // namespace config_utils
 } // namespace core 
+} // namespace rstudio
 
 
 

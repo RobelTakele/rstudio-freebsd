@@ -15,10 +15,16 @@
 
 #include "ServerPAMAuth.hpp"
 
+namespace rstudio {
 namespace server {
 namespace pam_auth {
 
 bool canSetSignInCookies()
+{
+   return true;
+}
+
+bool canStaySignedIn()
 {
    return true;
 }
@@ -36,3 +42,4 @@ void onUserUnauthenticated(const std::string& username)
 
 } // namespace pam_auth
 } // namespace server
+} // namespace rstudio

@@ -15,6 +15,7 @@
 
 package org.rstudio.studio.client.workbench.views.help;
 
+import com.google.gwt.core.client.JavaScriptObject;
 import com.google.gwt.core.client.Scheduler;
 import com.google.gwt.core.client.Scheduler.RepeatingCommand;
 import com.google.gwt.core.client.Scheduler.ScheduledCommand;
@@ -41,6 +42,7 @@ import org.rstudio.core.client.ElementIds;
 import org.rstudio.core.client.StringUtil;
 import org.rstudio.core.client.command.KeyboardShortcut;
 import org.rstudio.core.client.command.ShortcutManager;
+import org.rstudio.core.client.dom.DomUtils;
 import org.rstudio.core.client.dom.ElementEx;
 import org.rstudio.core.client.dom.IFrameElementEx;
 import org.rstudio.core.client.dom.WindowEx;
@@ -94,14 +96,14 @@ public class HelpPane extends WorkbenchPane
    @Override 
    protected Widget createMainWidget()
    {
-      frame_ = new RStudioFrame() ;
+      frame_ = new RStudioFrame();
       frame_.setSize("100%", "100%");
-      frame_.setStylePrimaryName("rstudio-HelpFrame") ;
+      frame_.setStylePrimaryName("rstudio-HelpFrame");
       ElementIds.assignElementId(frame_.getElement(), ElementIds.HELP_FRAME);
 
       return new AutoGlassPanel(frame_);
    }
-
+   
    @Override
    public void onResize()
    {
@@ -162,7 +164,18 @@ public class HelpPane extends WorkbenchPane
             thiz.@org.rstudio.studio.client.workbench.views.help.HelpPane::unload()();
          });
       } ;
-      $wnd.helpNavigate = function(url) {
+      $wnd.helpNavigate = function(url, encode) {
+         // on some platforms url may arrive unencoded; on others it will already be encoded. to
+         // ascertain the difference, check to see if the url contains any characters that require
+         // encoding. 
+         if (encode)
+         {
+            var re = new RegExp("^([!#$&-;=?-[]_a-z~]|%[0-9a-fA-F]{2})+$");
+            if (!re.test(url)) 
+            {
+               url = encodeURI(url);
+            }
+         }
          thiz.@org.rstudio.studio.client.workbench.views.help.HelpPane::showHelp(Ljava/lang/String;)(url);
       } ;
       
@@ -188,23 +201,23 @@ public class HelpPane extends WorkbenchPane
          WindowEx.get().focus();
          findTextBox_.focus();
          findTextBox_.selectAll();
+         return;
       }
       
+      // don't let backspace perform browser back
+      DomUtils.preventBackspaceCausingBrowserBack(e);
+      
       // delegate to the shortcut manager
-      else
+      NativeKeyDownEvent evt = new NativeKeyDownEvent(e);
+      ShortcutManager.INSTANCE.onKeyDown(evt);
+      if (evt.isCanceled())
       {
-         NativeKeyDownEvent evt = new NativeKeyDownEvent(e);
-         ShortcutManager.INSTANCE.onKeyDown(evt);
-         if (evt.isCanceled())
-         {
-            e.preventDefault();
-            e.stopPropagation();
-            
-            // since this is a shortcut handled by the main window
-            // we set focus to it
-            WindowEx.get().focus();
-         }
-         
+         e.preventDefault();
+         e.stopPropagation();
+
+         // since this is a shortcut handled by the main window
+         // we set focus to it
+         WindowEx.get().focus();
       }
    }
    
@@ -230,8 +243,12 @@ public class HelpPane extends WorkbenchPane
             // they can participate in virtual session history. This
             // won't have any effect for right-click > Show in New Window
             // but that's a good thing.
+            
             a.setAttribute("onclick",
-                           "window.parent.helpNavigate(this.href);return false") ;
+                           "window.parent.helpNavigate(this.href, " + 
+                           (BrowseCap.isLinuxDesktop() || BrowseCap.isWindowsDesktop() ?
+                                 "true" : "false") +
+                           "); return false");
          }
       }
       
@@ -281,13 +298,15 @@ public class HelpPane extends WorkbenchPane
       toolbar.addLeftWidget(commands_.helpHome().createToolbarButton());
       toolbar.addLeftSeparator();
       toolbar.addLeftWidget(commands_.printHelp().createToolbarButton());
-      toolbar.addLeftWidget(commands_.helpPopout().createToolbarButton());
-      
       toolbar.addLeftSeparator();
-      toolbar.addLeftWidget(commands_.refreshHelp().createToolbarButton());
-      
+      toolbar.addLeftWidget(commands_.helpPopout().createToolbarButton());
+        
       toolbar.addRightWidget(searchProvider_.get().getSearchWidget());
 
+      toolbar.addRightSeparator();
+      toolbar.addRightWidget(commands_.refreshHelp().createToolbarButton());
+    
+      
       return toolbar;
    }
    
@@ -330,6 +349,14 @@ public class HelpPane extends WorkbenchPane
             @Override
             public void onKeyUp(KeyUpEvent event)
             {     
+               // ignore modifier key release
+               if (event.getNativeKeyCode() == KeyCodes.KEY_CTRL || 
+                   event.getNativeKeyCode() == KeyCodes.KEY_ALT || 
+                   event.getNativeKeyCode() == KeyCodes.KEY_SHIFT)
+               {
+                  return;
+               }
+
                WindowEx contentWindow = getContentWindow();
                if (contentWindow != null)
                {
@@ -357,6 +384,9 @@ public class HelpPane extends WorkbenchPane
                      // check for term
                      String term = findTextBox_.getValue().trim();
                      
+                     int modifier = KeyboardShortcut.getModifierValue(event.getNativeEvent());
+                     boolean isShift = modifier == KeyboardShortcut.SHIFT;
+                     
                      // if there is a term then search for it
                      if (term.length() > 0)
                      { 
@@ -370,12 +400,12 @@ public class HelpPane extends WorkbenchPane
                             !event.isAnyModifierKeyDown() &&
                             (event.getNativeKeyCode() != KeyCodes.KEY_ENTER);   
                            
-                           performFind(term, true, incremental);
+                           performFind(term, !isShift, incremental);
                         }
                         else
                         {
                            if (event.getNativeKeyCode() == KeyCodes.KEY_ENTER)
-                              performFind(term, true, false);
+                              performFind(term, !isShift, false);
                         }
                      }
                      
@@ -491,10 +521,19 @@ public class HelpPane extends WorkbenchPane
 
    public String getUrl()
    {
-      if (getIFrameEx() != null)
-         return getIFrameEx().getContentWindow().getLocationHref() ;
-      else
-         return null;
+      String url = null;
+      try 
+      {
+         if (getIFrameEx() != null)
+            url = getIFrameEx().getContentWindow().getLocationHref();
+      }
+      catch (Exception e)
+      {
+         // attempting to get the URL can throw with a DOM security exception if
+         // the current URL is on another domain--in this case we'll just want 
+         // to return null, so eat the exception.
+      }
+      return url;
    }
    
    public String getDocTitle()
@@ -532,9 +571,10 @@ public class HelpPane extends WorkbenchPane
                }
                else
                {
-                  getIFrameEx().getContentWindow().replaceLocationHref(targetUrl_);
                   frame_.setUrl(targetUrl_);
+                  replaceFrameUrl(frame_.getIFrame().cast(), targetUrl_);
                }
+               
                return false;
             }
             else
@@ -630,6 +670,12 @@ public class HelpPane extends WorkbenchPane
                findInputSource);
       }     
    }
+   
+   private final native void replaceFrameUrl(JavaScriptObject frame, String url) /*-{
+   	 frame.contentWindow.setTimeout(function() {
+   	  	this.location.replace(url);
+   	 }, 0);
+   }-*/;
 
 
    private final VirtualHistory navStack_ = new VirtualHistory() ;

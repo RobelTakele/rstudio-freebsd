@@ -14,8 +14,11 @@
  */
 package org.rstudio.studio.client.workbench.views.source.editors.text.ace;
 
+import org.rstudio.studio.client.workbench.views.output.lint.model.AceAnnotation;
+
 import com.google.gwt.core.client.JavaScriptObject;
 import com.google.gwt.core.client.JsArray;
+import com.google.gwt.core.client.JsArrayString;
 
 public class EditSession extends JavaScriptObject
 {
@@ -24,9 +27,25 @@ public class EditSession extends JavaScriptObject
    public native final String getValue() /*-{
       return this.toString();
    }-*/;
+   
+   public native final String getState(int row) /*-{
+      return this.getState(row);
+   }-*/;
+   
+   public native final String getTabString() /*-{
+      return this.getTabString();
+   }-*/;
+   
+   public native final int getTabSize() /*-{
+      return this.getTabSize();
+   }-*/;
 
    public native final void setValue(String code) /*-{
       this.setValue(code);
+   }-*/;
+   
+   public native final void setUseWorker(boolean useWorker) /*-{
+      this.setUseWorker(useWorker);
    }-*/;
 
    public native final void insert(Position position, String text) /*-{
@@ -47,6 +66,10 @@ public class EditSession extends JavaScriptObject
 
    public native final String getLine(int row) /*-{
       return this.getLine(row);
+   }-*/;
+   
+   public native final JsArrayString getLines(int startRow, int endRow) /*-{
+      return this.getLines(startRow, endRow);
    }-*/;
 
    public native final void setUseWrapMode(boolean useWrapMode) /*-{
@@ -81,7 +104,7 @@ public class EditSession extends JavaScriptObject
       if (existingMode && existingMode.constructor == Mode)
          return;
 
-      this.setMode(new Mode(suppressHighlighting, this.getDocument(), this));
+      this.setMode(new Mode(suppressHighlighting, this));
    }-*/;
 
    public native final Mode getMode() /*-{
@@ -131,7 +154,15 @@ public class EditSession extends JavaScriptObject
    public native final JsArray<AceFold> getAllFolds() /*-{
       return this.getAllFolds();
    }-*/;
+   
+   public native final AceFold getFoldAt(Position position) /*-{
+      return this.getFoldAt(position.row, position.column);
+   }-*/;
 
+   public native final AceFold getFoldAt(int row, int column) /*-{
+      return this.getFoldAt(row, column);
+   }-*/;
+   
    public native final void addFold(String placeholder, Range range) /*-{
       this.addFold(placeholder, range);
    }-*/;
@@ -174,4 +205,54 @@ public class EditSession extends JavaScriptObject
    public native final void clearBreakpoints(int[] lines) /*-{
       this.clearBreakpoints(lines);
    }-*/;
+   
+   public native final void setAnnotations(JsArray<AceAnnotation> annotations) /*-{
+      this.setAnnotations(annotations);
+   }-*/;
+   
+   public native final JsArray<AceAnnotation> getAnnotations() /*-{
+      return this.getAnnotations();
+   }-*/;
+   
+   public native final Markers getMarkers(boolean inFront) /*-{
+      return this.getMarkers(inFront);
+   }-*/;
+   
+   public native final Marker getMarker(int id) /*-{
+      return this.getMarkers(true)[id];
+   }-*/;
+   
+   public final native AnchoredRange createAnchoredRange(Position start,
+                                                         Position end) /*-{
+      var Range = $wnd.require("ace/range").Range;
+      var result = new Range();
+      result.start = this.doc.createAnchor(start.row, start.column);
+      result.end = this.doc.createAnchor(end.row, end.column);
+      result.end.$insertRight = true;
+      return result;
+   }-*/;
+   
+   public native final void setWorkerTimeout(int delayMs) /*-{
+      var worker = this.$worker;
+      if (worker && worker.setTimeout)
+         worker.setTimeout(delayMs);
+   }-*/;
+   
+   public final Token getTokenAt(Position position)
+   {
+      return getTokenAt(position.getRow(), position.getColumn());
+   }
+   
+   public native final JsArray<Token> getTokens(int row) /*-{
+      return this.getTokens(row);
+   }-*/;
+   
+   public native final Token getTokenAt(int row, int column) /*-{
+      return this.getTokenAt(row, column);
+   }-*/;
+   
+   public native final void setFoldStyle(String style) /*-{
+      this.setFoldStyle(style);
+   }-*/;
+
 }

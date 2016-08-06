@@ -47,6 +47,7 @@
 
 #include "ChildProcess.hpp"
 
+namespace rstudio {
 namespace core {
 namespace system {
 
@@ -348,6 +349,8 @@ Error ChildProcess::terminate()
          // the signal is still delivered and other subprocesses may have been
          // killed so we don't log an error
          if (pid < 0 && errno == EPERM)
+            return Success();
+         else if (errno == ESRCH)
             return Success();
          else
             return systemError(errno, ERROR_LOCATION);
@@ -812,7 +815,7 @@ void AsyncChildProcess::poll()
       // if this is an error that isn't ECHILD then log it (we never
       // expect this to occur as the only documented error codes are
       // EINTR and ECHILD, and EINTR is handled internally by posixCall)
-      if (result == -1 && errno != ECHILD)
+      if (result == -1 && errno != ECHILD && errno != ENOENT)
          LOG_ERROR(systemError(errno, ERROR_LOCATION));
    }
 }
@@ -824,4 +827,5 @@ bool AsyncChildProcess::exited()
 
 } // namespace system
 } // namespace core
+} // namespace rstudio
 

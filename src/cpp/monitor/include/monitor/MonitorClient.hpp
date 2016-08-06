@@ -18,16 +18,24 @@
 
 #include <string>
 
-#include <boost/asio/io_service.hpp>
-
 #include <core/system/System.hpp>
 #include <core/LogWriter.hpp>
 
+#include <monitor/audit/ConsoleAction.hpp>
 #include <monitor/events/Event.hpp>
 #include <monitor/metrics/Metric.hpp>
 
 #include "MonitorConstants.hpp"
 
+// forward declaration; boost/asio/io_service may cause errors if included more
+// than once (Boost 1.50 on Win x64 only)
+namespace boost {
+namespace asio {
+   class io_service;
+}
+}
+
+namespace rstudio {
 namespace monitor {
 
 class Client : boost::noncopyable
@@ -57,6 +65,8 @@ public:
 
    virtual void logEvent(const Event& event) = 0;
 
+   virtual void logConsoleAction(const audit::ConsoleAction& action) = 0;
+
 protected:
    const std::string& metricsSocket() const { return metricsSocket_; }
    const std::string& sharedSecret() const { return sharedSecret_; }
@@ -76,6 +86,7 @@ void initializeMonitorClient(const std::string& metricsSocket,
 Client& client();
 
 } // namespace monitor
+} // namespace rstudio
 
 #endif // MONITOR_MONITOR_CLIENT_HPP
 

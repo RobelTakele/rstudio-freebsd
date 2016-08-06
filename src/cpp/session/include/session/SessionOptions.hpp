@@ -26,14 +26,19 @@
 #include <core/StringUtils.hpp>
 #include <core/ProgramOptions.hpp>
 
+#include <core/r_util/RSessionContext.hpp>
+
 #include <R_ext/RStartup.h>
 
 #include <session/SessionConstants.hpp>
 
+namespace rstudio {
 namespace core {
    class ProgramStatus;
 }
+}
 
+namespace rstudio {
 namespace session {
  
 
@@ -55,6 +60,11 @@ public:
    // read options  
    core::ProgramStatus read(int argc, char * const argv[]);   
    virtual ~Options() {}
+   
+   bool runTests() const
+   {
+      return runTests_;
+   }
    
    bool verifyInstallation() const
    {
@@ -142,7 +152,17 @@ public:
 
    int saveActionDefault() const { return saveActionDefault_; }
 
-   unsigned int minimumUserId() const { return 100; }
+   unsigned int authMinimumUserId() const { return authMinimumUserId_; }
+
+   std::string authRequiredUserGroup() const { return authRequiredUserGroup_; }
+
+   std::string defaultWorkingDir() const { return defaultWorkingDir_.c_str(); }
+
+   std::string defaultProjectDir() const { return defaultProjectDir_.c_str(); }
+
+   bool showHelpHome() const { return showHelpHome_; }
+
+   bool showUserHomePage() const { return showUserHomePage_; }
    
    core::FilePath coreRSourcePath() const 
    { 
@@ -159,11 +179,6 @@ public:
       return core::FilePath(sessionLibraryPath_.c_str());
    }
    
-   core::FilePath sessionPackagesPath() const
-   {
-      return core::FilePath(sessionPackagesPath_.c_str());
-   }
-
    core::FilePath sessionPackageArchivesPath() const
    {
       return core::FilePath(sessionPackageArchivesPath_.c_str());
@@ -199,7 +214,17 @@ public:
    {
       return std::string(rDocDirOverride_.c_str());
    }
-
+   
+   std::string defaultRVersion()
+   {
+      return std::string(defaultRVersion_.c_str());
+   }
+   
+   std::string defaultRVersionHome()
+   {
+      return std::string(defaultRVersionHome_.c_str());
+   }
+   
    bool autoReloadSource() const { return autoReloadSource_; }
 
    // limits
@@ -240,6 +265,11 @@ public:
    {
       return core::FilePath(sumatraPath_.c_str());
    }
+
+   core::FilePath winutilsPath() const
+   {
+      return core::FilePath(winutilsPath_.c_str());
+   }
    
    core::FilePath hunspellDictionariesPath() const
    {
@@ -254,6 +284,16 @@ public:
    core::FilePath pandocPath() const
    {
       return core::FilePath(pandocPath_.c_str());
+   }
+
+   core::FilePath libclangPath() const
+   {
+      return core::FilePath(libclangPath_.c_str());
+   }
+
+   core::FilePath libclangHeadersPath() const
+   {
+      return core::FilePath(libclangHeadersPath_.c_str());
    }
 
    bool allowFileDownloads() const
@@ -296,6 +336,21 @@ public:
       return allowOverlay() || allowRpubsPublish_;
    }
 
+   bool allowExternalPublish() const
+   {
+      return allowOverlay() || allowExternalPublish_;
+   }
+
+   bool allowPublish() const
+   {
+      return allowOverlay() || allowPublish_;
+   }
+
+   bool allowPresentationCommands() const
+   {
+      return allowPresentationCommands_;
+   }
+
    // user info
    std::string userIdentity() const 
    { 
@@ -305,6 +360,37 @@ public:
    bool showUserIdentity() const
    {
       return showUserIdentity_;
+   }
+
+   core::r_util::SessionScope sessionScope() const
+   {
+      return scope_;
+   }
+
+   core::r_util::SessionScopeState scopeState() const
+   {
+      return scopeState_;
+   }
+
+   core::r_util::SessionContext sessionContext() const
+   {
+      return core::r_util::SessionContext(userIdentity(), sessionScope());
+   }
+
+   bool multiSession() const
+   {
+      return multiSession_;
+   }
+
+   bool projectSharingEnabled() const
+   {
+      return projectSharingEnabled_;
+   }
+
+   bool switchProjectsWithUrl() const
+   {
+      return programMode() == kSessionProgramModeServer &&
+             options().multiSession() == true;
    }
 
    core::FilePath userHomePath() const 
@@ -346,6 +432,14 @@ public:
          return core::FilePath();
    }
 
+   core::FilePath rVersionsPath()
+   {
+      if (!rVersionsPath_.empty())
+         return core::FilePath(rVersionsPath_.c_str());
+      else
+         return core::FilePath();
+   }
+
    void clearInitialContextSettings()
    {
       initialWorkingDirOverride_.clear();
@@ -359,13 +453,6 @@ public:
    core::string_utils::LineEnding sourceLineEnding() const
    {
       return core::string_utils::LineEndingPosix;
-   }
-
-   // The line ending we persist to disk with. This could potentially
-   // be a per-user or even per-file option.
-   core::string_utils::LineEnding sourcePersistLineEnding() const
-   {
-      return core::string_utils::LineEndingNative;
    }
 
    std::string monitorSharedSecret() const
@@ -392,12 +479,17 @@ private:
                             std::string* pPath);
    void resolvePandocPath(const core::FilePath& resourcePath, std::string* pPath);
 
+   void resolveRsclangPath(const core::FilePath& resourcePath, std::string* pPath);
+
    void addOverlayOptions(boost::program_options::options_description* pOpt);
    bool validateOverlayOptions(std::string* pErrMsg);
    void resolveOverlayOptions();
    bool allowOverlay() const;
 
 private:
+   // tests
+   bool runTests_;
+   
    // verify
    bool verifyInstallation_;
    std::string verifyInstallationHomeDir_;
@@ -431,12 +523,17 @@ private:
    bool rProfileOnResumeDefault_;
    int saveActionDefault_;
    bool standalone_;
+   std::string authRequiredUserGroup_;
+   unsigned int authMinimumUserId_;
+   std::string defaultWorkingDir_;
+   std::string defaultProjectDir_;
+   bool showHelpHome_;
+   bool showUserHomePage_;
 
    // r
    std::string coreRSourcePath_;
    std::string modulesRSourcePath_;
    std::string sessionLibraryPath_;
-   std::string sessionPackagesPath_;
    std::string sessionPackageArchivesPath_;
    std::string rLibsUser_;
    std::string rCRANRepos_;
@@ -445,6 +542,8 @@ private:
    std::string rResourcesPath_;
    std::string rHomeDirOverride_;
    std::string rDocDirOverride_;
+   std::string defaultRVersion_;
+   std::string defaultRVersionHome_;
    
    // limits
    int limitFileUploadSizeMb_;
@@ -459,9 +558,15 @@ private:
    std::string gnugrepPath_;
    std::string msysSshPath_;
    std::string sumatraPath_;
+   std::string winutilsPath_;
    std::string hunspellDictionariesPath_;
    std::string mathjaxPath_;
    std::string pandocPath_;
+   std::string libclangPath_;
+   std::string libclangHeadersPath_;
+
+   // root directory for locating resources
+   core::FilePath resourcePath_;
 
    bool allowFileDownloads_;
    bool allowShell_;
@@ -471,10 +576,17 @@ private:
    bool allowVcsExecutableEdit_;
    bool allowRemovePublicFolder_;
    bool allowRpubsPublish_;
+   bool allowExternalPublish_;
+   bool allowPublish_;
+   bool allowPresentationCommands_;
 
    // user info
    bool showUserIdentity_;
    std::string userIdentity_;
+   core::r_util::SessionScope scope_;
+   core::r_util::SessionScopeState scopeState_;
+   bool multiSession_;
+   bool projectSharingEnabled_;
    std::string userHomePath_;
    std::string userScratchPath_;   
 
@@ -484,6 +596,7 @@ private:
 
    // initial project
    std::string initialProjectPath_;
+   std::string rVersionsPath_;
 
    // monitor
    std::string monitorSharedSecret_;
@@ -493,6 +606,7 @@ private:
 };
   
 } // namespace session
+} // namespace rstudio
 
 #endif // SESSION_SESSION_OPTIONS_HPP
 

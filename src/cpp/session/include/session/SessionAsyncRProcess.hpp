@@ -1,7 +1,7 @@
 /*
  * SessionAsyncRProcesss.hpp
  *
- * Copyright (C) 2009-12 by RStudio, Inc.
+ * Copyright (C) 2009-16 by RStudio, Inc.
  *
  * Unless you have received this program directly from RStudio pursuant
  * to the terms of a commercial license agreement with RStudio, then
@@ -17,21 +17,36 @@
 #ifndef SESSION_ASYNC_R_PROCESS_HPP
 #define SESSION_ASYNC_R_PROCESS_HPP
 
+#include <boost/enable_shared_from_this.hpp>
+
+#include <core/system/Types.hpp>
+#include <core/system/Process.hpp>
+
 namespace core
 {
    class FilePath;
 }
 
-namespace session {   
+namespace rstudio {
+namespace session {
 namespace async_r {
 
 enum AsyncRProcessOptions
 {
    R_PROCESS_NORMAL         = 1 << 0,
    R_PROCESS_REDIRECTSTDERR = 1 << 1,
-   R_PROCESS_VANILLA        = 1 << 2
+   R_PROCESS_VANILLA        = 1 << 2,
+   R_PROCESS_AUGMENTED      = 1 << 3,
+   R_PROCESS_NO_RDATA       = 1 << 4
 };
-    
+
+inline AsyncRProcessOptions operator | (AsyncRProcessOptions lhs,
+                                        AsyncRProcessOptions rhs)
+{
+   return static_cast<AsyncRProcessOptions>(
+            static_cast<int>(lhs) | static_cast<int>(rhs));
+}
+
 class AsyncRProcess :
       boost::noncopyable,
       public boost::enable_shared_from_this<AsyncRProcess>
@@ -40,13 +55,32 @@ public:
    AsyncRProcess();
    virtual ~AsyncRProcess();
 
-   void start(const char* rCommand, const core::FilePath& workingDir,
-              AsyncRProcessOptions rOptions);
+   void start(const char* rCommand,
+              const core::FilePath& workingDir,
+              AsyncRProcessOptions rOptions,
+              std::vector<core::FilePath> rSourceFiles = 
+                 std::vector<core::FilePath>(),
+              const std::string &input = std::string())
+   {
+      start(rCommand, core::system::Options(), workingDir, rOptions, 
+            rSourceFiles, input);
+   }
+
+   void start(const char* rCommand,
+              core::system::Options environment,
+              const core::FilePath& workingDir,
+              AsyncRProcessOptions rOptions,
+              std::vector<core::FilePath> rSourceFiles = 
+                 std::vector<core::FilePath>(),
+              const std::string& input = std::string());
+
    bool isRunning();
    void terminate();
    void markCompleted();
+   bool terminationRequested();
 
 protected:
+   virtual void onStarted(core::system::ProcessOperations& operations);
    virtual bool onContinue();
    virtual void onStdout(const std::string& output);
    virtual void onStderr(const std::string& output);
@@ -57,9 +91,11 @@ private:
    void onProcessCompleted(int exitStatus);
    bool isRunning_;
    bool terminationRequested_;
+   std::string input_;
 };
 
 } // namespace async_r
 } // namespace session
+} // namespace rstudio
 
 #endif

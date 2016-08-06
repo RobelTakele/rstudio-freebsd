@@ -27,16 +27,12 @@ import com.google.gwt.user.client.Event;
 import com.google.gwt.user.client.Timer;
 import com.google.inject.Inject;
 
-import org.rstudio.core.client.Barrier;
 import org.rstudio.core.client.MessageDisplay;
 import org.rstudio.core.client.Size;
 import org.rstudio.core.client.StringUtil;
 import org.rstudio.core.client.TimeBufferedCommand;
-import org.rstudio.core.client.Barrier.Token;
 import org.rstudio.core.client.command.CommandBinder;
 import org.rstudio.core.client.command.Handler;
-import org.rstudio.core.client.events.BarrierReleasedEvent;
-import org.rstudio.core.client.events.BarrierReleasedHandler;
 import org.rstudio.core.client.files.FileSystemItem;
 import org.rstudio.core.client.widget.MessageDialog;
 import org.rstudio.core.client.widget.ProgressIndicator;
@@ -44,7 +40,7 @@ import org.rstudio.core.client.widget.ProgressOperation;
 import org.rstudio.core.client.widget.ProgressOperationWithInput;
 import org.rstudio.studio.client.application.Desktop;
 import org.rstudio.studio.client.application.events.EventBus;
-import org.rstudio.studio.client.application.events.ReloadEvent;
+import org.rstudio.studio.client.application.events.ReloadWithLastChanceSaveEvent;
 import org.rstudio.studio.client.common.FileDialogs;
 import org.rstudio.studio.client.common.GlobalDisplay;
 import org.rstudio.studio.client.common.GlobalProgressDelayer;
@@ -55,16 +51,12 @@ import org.rstudio.studio.client.common.presentation.SlideNavigationPresenter;
 import org.rstudio.studio.client.common.presentation.events.SlideIndexChangedEvent;
 import org.rstudio.studio.client.common.presentation.events.SlideNavigationChangedEvent;
 import org.rstudio.studio.client.common.presentation.model.SlideNavigation;
-import org.rstudio.studio.client.common.rpubs.ui.RPubsUploadDialog;
-
 import org.rstudio.studio.client.server.Void;
 import org.rstudio.studio.client.server.ServerError;
 import org.rstudio.studio.client.server.ServerRequestCallback;
 import org.rstudio.studio.client.server.VoidServerRequestCallback;
 import org.rstudio.studio.client.workbench.WorkbenchView;
-
 import org.rstudio.studio.client.workbench.commands.Commands;
-import org.rstudio.studio.client.workbench.events.LastChanceSaveEvent;
 import org.rstudio.studio.client.workbench.model.RemoteFileSystemContext;
 import org.rstudio.studio.client.workbench.model.Session;
 import org.rstudio.studio.client.workbench.views.BasePresenter;
@@ -72,7 +64,6 @@ import org.rstudio.studio.client.workbench.views.edit.ui.EditDialog;
 import org.rstudio.studio.client.workbench.views.presentation.events.PresentationPaneRequestCompletedEvent;
 import org.rstudio.studio.client.workbench.views.presentation.events.ShowPresentationPaneEvent;
 import org.rstudio.studio.client.workbench.views.presentation.events.SourceFileSaveCompletedEvent;
-import org.rstudio.studio.client.workbench.views.presentation.model.PresentationRPubsSource;
 import org.rstudio.studio.client.workbench.views.presentation.model.PresentationServerOperations;
 import org.rstudio.studio.client.workbench.views.presentation.model.PresentationState;
 import org.rstudio.studio.client.workbench.views.source.events.EditPresentationSourceEvent;
@@ -84,7 +75,7 @@ public class Presentation extends BasePresenter
    
    public interface Display extends WorkbenchView
    {  
-      void load(String url);
+      void load(String url, String sourceFile);
       void zoom(String title, String url, Command onClosed);
       void clear();
       boolean hasSlides();
@@ -237,7 +228,7 @@ public class Presentation extends BasePresenter
          @Override
          public void execute()
          {
-            view_.load(buildPresentationUrl()); 
+            view_.load(buildPresentationUrl(), currentState_.getFilePath()); 
          } 
       });
    }
@@ -324,32 +315,6 @@ public class Presentation extends BasePresenter
    }
    
    @Handler
-   void onPresentationPublishToRpubs()
-   {
-      server_.createPresentationRPubsSource(
-         new SimpleRequestCallback<PresentationRPubsSource>() {
-            
-            @Override
-            public void onResponseReceived(PresentationRPubsSource source)
-            {
-               RPubsUploadDialog dlg = new RPubsUploadDialog(
-                     "Presentation",
-                     view_.getPresentationTitle(),
-                     source.getSourceFilePath(),
-                     source.isPublished());
-               dlg.showModal();
-            }
-            
-            @Override
-            public void onError(ServerError error)
-            {
-               globalDisplay_.showErrorMessage("Error Saving Presentation",
-                                               getErrorMessage(error));
-            }
-      });
-   }
-   
-   @Handler
    void onClearPresentationCache()
    {
       globalDisplay_.showYesNoMessage(
@@ -411,7 +376,7 @@ public class Presentation extends BasePresenter
    private void refreshPresentation()
    {
       view_.showBusy();
-      view_.load(buildPresentationUrl());
+      view_.load(buildPresentationUrl(), currentState_.getFilePath());
    }
    
    @Handler
@@ -525,34 +490,25 @@ public class Presentation extends BasePresenter
       return handlerManager_.addHandler(SlideIndexChangedEvent.TYPE, handler);
    }
    
+   public static String getErrorMessage(ServerError error)
+   {
+      String message = error.getUserMessage();
+      JSONString userMessage = error.getClientInfo().isString();
+      if (userMessage != null)
+         message = userMessage.stringValue();
+      return message;
+   }
+   
    private void reloadWorkbench()
    { 
-      Barrier barrier = new Barrier();
-      barrier.addBarrierReleasedHandler(new BarrierReleasedHandler() {
-
-         @Override
-         public void onBarrierReleased(BarrierReleasedEvent event)
-         {
-            eventBus_.fireEvent(new ReloadEvent());
-         }
-      });
-      
-      Token token = barrier.acquire();
-      try
-      {
-         eventBus_.fireEvent(new LastChanceSaveEvent(barrier));
-      }
-      finally
-      {
-         token.release();
-      }  
+      eventBus_.fireEvent(new ReloadWithLastChanceSaveEvent());
    }
    
    
    private void init(PresentationState state)
    {
       currentState_ = state;
-      view_.load(buildPresentationUrl());
+      view_.load(buildPresentationUrl(), currentState_.getFilePath());
    }
    
    private String buildPresentationUrl()
@@ -704,16 +660,6 @@ public class Presentation extends BasePresenter
       
       return -1;
    } 
-   
-   
-   private String getErrorMessage(ServerError error)
-   {
-      String message = error.getUserMessage();
-      JSONString userMessage = error.getClientInfo().isString();
-      if (userMessage != null)
-         message = userMessage.stringValue();
-      return message;
-   }
    
    private final Display view_ ; 
    private final PresentationServerOperations server_;

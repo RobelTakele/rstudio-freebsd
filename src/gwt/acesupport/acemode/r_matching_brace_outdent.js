@@ -17,13 +17,13 @@
  * AGPL (http://www.gnu.org/licenses/agpl-3.0.txt) for more details.
  *
  */
-define("mode/r_matching_brace_outdent", function(require, exports, module)
+define("mode/r_matching_brace_outdent", ["require", "exports", "module"], function(require, exports, module)
 {
    var Range = require("ace/range").Range;
 
-   // This is a mixin that enables proper brace outdent behavior for R code.
-
-   var RMatchingBraceOutdent = {};
+   var RMatchingBraceOutdent = function(codeModel) {
+      this.codeModel = codeModel;
+   };
 
    (function()
    {
@@ -52,7 +52,7 @@ define("mode/r_matching_brace_outdent", function(require, exports, module)
       };
 
       this.autoOutdent = function(state, session, row) {
-         if (row == 0)
+         if (row === 0)
             return 0;
 
          var line = session.getLine(row);
@@ -73,10 +73,10 @@ define("mode/r_matching_brace_outdent", function(require, exports, module)
          if (match)
          {
             var column = match[1].length;
-            var indent = this.codeModel.getBraceIndent(row-1);
-            session.replace(new Range(row, 0, row, column-1), indent);
+            var indent = this.codeModel.getBraceIndent(row - 1);
+            session.replace(new Range(row, 0, row, column - 1), indent);
          }
       };
-   }).call(RMatchingBraceOutdent);
+   }).call(RMatchingBraceOutdent.prototype);
    exports.RMatchingBraceOutdent = RMatchingBraceOutdent;
 });

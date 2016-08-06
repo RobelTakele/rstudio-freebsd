@@ -17,51 +17,62 @@
  * AGPL (http://www.gnu.org/licenses/agpl-3.0.txt) for more details.
  *
  */
-define("mode/sweave", function(require, exports, module) {
+define("mode/sweave", ["require", "exports", "module"], function(require, exports, module) {
 
 var oop = require("ace/lib/oop");
 var TextMode = require("ace/mode/text").Mode;
 var Tokenizer = require("ace/tokenizer").Tokenizer;
 var TextHighlightRules = require("ace/mode/text_highlight_rules").TextHighlightRules;
-var SweaveBackgroundHighlighter = require("mode/sweave_background_highlighter").SweaveBackgroundHighlighter;
+var BackgroundHighlighter = require("mode/background_highlighter").BackgroundHighlighter;
 var SweaveHighlightRules = require("mode/sweave_highlight_rules").SweaveHighlightRules;
 var RCodeModel = require("mode/r_code_model").RCodeModel;
+var MatchingBraceOutdent = require("ace/mode/matching_brace_outdent").MatchingBraceOutdent;
 var RMatchingBraceOutdent = require("mode/r_matching_brace_outdent").RMatchingBraceOutdent;
 var unicode = require("ace/unicode");
+var Utils = require("mode/utils");
+var AutoBraceInsert = require("mode/auto_brace_insert").AutoBraceInsert;
 
-var Mode = function(suppressHighlighting, doc, session) {
-	if (suppressHighlighting)
-    	this.$tokenizer = new Tokenizer(new TextHighlightRules().getRules());
-	else
-    	this.$tokenizer = new Tokenizer(new SweaveHighlightRules().getRules());
+var Mode = function(suppressHighlighting, session) {
+   if (suppressHighlighting)
+      this.$tokenizer = new Tokenizer(new TextHighlightRules().getRules());
+   else
+      this.$tokenizer = new Tokenizer(new SweaveHighlightRules().getRules());
 
-   this.codeModel = new RCodeModel(doc, this.$tokenizer, /^r-/, /<<(.*?)>>/);
+   this.$outdent = new MatchingBraceOutdent();
+
+   this.codeModel = new RCodeModel(
+      session,
+      this.$tokenizer,
+      /^r-/,
+      /<<(.*?)>>/,
+      /^\s*@\s*$/
+   );
+   this.$r_outdent = new RMatchingBraceOutdent(this.codeModel);
+
    this.foldingRules = this.codeModel;
-   this.$sweaveBackgroundHighlighter = new SweaveBackgroundHighlighter(
+   this.$sweaveBackgroundHighlighter = new BackgroundHighlighter(
          session,
-         /^\s*\<\<.*\>\>=.*$/,
-         /^\s*@(?:\s.*)?$/,
-         false);
+         /^\s*<<.*>>=.*$/,
+         /^\s*@(?:\s.*)?$/
+   );
    this.$session = session;
 };
 oop.inherits(Mode, TextMode);
 
 (function() {
 
-   oop.implement(this, RMatchingBraceOutdent);
-
    this.tokenRe = new RegExp("^["
        + unicode.packages.L
        + unicode.packages.Mn + unicode.packages.Mc
        + unicode.packages.Nd
-       + unicode.packages.Pc + "_]+", "g"
+       + unicode.packages.Pc + "._]+", "g"
    );
 
    this.nonTokenRe = new RegExp("^(?:[^"
        + unicode.packages.L
        + unicode.packages.Mn + unicode.packages.Mc
        + unicode.packages.Nd
-       + unicode.packages.Pc + "_]|\s])+", "g"
+       + unicode.packages.Pc + "._]|\\s])+", "g"
    );
 
    this.$complements = {
@@ -76,20 +87,47 @@ oop.inherits(Mode, TextMode);
 
    this.insertChunkInfo = {
       value: "<<>>=\n\n@\n",
-      position: {row: 0, column: 2}
+      position: {row: 0, column: 2}, 
+      content_position: {row: 1, column: 0}
    };
 
    this.getLanguageMode = function(position)
    {
-      return this.$session.getState(position.row).match(/^r-/) ? 'R' : 'TeX';
+      var state = Utils.getPrimaryState(this.$session, position.row);
+      return state.match(/^r-/) ? 'R' : 'TeX';
    };
 
-   this.getNextLineIndent = function(state, line, tab, tabSize, row)
+   this.$getNextLineIndent = this.getNextLineIndent;
+   this.getNextLineIndent = function(state, line, tab, row)
    {
-      return this.codeModel.getNextLineIndent(row, line, state, tab, tabSize);
+      var mode = Utils.activeMode(state, "tex");
+      if (mode === "r")
+         return this.codeModel.getNextLineIndent(state, line, tab, row);
+      else
+         return this.$getNextLineIndent(state, line, tab);
+   };
+
+   this.checkOutdent = function(state, line, input)
+   {
+      var mode = Utils.activeMode(state, "tex");
+      if (mode === "r")
+         return this.$r_outdent.checkOutdent(state, line, input);
+      else
+         return this.$outdent.checkOutdent(line, input);
+   };
+
+   this.autoOutdent = function(state, session, row)
+   {
+      var mode = Utils.activeMode(state, "tex");
+      if (mode === "r")
+         return this.$r_outdent.autoOutdent(state, session, row);
+      else
+         return this.$outdent.autoOutdent(session, row);
    };
 
    this.allowAutoInsert = this.smartAllowAutoInsert;
+
+   this.$id = "mode/sweave";
 
 }).call(Mode.prototype);
 

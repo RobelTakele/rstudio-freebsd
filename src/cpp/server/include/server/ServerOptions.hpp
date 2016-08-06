@@ -26,10 +26,13 @@
 #include <core/ProgramOptions.hpp>
 #include <core/SafeConvert.hpp>
 
+namespace rstudio {
 namespace core {
    class ProgramStatus;
 }
+}
 
+namespace rstudio {
 namespace server {
 
 // singleton
@@ -72,6 +75,8 @@ public:
    bool serverDaemonize() const { return serverDaemonize_; }
 
    bool serverAppArmorEnabled() const { return serverAppArmorEnabled_; }
+
+   bool serverSetUmask() const { return serverSetUmask_; }
 
    // www 
    std::string wwwAddress() const
@@ -119,6 +124,11 @@ public:
       return wwwProxyLocalhost_;
    }
 
+   bool wwwVerifyUserAgent() const
+   {
+      return wwwVerifyUserAgent_;
+   }
+
    // auth
    bool authNone()
    {
@@ -130,14 +140,29 @@ public:
       return authValidateUsers_;
    }
 
+   int authStaySignedInDays()
+   {
+      return authStaySignedInDays_;
+   }
+
    bool authEncryptPassword()
    {
       return authEncryptPassword_;
    }
 
+   std::string authLoginPageHtml()
+   {
+      return authLoginPageHtml_;
+   }
+
    std::string authRequiredUserGroup()
    {
       return std::string(authRequiredUserGroup_.c_str());
+   }
+
+   unsigned int authMinimumUserId()
+   {
+      return authMinimumUserId_;
    }
 
    std::string authPamHelperPath() const
@@ -180,6 +205,8 @@ public:
    {
       return monitorIntervalSeconds_;
    }
+
+   std::string gwtPrefix() const;
    
    std::string getOverlayOption(const std::string& name)
    {
@@ -224,6 +251,7 @@ private:
    std::string serverUser_;
    bool serverDaemonize_;
    bool serverAppArmorEnabled_;
+   bool serverSetUmask_;
    bool serverOffline_;
    std::string wwwAddress_ ;
    std::string wwwPort_ ;
@@ -232,10 +260,14 @@ private:
    bool wwwUseEmulatedStack_;
    int wwwThreadPoolSize_;
    bool wwwProxyLocalhost_;
+   bool wwwVerifyUserAgent_;
    bool authNone_;
    bool authValidateUsers_;
+   int authStaySignedInDays_;
    bool authEncryptPassword_;
+   std::string authLoginPageHtml_;
    std::string authRequiredUserGroup_;
+   unsigned int authMinimumUserId_;
    std::string authPamHelperPath_;
    std::string rsessionWhichR_;
    std::string rsessionPath_;
@@ -248,6 +280,7 @@ private:
 };
       
 } // namespace server
+} // namespace rstudio
 
 #endif // SERVER_SERVER_OPTIONS_HPP
 

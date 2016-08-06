@@ -1,7 +1,7 @@
 #
 # ModuleTools.R
 #
-# Copyright (C) 2009-12 by RStudio, Inc.
+# Copyright (C) 2009-15 by RStudio, Inc.
 #
 # Unless you have received this program directly from RStudio pursuant
 # to the terms of a commercial license agreement with RStudio, then
@@ -46,7 +46,8 @@
 # marshalled as scalar types instead of arrays
 .rs.addFunction("scalar", function(obj)
 {
-   class(obj) <- 'rs.scalar'
+   if (!is.null(obj))
+      class(obj) <- 'rs.scalar'
    return(obj)
 })
 
@@ -85,13 +86,72 @@
             error = function(e) NULL)
 })
 
+.rs.addFunction("libPathsString", function()
+{
+   paste(.libPaths(), collapse = .Platform$path.sep)
+})
+
+.rs.addFunction("parseLinkingTo", function(linkingTo)
+{
+   if (is.null(linkingTo))
+      return (character())
+
+   linkingTo <- strsplit(linkingTo, "\\s*\\,")[[1]]
+   result <- gsub("\\s", "", linkingTo)
+   gsub("\\(.*", "", result)
+})
+
+
 .rs.addFunction("isPackageInstalled", function(name, libLoc = NULL)
 {
-  name %in% .packages(all.available = TRUE, lib.loc = libLoc)
+   paths <- vapply(name, FUN.VALUE = character(1), USE.NAMES = FALSE, function(pkg) {
+      system.file(package = pkg, lib.loc = libLoc)
+   })
+   nzchar(paths)
 })
 
 .rs.addFunction("isPackageVersionInstalled", function(name, version) {  
   .rs.isPackageInstalled(name) && (.rs.getPackageVersion(name) >= version)
+})
+
+.rs.addFunction("packageCRANVersionAvailable", function(name, version, source) {
+  # get the specified CRAN repo
+  repo <- NA
+  repos <- getOption("repos")
+  # the repos option is canonically a named character vector, but could also
+  # be a named list
+  if (is.character(repos) || is.list(repos)) {
+    if (is.null(names(repos))) {
+      # no indication of which repo is which, presume the first entry to be
+      # CRAN if it's of character type
+      if (length(repos) > 0 && is.character(repos[[1]]))
+        repo <- repos[[1]]
+    } else {
+      # use repo named CRAN
+      repo <- as.character(repos["CRAN"])
+    }
+  }
+
+  # if no default repo and no repo marked CRAN, give up
+  if (is.na(repo)) {
+    return(list(version = "", satisfied = FALSE))
+  }
+
+  # get the available packages and extract the version information
+  type <- ifelse(source, "source", getOption("pkgType"))
+  pkgs <- available.packages(
+            contriburl = contrib.url(repo, type = type))
+  if (!(name %in% row.names(pkgs))) {
+    return(list(version = "", satisfied = FALSE))
+  }
+  pkgVersion <- pkgs[name, "Version"]
+  return(list(
+    version = pkgVersion, 
+    satisfied = package_version(pkgVersion) >= package_version(version)))
+})
+
+.rs.addFunction("packageVersionString", function(pkg) {
+   as.character(packageVersion(pkg))
 })
 
 .rs.addFunction("getPackageCompatStatus", 
@@ -108,22 +168,38 @@
 )
 
 .rs.addFunction("getPackageRStudioProtocol", function(name) {
+
+   ## First check to see if the package has a 'rstudio-protocol' file
+   path <- system.file("rstudio/rstudio-protocol", package = name)
+   if (path != "") {
+      tryCatch(
+         expr = {
+            return(as.integer(read.dcf(path, all = TRUE)$Version))
+         },
+         warning = function(e) {},
+         error = function(e) {}
+      )
+   }
+
+   ## Otherwise, check the namespace
    needsUnloadAfter <- !(name %in% loadedNamespaces())
-   result <- if (exists(".RStudio_protocol_version", envir = asNamespace(name),
-              mode = "integer")) 
-      get(".RStudio_protocol_version", envir = asNamespace(name))
-   else 
-      0
+   rpv <- ".RStudio_protocol_version"
+   env <- asNamespace(name)
+   if (exists(rpv, envir = env, mode = "integer")) {
+      version <- get(rpv, envir = env)
+   } else {
+      version <- 0L
+   }
    if (needsUnloadAfter)
       unloadNamespace(name)
-   result
+   version
 })
 
 .rs.addFunction("rstudioIDEPackageRequiresUpdate", function(name, sha1) {
    
   if (.rs.isPackageInstalled(name))
   {
-     f <- utils::packageDescription(name, fields=c("Repository", "GithubSHA1"))
+     f <- utils::packageDescription(name, fields=c("Origin", "GithubSHA1"))
      identical(f$Origin, "RStudioIDE") && !identical(f$GithubSHA1, sha1)
   }
   else
@@ -184,6 +260,26 @@
    .Call("rs_restartR", afterRestartCommand)
 })
 
+.rs.addFunction("readUiPref", function(prefName) {
+  if (missing(prefName) || is.null(prefName))
+    stop("No preference name supplied")
+  .Call("rs_readUiPref", prefName)
+})
 
 
+.rs.addFunction("writeUiPref", function(prefName, value) {
+  if (missing(prefName) || is.null(prefName))
+    stop("No preference name supplied")
+  if (missing(value))
+    stop("No value supplied")
+  invisible(.Call("rs_writeUiPref", prefName, .rs.scalar(value)))
+})
 
+.rs.addFunction("setUsingMingwGcc49", function(usingMingwGcc49) {
+  invisible(.Call("rs_setUsingMingwGcc49", usingMingwGcc49))
+})
+
+
+.rs.addGlobalFunction("rstudioDiagnosticsReport", function() {
+  invisible(.Call(getNativeSymbolInfo("rs_sourceDiagnostics", PACKAGE="")))
+})

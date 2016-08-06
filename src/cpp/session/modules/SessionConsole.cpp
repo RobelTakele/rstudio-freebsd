@@ -15,6 +15,7 @@
 
 
 #include "SessionConsole.hpp"
+#include "rmarkdown/SessionRmdNotebook.hpp"
 
 #include <boost/algorithm/string/predicate.hpp>
 
@@ -30,8 +31,9 @@
 
 #include <session/SessionModuleContext.hpp>
 
-using namespace core;
+using namespace rstudio::core;
 
+namespace rstudio {
 namespace session {
 namespace modules { 
 namespace console {
@@ -107,6 +109,7 @@ void detectWorkingDirectoryChanged()
 
       // update state
       s_lastWorkingDirectory = currentWorkingDirectory;
+      module_context::activeSession().setWorkingDir(path);
    }
 }
 
@@ -120,6 +123,13 @@ void onClientInit()
 void onDetectChanges(module_context::ChangeSource source)
 {
    // check for working directory changed
+   detectWorkingDirectoryChanged();
+}
+
+void onChunkExecCompleted()
+{
+   // notebook chunks restore the working directory when they're done executing,
+   // so check when they're finished
    detectWorkingDirectoryChanged();
 }
 
@@ -142,7 +152,8 @@ SEXP rs_getPendingInput()
    
 Error initialize()
 {    
-   if (!session::options().verifyInstallation())
+   if (!(session::options().verifyInstallation() ||
+         session::options().runTests()))
    {
       // capture standard streams
       Error error = initializeOutputCapture();
@@ -164,6 +175,9 @@ Error initialize()
    events().onClientInit.connect(bind(onClientInit));
    events().onDetectChanges.connect(bind(onDetectChanges, _1));
 
+   rmarkdown::notebook::events().onChunkExecCompleted.connect(
+         bind(onChunkExecCompleted));
+
    // more initialization 
    using boost::bind;
    ExecBlock initBlock ;
@@ -178,4 +192,5 @@ Error initialize()
 } // namespace console
 } // namespace modules
 } // namesapce session
+} // namespace rstudio
 

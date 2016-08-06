@@ -21,6 +21,7 @@
 #include <boost/utility.hpp>
 #include <boost/shared_ptr.hpp>
 #include <boost/function.hpp>
+#include <boost/foreach.hpp>
 #include <boost/algorithm/string.hpp>
 
 #include <boost/asio/io_service.hpp>
@@ -45,6 +46,7 @@
 #include <core/http/SocketAcceptorService.hpp>
 
 
+namespace rstudio {
 namespace core {
 namespace http {
 
@@ -119,6 +121,18 @@ public:
    {
       BOOST_ASSERT(!running_);
       scheduledCommands_.push_back(pCmd);
+   }
+
+   virtual void setRequestFilter(RequestFilter requestFilter)
+   {
+      BOOST_ASSERT(!running_);
+      requestFilter_ = requestFilter;
+   }
+
+   virtual void setResponseFilter(ResponseFilter responseFilter)
+   {
+      BOOST_ASSERT(!running_);
+      responseFilter_ = responseFilter;
    }
 
    virtual Error runSingleThreaded()
@@ -204,6 +218,10 @@ public:
          threads_[i]->join();
    }
    
+   virtual bool isRunning()
+   {
+      return running_;
+   }
    
 private:
 
@@ -231,9 +249,13 @@ private:
          boost::bind(&AsyncServerImpl<ProtocolType>::handleConnection,
                      this, _1, _2),
 
+         // request filter
+         boost::bind(&AsyncServerImpl<ProtocolType>::connectionRequestFilter,
+                     this, _1, _2, _3),
+
          // response filter
          boost::bind(&AsyncServerImpl<ProtocolType>::connectionResponseFilter,
-                     this, _1)
+                     this, _1, _2)
       ));
       
       // wait for next connection
@@ -294,9 +316,9 @@ private:
    {
       try
       {
-         // call filter
+         // call subclass
          onRequest(&(pConnection->socket()), pRequest);
-         
+
          // convert to cannonical HttpConnection
          boost::shared_ptr<AsyncConnection> pAsyncConnection =
              boost::static_pointer_cast<AsyncConnection>(pConnection);
@@ -334,11 +356,26 @@ private:
       CATCH_UNEXPECTED_EXCEPTION
    }
 
-   void connectionResponseFilter(http::Response* pResponse)
+   void connectionRequestFilter(
+            boost::asio::io_service& ioService,
+            http::Request* pRequest,
+            http::RequestFilterContinuation continuation)
+   {
+      if (requestFilter_)
+         requestFilter_(ioService, pRequest, continuation);
+      else
+         continuation(boost::shared_ptr<http::Response>());
+   }
+
+   void connectionResponseFilter(const std::string& originalUri,
+                                 http::Response* pResponse)
    {
       // set server header (evade ref-counting to defend against
       // non-threadsafe std::string implementations)
       pResponse->setHeader("Server", std::string(serverName_.c_str()));
+
+      if (responseFilter_)
+         responseFilter_(originalUri, pResponse);
    }
 
    void waitForScheduledCommandTimer()
@@ -459,11 +496,14 @@ private:
    boost::posix_time::time_duration scheduledCommandInterval_;
    boost::asio::deadline_timer scheduledCommandTimer_;
    std::vector<boost::shared_ptr<ScheduledCommand> > scheduledCommands_;
+   RequestFilter requestFilter_;
+   ResponseFilter responseFilter_;
    bool running_;
 };
 
 } // namespace http
 } // namespace core
+} // namespace rstudio
 
 #endif // CORE_HTTP_ASYNC_SERVER_IMPL_HPP
 

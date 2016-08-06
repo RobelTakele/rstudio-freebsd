@@ -31,12 +31,15 @@ public class TextEditingTargetScopeHelper
 
    public Scope getCurrentSweaveChunk()
    {
-      return docDisplay_.getCurrentChunk();
+      return getCurrentSweaveChunk(null);
    }
 
    public Scope getCurrentSweaveChunk(Position position)
    {
-      return docDisplay_.getCurrentChunk(position);
+      if (position != null)
+         return docDisplay_.getCurrentChunk(position);
+      else
+         return docDisplay_.getCurrentChunk();
    }
 
    private class SweaveIncludeContext
@@ -118,18 +121,33 @@ public class TextEditingTargetScopeHelper
 
    public Scope[] getPreviousSweaveChunks()
    {
+      return getSweaveChunks(null, PREVIOUS_CHUNKS);
+   }
+
+   public Scope[] getSweaveChunks(Position startPosition, 
+         final int which)
+   {
+      // provide default position based on selection if necessary
+      final Position position = startPosition != null ? 
+                                   startPosition :
+                                   docDisplay_.getSelectionStart();
+                                          
       ScopeList scopeList = new ScopeList(docDisplay_);
       scopeList.selectAll(ScopeList.CHUNK);
-      final Position selectionStart = docDisplay_.getSelectionStart();
       scopeList.selectAll(new ScopePredicate() {
 
          @Override
          public boolean test(Scope scope)
          {
-            return scope.isChunk() && 
-                   (scope.getEnd().compareTo(selectionStart) < 0);
+            if (!scope.isChunk())
+               return false;
+            
+            int dir = scope.getEnd().compareTo(position);
+            if (which == PREVIOUS_CHUNKS)
+               return dir < 0;
+            else
+               return dir > 0;
          }
-         
       });
       
       return scopeList.getScopes();   
@@ -177,6 +195,9 @@ public class TextEditingTargetScopeHelper
          }
       });
    }
+   
+   public final static int PREVIOUS_CHUNKS  = 0;
+   public final static int FOLLOWING_CHUNKS = 1;
 
    private DocDisplay docDisplay_;
 }

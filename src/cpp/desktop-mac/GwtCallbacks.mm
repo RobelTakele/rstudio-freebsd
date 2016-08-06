@@ -1,4 +1,9 @@
 
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+#endif
+
 #include <iostream>
 
 #include <boost/algorithm/string/predicate.hpp>
@@ -6,6 +11,8 @@
 #include <core/FilePath.hpp>
 #include <core/system/System.hpp>
 #include <core/system/Environment.hpp>
+
+#include <core/r_util/RUserData.hpp>
 
 #import "GwtCallbacks.h"
 #import "Options.hpp"
@@ -20,8 +27,9 @@
 
 #define kMinimalSuffix @"_minimal"
 
-using namespace core;
-using namespace desktop;
+using namespace rstudio;
+using namespace rstudio::core;
+using namespace rstudio::desktop;
 
 namespace {
    
@@ -41,6 +49,13 @@ NSString* createAliasedPath(NSString* path)
    return [NSString stringWithUTF8String: aliased.c_str()];
 }
 
+NSString* getNewWindowGeometry()
+{
+   NSRect frame = [[NSApp mainWindow] frame];
+   frame.origin = [[NSApp mainWindow] cascadeTopLeftFromPoint: frame.origin];
+   return [NSString stringWithFormat: @"%d,%d,%d,%d", (int)frame.origin.x,
+           (int)frame.origin.y, (int)frame.size.height, (int)frame.size.width];
+}
 
 NSString* resolveAliasedPath(NSString* path)
 {
@@ -101,7 +116,7 @@ private:
 {
    NSString* path = @"";
    [panel beginSheetModalForWindow: [uiDelegate_ uiWindow]
-                completionHandler: nil];
+                 completionHandler: ^(NSInteger result) {}];
    long int result = [panel runModal];
    @try
    {
@@ -120,6 +135,25 @@ private:
    }
    return createAliasedPath(path);
 }
+
+- (NSString*) runFileDialog: (NSSavePanel*) panel
+{
+    NSString* path = @"";
+    long int result = [panel runModal];
+    @try
+    {
+        if (result == NSOKButton)
+        {
+            path = [[panel URL] path];
+        }
+    }
+    @catch (NSException* e)
+    {
+        throw e;
+    }
+    return createAliasedPath(path);
+}
+
 
 - (NSString*) getOpenFileName: (NSString*) caption
               dir: (NSString*) dir
@@ -151,7 +185,7 @@ private:
       
       [open setAllowedFileTypes: [NSArray arrayWithObject: fromExt]];
    }
-   return [self runSheetFileDialog: open];
+   return [self runFileDialog: open];
 }
 
 - (NSString*) getSaveFileName: (NSString*) caption
@@ -167,11 +201,19 @@ private:
                               [defaultExtension length] > 0;
    if (hasDefaultExtension)
    {
-      // The method is invoked with an extension like ".R", but NSSavePanel
-      // expects extensions to look like "R" (i.e. no leading period).
-      NSArray *extensions = [NSArray arrayWithObject:
-                                [defaultExtension substringFromIndex: 1]];
-  
+      NSArray* extensions;
+      if ([defaultExtension isEqualToString: @".cpp"])
+      {
+         extensions = @[@"cpp", @"c", @"hpp", @"h"];
+      }
+      else
+      {
+         // The method is invoked with an extension like ".R", but NSSavePanel
+         // expects extensions to look like "R" (i.e. no leading period).
+         extensions = [NSArray arrayWithObject:
+                       [defaultExtension substringFromIndex: 1]];
+      }
+      
       [save setAllowedFileTypes: extensions];
       [save setAllowsOtherFileTypes: !forceDefaultExtension];
    }
@@ -202,7 +244,7 @@ private:
 
    [save setTitle: caption];
    [save setDirectoryURL: path];
-   return [self runSheetFileDialog: save];
+   return [self runFileDialog: save];
 }
 
 - (NSString*) getExistingDirectory: (NSString*) caption dir: (NSString*) dir
@@ -214,16 +256,15 @@ private:
                            [dir stringByStandardizingPath]]];
    [open setCanChooseFiles: false];
    [open setCanChooseDirectories: true];
-   return [self runSheetFileDialog: open];
+   [open setCanCreateDirectories: true];
+   return [self runFileDialog: open];
 }
 
-- (void) undo
+- (void) undo: (bool) forAce
 {
-   if ([NSApp mainWindow] == [[MainFrameController instance] window])
+   if (forAce)
    {
-      // It appears that using the webView's undoManager doesn't work (for what we want it to do).
-      // It doesn't do anything in the main window when we use the menu to invoke.
-      // However the native handling of Cmd+Z seems to do the right thing.
+      // in the ACE editor, synthesize a literal Cmd+Z for Ace to handle
       CGEventRef event1, event2, event3, event4;
       event1 = CGEventCreateKeyboardEvent (NULL, (CGKeyCode)55, true);
       event2 = CGEventCreateKeyboardEvent (NULL, (CGKeyCode)6, true);
@@ -238,20 +279,17 @@ private:
    }
    else
    {
-      // undoManager works just fine on secondary windows, and sending Cmd+Z sends us into an
-      // endless loop of Cmd+Z-ing.
+      // elsewhere, let the webview handle it natively
       WebViewController* webViewController = (WebViewController*)[[NSApp mainWindow] delegate];
       [[[webViewController webView] undoManager] undo];
    }
 }
 
-- (void) redo
+- (void) redo: (bool) forAce
 {
-   if ([NSApp mainWindow] == [[MainFrameController instance] window])
+   if (forAce)
    {
-      // It appears that using the webView's undoManager doesn't work (for what we want it to do).
-      // It doesn't do anything in the main window when we use the menu to invoke.
-      // However the native handling of Cmd+Shift+Z seems to do the right thing.
+      // in the ACE editor, synthesize a literal Cmd+Shift+Z for Ace to handle
       CGEventRef event1, event2, event3, event4, event5, event6;
       event1 = CGEventCreateKeyboardEvent (NULL, (CGKeyCode)55, true);
       event2 = CGEventCreateKeyboardEvent (NULL, (CGKeyCode)56, true);
@@ -270,26 +308,54 @@ private:
    }
    else
    {
-      // undoManager works just fine on secondary windows, and sending Cmd+Z sends us into an
-      // endless loop of Cmd+Shift+Z-ing.
+      // elsewhere, let the webview handle it natively
       WebViewController* webViewController = (WebViewController*)[[NSApp mainWindow] delegate];
       [[[webViewController webView] undoManager] redo];
    }
 }
 
+- (void) performClipboardAction: (SEL) selector
+{
+
+#if defined(__MAC_OS_X_VERSION_MAX_ALLOWED) && defined(__MAC_10_10)
+#   if __MAC_OS_X_VERSION_MAX_ALLOWED >= __MAC_10_10
+   typedef WKWebView RSWebView;
+#   else
+   typedef WebView RSWebView;
+#   endif
+#else
+   typedef WebView RSWebView;
+#endif
+   
+   RSWebView* view = [[[NSApp mainWindow] windowController] webView];
+   if (view == nil) {
+      NSString* errorMsg = [NSString stringWithFormat: @"nil webView on clipboard action %@", NSStringFromSelector(selector)];
+      LOG_ERROR_MESSAGE([errorMsg UTF8String]);
+      return;
+   }
+
+   if ([view respondsToSelector: selector]) {
+      [view performSelector: selector withObject: view];
+   } else {
+      NSString* errorMsg = [NSString stringWithFormat: @"@webView does not respond to selector %@", NSStringFromSelector(selector)];
+      LOG_ERROR_MESSAGE([errorMsg UTF8String]);
+      return;
+   }
+}
+
 - (void) clipboardCut
 {
-   [[[[NSApp mainWindow] windowController] webView] cut: self];
+   [self performClipboardAction: @selector(cut:)];
 }
 
 - (void) clipboardCopy
 {
-   [[[[NSApp mainWindow] windowController] webView] copy: self];
+   [self performClipboardAction: @selector(copy:)];
 }
 
 - (void) clipboardPaste
 {
-   [[[[NSApp mainWindow] windowController] webView] paste: self];
+   [self performClipboardAction: @selector(paste:)];
 }
 
 - (NSString*) getUriForPath: (NSString*) path
@@ -343,32 +409,18 @@ private:
    // create the structure describing the doc to open
    path = resolveAliasedPath(path);
    
-   // figure out what application is associated with this path
-   NSURL* appURL = [[NSWorkspace sharedWorkspace] URLForApplicationToOpenURL: [NSURL fileURLWithPath: path]];
-   if (appURL != nil)
+   // figure out if word is installed
+   if ([[NSWorkspace sharedWorkspace] fullPathForApplication:@"Microsoft Word"]!= nil)
    {
-      NSString* app = [appURL absoluteString];
-      NSArray* splat = [app componentsSeparatedByString: @"/"];
-      
-      // URLs should be stored in the format, e.g.
-      // file://<path>/<app>/
-      // and so we want the second last component
-      NSString* appName = [splat objectAtIndex: [splat count] - 2];
-      
-      // infer whether the application is Word
-      BOOL defaultAppIsWord = [appName rangeOfString: @"Word.app"].location != NSNotFound;
-      
-      if (defaultAppIsWord)
-      {
-         // looks like Word is installed. try to reopen this Word document if it's
-         // already open, while preserving its scroll position; if it isn't already
-         // open, open it.
-         NSString *openDocScript = [NSString stringWithFormat:
+       // looks like Word is installed. try to reopen this Word document if it's
+       // already open, while preserving its scroll position; if it isn't already
+       // open, open it.
+       NSString *openDocScript = [NSString stringWithFormat:
             @"tell application \"Microsoft Word\"\n"
             "  activate\n"
             "  set reopened to false\n"
             "  repeat with i from 1 to (count of documents)\n"
-            "     set docPath to path of document i\n"
+            "     set docPath to full name of document i\n"
             "     if POSIX path of docPath is equal to \"%@\" then\n"
             "        set w to active window of document i\n"
             "        set h to horizontal percent scrolled of w\n"
@@ -385,14 +437,13 @@ private:
             "  if not reopened then open file name POSIX file \"%@\" with read only\n"
             "end tell\n" , path, path];
          
-         NSAppleScript *openDoc =
-         [[[NSAppleScript alloc] initWithSource: openDocScript] autorelease];
+       NSAppleScript *openDoc =
+           [[[NSAppleScript alloc] initWithSource: openDocScript] autorelease];
          
-         if ([openDoc executeAndReturnError: nil] != nil)
-         {
-            opened = true;
-         }
-      }
+       if ([openDoc executeAndReturnError: nil] != nil)
+       {
+           opened = true;
+       }
    }
    
    if (!opened)
@@ -421,19 +472,20 @@ private:
    [self showFile: path];
 }
 
-- (Boolean) isRetina
+
+- (double) devicePixelRatio
 {
    NSWindow* mainWindow = [[MainFrameController instance] window];
    if ([mainWindow respondsToSelector:@selector(backingScaleFactor)])
    {
-      double scaleFactor = [mainWindow backingScaleFactor];
-      return scaleFactor == 2.0;
+      return [mainWindow backingScaleFactor];
    }
    else
    {
-      return false;
+      return 1.0;
    }
 }
+
 
 - (void) openMinimalWindow: (NSString*) name url: (NSString*) url
                      width: (int) width height: (int) height
@@ -451,7 +503,8 @@ private:
       controller = [[WebViewController alloc] initWithURLRequest:
                   [NSURLRequest requestWithURL: [NSURL URLWithString: url]]
                                           name: windowName
-                                    clientName: name];
+                                    clientName: name
+                         allowExternalNavigate: false];
       
       if ([windowName isEqualToString: @"_rstudio_viewer_zoom_minimal"])
          [[controller window] setTitle: @"Viewer Zoom"];
@@ -484,13 +537,30 @@ private:
 }
 
 - (void) prepareForSatelliteWindow: (NSString*) name
-                             width: (int) width height: (int) height
+                                 x: (int) x
+                                 y: (int) y
+                             width: (int) width
+                            height: (int) height
 {
    [WebViewController prepareForSatelliteWindow: name
+                                              x: x
+                                              y: y
                                           width: width
-                                          height: height];
+                                         height: height];
 }
 
+- (void) prepareForNamedWindow: (NSString*) name
+         allowExternalNavigate: (bool) allowExternalNavigate
+{
+   [WebViewController prepareForNamedWindow: name
+                      allowExternalNavigate: allowExternalNavigate];
+}
+
+- (void) closeNamedWindow: (NSString*) name
+{
+   [WebViewController closeNamedWindow: name];
+   [self bringMainFrameToFront];
+}
 
 - (void) copyImageToClipboard: (int) left top: (int) top
                         width: (int) width height: (int) height
@@ -534,7 +604,7 @@ private:
    NSImage* image = [[NSImage alloc] initWithCGImage: imageRef size: NSZeroSize];
    
    // downsample if this is a retina display
-   if ([self isRetina])
+   if ([self devicePixelRatio] != 1.0)
    {
       // allocate the imageRep
       NSSize size = regionRect.size;
@@ -542,7 +612,7 @@ private:
                                     initWithBitmapDataPlanes:NULL
                                     pixelsWide: size.width
                                     pixelsHigh: size.height
-                                    bitsPerSample: 8
+                                    bitsPerSample: (4 * [self devicePixelRatio])
                                     samplesPerPixel: 4
                                     hasAlpha: YES
                                     isPlanar: NO
@@ -568,7 +638,7 @@ private:
    }
 
    // return the image
-   return image;
+   return [image autorelease];
 }
 
 
@@ -585,9 +655,6 @@ private:
    [pboard clearContents];
    NSArray *copiedObjects = [NSArray arrayWithObject:image];
    [pboard writeObjects: copiedObjects];
-   
-   // release the image
-   [image release];
 }
 
 
@@ -606,7 +673,7 @@ private:
    NSImage* image = [self nsImageForPageRegion: regionRect];
    
    // determine format and properties for writing file
-   NSBitmapImageFileType imageFileType = nil;
+   NSBitmapImageFileType imageFileType;
    NSDictionary* properties = nil;
    if ([format isEqualToString: @"png"])
    {
@@ -624,9 +691,13 @@ private:
       [properties setValue: [NSNumber numberWithInteger: NSTIFFCompressionNone]
                     forKey: NSImageCompressionMethod];
    }
+   else // keep compiler happy
+   {
+      imageFileType = NSPNGFileType;
+   }
    
    // write to file
-   NSBitmapImageRep *imageRep = [[image representations] objectAtIndex: 0];
+   NSBitmapImageRep *imageRep = (NSBitmapImageRep*) [[image representations] objectAtIndex: 0];
    NSData *data = [imageRep representationUsingType: imageFileType properties: properties];
    if (![data writeToFile: targetPath atomically: NO])
    {
@@ -634,9 +705,6 @@ private:
       error.addProperty("target-file", [targetPath UTF8String]);
       LOG_ERROR(error);
    }
-   
-   // release the image
-   [image release];
 }
 
 
@@ -688,6 +756,8 @@ private:
       
    [alert setMessageText:caption];
    [alert setInformativeText:message];
+   [alert setAlertStyle: style];
+   
    for (NSString* buttonText in dialogButtons)
    {
       [alert addButtonWithTitle: buttonText];
@@ -723,6 +793,14 @@ private:
    [[[MainFrameController instance] window] makeKeyAndOrderFront: self];
 }
 
+- (void) bringMainFrameBehindActive
+{
+   NSWindow* keyWindow = [NSApp keyWindow];
+   NSWindow* mainWindow =  [[MainFrameController instance] window];
+   [mainWindow orderWindow: NSWindowBelow
+                relativeTo: [keyWindow windowNumber]];
+}
+
 - (void) cleanClipboard: (Boolean) stripHtml
 {
    // Remove all but plain-text and (optionally) HTML data from the pasteboard.
@@ -751,16 +829,40 @@ private:
    sessionLauncher().setPendingQuit((PendingQuit)pendingQuit);
 }
 
+- (void) openInNewWindow: (NSArray*) args
+{
+   NSString* exePath = [NSString stringWithUTF8String:
+               desktop::options().executablePath().absolutePath().c_str()];
+   [NSTask launchedTaskWithLaunchPath: exePath arguments: args];
+}
+
 - (void) openProjectInNewWindow: (NSString*) projectFilePath
 {
    projectFilePath = resolveAliasedPath(projectFilePath);
-   
-   NSString* exePath = [NSString stringWithUTF8String:
-               desktop::options().executablePath().absolutePath().c_str()];
-   NSArray* args = [NSArray arrayWithObject: projectFilePath];
-   
-   [NSTask launchedTaskWithLaunchPath: exePath arguments: args];
+   NSArray* args = [NSArray arrayWithObjects: projectFilePath,
+                                              kInitialGeometryArg,
+                                              getNewWindowGeometry(), nil];
+   [self openInNewWindow: args];
 }
+
+- (void) openProjectInOverlaidNewWindow: (NSString*) projectFilePath
+{
+   if (![projectFilePath isEqualToString: @"none"])
+      projectFilePath = resolveAliasedPath(projectFilePath);
+   NSArray* args = [NSArray arrayWithObjects: projectFilePath, nil];
+   [self openInNewWindow: args];
+}
+
+- (void) openSessionInNewWindow: (NSString*) workingDirectoryPath
+{
+   workingDirectoryPath = resolveAliasedPath(workingDirectoryPath);   
+   core::system::setenv(kRStudioInitialWorkingDir, [workingDirectoryPath UTF8String]);
+   NSArray* args = [NSArray arrayWithObjects: kInitialGeometryArg,
+                   getNewWindowGeometry(), nil];
+   [self openInNewWindow: args];
+}
+
+
 
 - (void) openTerminal: (NSString*) terminalPath
          workingDirectory: (NSString*) workingDirectory
@@ -808,24 +910,35 @@ private:
 
 - (void) macZoomActualSize
 {
-   // reset the zoom level
-   desktop::options().setZoomLevel(0);
-   [[MainFrameController instance] syncZoomLevel];
+   [self macZoomDelta: 0];
 }
-
 
 - (void) macZoomIn
 {
-   // increment the current zoom level
-   desktop::options().setZoomLevel(desktop::options().zoomLevel() + 1);
-   [[MainFrameController instance] syncZoomLevel];
+   [self macZoomDelta: 1];
 }
 
 - (void) macZoomOut
 {
-   // decrement the current zoom level
-   desktop::options().setZoomLevel(desktop::options().zoomLevel() - 1);
-   [[MainFrameController instance] syncZoomLevel];
+   [self macZoomDelta: -1];
+}
+
+- (void) macZoomDelta: (int) delta
+{
+   WebViewController* controller = [WebViewController activeDesktopController];
+   if ([controller isMemberOfClass: [MainFrameController class]])
+   {
+      // if this is the main frame, save its zoom level and sync
+      int newZoomLevel = delta == 0 ?
+                                  0 : desktop::options().zoomLevel() + delta;
+      desktop::options().setZoomLevel(newZoomLevel);
+      [controller syncZoomLevel];
+   }
+   else
+   {
+      // not the main frame, zoom it independently
+      [controller adjustZoomLevel: delta];
+   }
 }
 
 
@@ -867,6 +980,11 @@ private:
    [[MainFrameController instance] setViewerURL: url];
 }
 
+- (void) setShinyDialogUrl: (NSString*) url
+{
+   [[MainFrameController instance] setShinyDialogURL: url];
+}
+
 - (void) reloadViewerZoomWindow: (NSString*) url
 {
    WebViewController* controller =
@@ -895,6 +1013,11 @@ private:
    
    return boost::algorithm::starts_with(version, "10.9") ||
           boost::algorithm::starts_with(version, "10.10");
+}
+
+- (Boolean) isCentOS
+{
+   return NO;
 }
 
 // On Mavericks we need to tell the OS that we are busy so that
@@ -936,6 +1059,12 @@ enum RS_NSActivityOptions : uint64_t
 - (void) setWindowTitle: (NSString*) title
 {
    [[MainFrameController instance] setWindowTitle: title];
+}
+
+- (void) setPendingProject: (NSString*) projectPath
+{
+   [self setPendingQuit: 1];
+   [[MainFrameController instance] setPendingProject: projectPath];
 }
  
 - (NSString*) filterText: (NSString*) text
@@ -1045,7 +1174,7 @@ enum RS_NSActivityOptions : uint64_t
       return @"activateMinimalWindow";
    else if (sel == @selector(activateSatelliteWindow:))
       return @"activateSatelliteWindow";
-   else if (sel == @selector(prepareForSatelliteWindow:width:height:))
+   else if (sel == @selector(prepareForSatelliteWindow:x:y:width:height:))
       return @"prepareForSatelliteWindow";
    else if (sel == @selector(copyImageToClipboard:top:width:height:))
       return @"copyImageToClipboard";
@@ -1063,6 +1192,8 @@ enum RS_NSActivityOptions : uint64_t
       return @"setPendingQuit";
    else if (sel == @selector(openProjectInNewWindow:))
       return @"openProjectInNewWindow";
+   else if (sel == @selector(openSessionInNewWindow:))
+      return @"openSessionInNewWindow";
    else if (sel == @selector(openTerminal:workingDirectory:extraPathEntries:))
       return @"openTerminal";
    else if (sel == @selector(setFixedWidthFont:))
@@ -1077,6 +1208,8 @@ enum RS_NSActivityOptions : uint64_t
       return @"launchSession";
    else if (sel == @selector(setViewerUrl:))
       return @"setViewerUrl";
+   else if (sel == @selector(setShinyDialogUrl:))
+      return @"setShinyDialogUrl";
    else if (sel == @selector(filterText:))
       return @"filterText";
    else if (sel == @selector(setBusy:))
@@ -1085,7 +1218,17 @@ enum RS_NSActivityOptions : uint64_t
       return @"setWindowTitle";
    else if (sel == @selector(reloadViewerZoomWindow:))
       return @"reloadViewerZoomWindow";
-  
+   else if (sel == @selector(prepareForNamedWindow:allowExternalNavigate:))
+      return @"prepareForNamedWindow";
+   else if (sel == @selector(closeNamedWindow:))
+      return @"closeNamedWindow";
+   else if (sel == @selector(undo:))
+      return @"undo";
+   else if (sel == @selector(redo:))
+      return @"redo";
+   else if (sel == @selector(setPendingProject:))
+      return @"setPendingProject";
+      
    return nil;
 }
 
@@ -1098,4 +1241,8 @@ enum RS_NSActivityOptions : uint64_t
 }
 
 @end
+
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
 

@@ -21,17 +21,18 @@
 
 #include <core/Error.hpp>
 
+namespace rstudio {
 namespace core {
 namespace system {
 namespace crypto {
       
 void initialize();   
 
-core::Error HMAC_SHA1(const std::string& data, 
+core::Error HMAC_SHA2(const std::string& data,
                       const std::string& key,
                       std::vector<unsigned char>* pHMAC);
 
-core::Error HMAC_SHA1(const std::string& data, 
+core::Error HMAC_SHA2(const std::string& data,
                       const std::vector<unsigned char>& key,
                       std::vector<unsigned char>* pHMAC);   
    
@@ -55,6 +56,7 @@ core::Error rsaPrivateDecrypt(const std::string& pCipherText, std::string* pPlai
 } // namespace crypto
 } // namespace system
 } // namespace core
+} // namespace rstudio
 
 #endif // CORE_SYSTEM_CRYPTO_HPP
 

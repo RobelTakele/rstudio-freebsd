@@ -21,14 +21,12 @@ import com.google.gwt.event.logical.shared.HasResizeHandlers;
 import com.google.gwt.event.logical.shared.SelectionEvent;
 import com.google.gwt.event.logical.shared.SelectionHandler;
 import com.google.gwt.json.client.JSONObject;
-import com.google.gwt.user.client.Command;
 import com.google.gwt.user.client.ui.HasWidgets;
 import com.google.gwt.user.client.ui.Panel;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 
 import org.rstudio.core.client.BrowseCap;
-import org.rstudio.core.client.CommandWithArg;
 import org.rstudio.core.client.Point;
 import org.rstudio.core.client.Size;
 import org.rstudio.core.client.dom.WindowEx;
@@ -42,9 +40,6 @@ import org.rstudio.studio.client.application.events.EventBus;
 import org.rstudio.studio.client.application.Desktop;
 import org.rstudio.studio.client.common.GlobalDisplay;
 import org.rstudio.studio.client.common.SimpleRequestCallback;
-import org.rstudio.studio.client.common.dependencies.DependencyManager;
-import org.rstudio.studio.client.common.rpubs.RPubsHtmlGenerator;
-import org.rstudio.studio.client.common.rpubs.ui.RPubsUploadDialog;
 import org.rstudio.studio.client.common.zoom.ZoomUtils;
 import org.rstudio.studio.client.server.ServerError;
 import org.rstudio.studio.client.server.ServerRequestCallback;
@@ -106,7 +101,6 @@ public class Plots extends BasePresenter implements PlotsChangedHandler,
                 Provider<UIPrefs> uiPrefs,
                 Commands commands,
                 EventBus events,
-                DependencyManager dependencyManager,
                 final PlotsServerOperations server,
                 Session session)
    {
@@ -117,7 +111,6 @@ public class Plots extends BasePresenter implements PlotsChangedHandler,
       uiPrefs_ = uiPrefs;
       server_ = server;
       session_ = session;
-      dependencyManager_ = dependencyManager;
       exportPlot_ = GWT.create(ExportPlot.class);
       zoomWindow_ = null;
       zoomWindowDefaultSize_ = null;
@@ -129,10 +122,22 @@ public class Plots extends BasePresenter implements PlotsChangedHandler,
          {
             org.rstudio.studio.client.workbench.views.plots.model.Point p = null;
             if (e.getSelectedItem() != null)
+            {
                p = org.rstudio.studio.client.workbench.views.plots.model.Point.create(
                      e.getSelectedItem().getX(),
                      e.getSelectedItem().getY()
                );
+               
+               // re-scale points for OS X Quartz
+               if (BrowseCap.isMacintoshDesktop())
+               {
+                  p = org.rstudio.studio.client.workbench.views.plots.model.Point.create(
+                        p.getX() * (72.0 / 96.0),
+                        p.getY() * (72.0 / 96.0));
+               }
+               
+            }
+            
             server.locatorCompleted(p, new SimpleRequestCallback<Void>());
          }
       });
@@ -157,10 +162,17 @@ public class Plots extends BasePresenter implements PlotsChangedHandler,
             @Override
             public void onClick(ClickEvent event)
             {
-              server_.manipulatorPlotClicked(new Double(event.getX()).intValue(), 
-                                             new Double(event.getY()).intValue(), 
-                                             new ManipulatorRequestCallback());
+               int x = new Double(event.getX()).intValue();
+               int y = new Double(event.getY()).intValue();
                
+               // Re-scale for OSX Quartz
+               if (BrowseCap.isMacintoshDesktop())
+               {
+                  x *= (72.0 / 96.0);
+                  y *= (72.0 / 96.0);
+               }
+               
+               server_.manipulatorPlotClicked(x, y, new ManipulatorRequestCallback());
             }   
          }
       );
@@ -346,11 +358,7 @@ public class Plots extends BasePresenter implements PlotsChangedHandler,
 
                Size size = getPlotSize();
                final SavePlotAsPdfOptions currentOptions = 
-                   SavePlotAsPdfOptions.adaptToSize(
-                         uiPrefs_.get().savePlotAsPdfOptions().getValue(),
-                         pixelsToInches(size.width),
-                         pixelsToInches(size.height));
-               
+                         uiPrefs_.get().savePlotAsPdfOptions().getValue();
                
                exportPlot_.savePlotAsPdf(
                  globalDisplay_,
@@ -359,6 +367,8 @@ public class Plots extends BasePresenter implements PlotsChangedHandler,
                  defaultDir,
                  stem,
                  currentOptions, 
+                 pixelsToInches(size.width),
+                 pixelsToInches(size.height),
                  new OperationWithInput<SavePlotAsPdfOptions>() {
                     @Override
                     public void execute(SavePlotAsPdfOptions options)
@@ -395,51 +405,6 @@ public class Plots extends BasePresenter implements PlotsChangedHandler,
                                     uiPrefs_.get().exportPlotOptions().getValue(),
                                     getPlotSize()),
                               saveExportOptionsOperation_);    
-   }
-   
-   void onPublishPlotToRPubs()
-   {
-      dependencyManager_.withRMarkdown("Publishing to RPubs", 
-         new Command() {
-          @Override
-          public void execute()
-          {
-             // determine the size (re-use the zoom window logic for this)
-             final Size size = ZoomUtils.getZoomedSize(view_.getPlotFrameSize(), 
-                                                       new Size(400, 350), 
-                                                       new Size(750, 600));
-             
-             // show the dialog
-             RPubsUploadDialog dlg = new RPubsUploadDialog(
-                "Plots",
-                "",
-                new RPubsHtmlGenerator() {
-
-                   @Override
-                   public void generateRPubsHtml(
-                         String title, 
-                         String comment,
-                         final CommandWithArg<String> onCompleted)
-                   {
-                      server_.plotsCreateRPubsHtml(
-                         title, 
-                         comment, 
-                         size.width,
-                         size.height,
-                         new SimpleRequestCallback<String>() {
-
-                            @Override
-                            public void onResponseReceived(String rpubsHtmlFile)
-                            {
-                               onCompleted.execute(rpubsHtmlFile);
-                            }
-                      });
-                   }
-                },
-                false);
-             dlg.showModal();
-          }
-      });
    }
    
    private double pixelsToInches(int pixels)
@@ -506,8 +471,7 @@ public class Plots extends BasePresenter implements PlotsChangedHandler,
    @Override
    public void onDeferredInitCompleted(DeferredInitCompletedEvent event)
    {
-      boolean showErrors = !workbenchContext_.isRestartInProgress();
-      server_.refreshPlot(new PlotRequestCallback(showErrors));
+      server_.refreshPlot(new PlotRequestCallback(false));
    }
    
    void onShowManipulator()
@@ -647,7 +611,6 @@ public class Plots extends BasePresenter implements PlotsChangedHandler,
    private final GlobalDisplay globalDisplay_;
    private final PlotsServerOperations server_;
    private final WorkbenchContext workbenchContext_;
-   private final DependencyManager dependencyManager_;
    private final Session session_;
    private final Provider<UIPrefs> uiPrefs_;
    private final Locator locator_;

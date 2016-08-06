@@ -32,6 +32,7 @@
 #include <core/Error.hpp>
 #include <core/Log.hpp>
 
+namespace rstudio {
 namespace core {
 
 class Error ;
@@ -39,6 +40,9 @@ class Error ;
 class FilePath
 {
 public:
+   
+   // NOTE: function returns 'true' if computation can continue;
+   // false if computation should stop
    typedef boost::function<bool(int, const FilePath&)>  
                                                 RecursiveIterationFunction;
 
@@ -100,6 +104,9 @@ public:
 
    bool hasTextMimeType() const;
    
+   // set last write time
+   void setLastWriteTime(std::time_t time = ::time(NULL)) const;
+   
    // last write time
    std::time_t lastWriteTime() const;
   
@@ -148,6 +155,12 @@ public:
    
    // remove the directory (if it exists) and create a new one in its place
    Error resetDirectory() const;
+
+   // copy this directory to another one, recursively
+   Error copyDirectoryRecursive(const FilePath& targetPath) const;
+
+   // create this file if it doesn't already exist
+   Error ensureFile() const;
    
    // complete a path (if input path is relative, returns path relative
    // to this one; if input path is absolute returns that path)
@@ -231,6 +244,33 @@ private:
    boost::scoped_ptr<Impl> pImpl_;
 };
 
+class RemoveOnExitScope : boost::noncopyable
+{
+public:
+   explicit RemoveOnExitScope(const FilePath& filePath,
+                              const ErrorLocation& errorLocation)
+      : filePath_(filePath), errorLocation_(errorLocation)
+   {
+   }
+   virtual ~RemoveOnExitScope()
+   {
+      try
+      {
+         Error error = filePath_.removeIfExists();
+         if (error)
+            core::log::logError(error, errorLocation_);
+      }
+      catch(...)
+      {
+      }
+   }
+
+private:
+   FilePath filePath_;
+   ErrorLocation errorLocation_;
+};
+
+}
 }
 
 #endif // CORE_FILE_PATH_HPP

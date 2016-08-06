@@ -14,6 +14,7 @@
  */
 
 #include "SessionSource.hpp"
+#include "rmarkdown/NotebookChunkDefs.hpp"
 
 #include <string>
 #include <map>
@@ -52,8 +53,9 @@ extern "C" const char *locale2charset(const char *);
 #include <session/SessionModuleContext.hpp>
 #include <session/projects/SessionProjects.hpp>
 
-using namespace core;
+using namespace rstudio::core;
 
+namespace rstudio {
 namespace session {
 namespace modules { 
 namespace source {
@@ -61,69 +63,6 @@ namespace source {
 using namespace session::source_database;
 
 namespace {
-
-// maintain an in-memory list of R source document indexes (for fast
-// code searching)
-class RSourceIndexes : boost::noncopyable
-{
-private:
-   friend RSourceIndexes& rSourceIndexes();
-   RSourceIndexes() {}
-
-public:
-   virtual ~RSourceIndexes() {}
-
-   // COPYING: boost::noncopyable
-
-   void update(boost::shared_ptr<SourceDocument> pDoc)
-   {
-      // is this indexable? if not then bail
-      if ( pDoc->path().empty() ||
-           (FilePath(pDoc->path()).extensionLowerCase() != ".r") )
-      {
-         return;
-      }
-
-      // index the source
-      boost::shared_ptr<r_util::RSourceIndex> pIndex(
-                 new r_util::RSourceIndex(pDoc->path(), pDoc->contents()));
-
-      // insert it
-      indexes_[pDoc->id()] = pIndex;
-   }
-
-   void remove(const std::string& id)
-   {
-      indexes_.erase(id);
-   }
-
-   void removeAll()
-   {
-      indexes_.clear();
-   }
-
-   std::vector<boost::shared_ptr<r_util::RSourceIndex> > indexes()
-   {
-      std::vector<boost::shared_ptr<r_util::RSourceIndex> > indexes;
-      BOOST_FOREACH(const IndexMap::value_type& index, indexes_)
-      {
-         indexes.push_back(index.second);
-      }
-      return indexes;
-   }
-
-private:
-   typedef std::map<std::string, boost::shared_ptr<r_util::RSourceIndex> >
-                                                                    IndexMap;
-   IndexMap indexes_;
-};
-
-RSourceIndexes& rSourceIndexes()
-{
-   static RSourceIndexes instance;
-   return instance;
-}
-
 
 void writeDocToJson(boost::shared_ptr<SourceDocument> pDoc,
                     core::json::Object* pDocJson)
@@ -134,6 +73,17 @@ void writeDocToJson(boost::shared_ptr<SourceDocument> pDoc,
    // derive the extended type property
    (*pDocJson)["extended_type"] = module_context::events()
                                    .onDetectSourceExtendedType(pDoc);
+
+   // amend with chunk definitions if an R Markdown document
+   json::Object notebook;
+   if (pDoc->isRMarkdownDocument())
+   {
+      Error error = rmarkdown::notebook::getChunkValues(
+            pDoc->path(), pDoc->id(), &notebook);
+      if (error)
+         LOG_ERROR(error);
+   }
+   (*pDocJson)["notebook"] = notebook;
 }
 
 void detectExtendedType(boost::shared_ptr<SourceDocument> pDoc)
@@ -151,6 +101,13 @@ void detectExtendedType(boost::shared_ptr<SourceDocument> pDoc)
    module_context::enqueClientEvent(event);
 }
 
+int numSourceDocuments()
+{
+   std::vector<boost::shared_ptr<SourceDocument> > docs;
+   source_database::list(&docs);
+   return docs.size();
+}
+
 // wrap source_database::put for situations where there are new contents
 // (so we can index the contents)
 Error sourceDatabasePutWithUpdatedContents(
@@ -161,8 +118,7 @@ Error sourceDatabasePutWithUpdatedContents(
    if (error)
       return error ;
 
-   // update index
-   rSourceIndexes().update(pDoc);
+   source_database::events().onDocUpdated(pDoc);
 
    return Success();
 }
@@ -188,6 +144,9 @@ Error newDocument(const json::JsonRpcRequest& request,
       pDoc->setContents(jsonContents.get_str());
 
    pDoc->editProperties(properties);
+
+   // set relative order (client will receive docs in relative order on init)
+   pDoc->setRelativeOrder(numSourceDocuments() + 1);
 
    error = source_database::put(pDoc);
    if (error)
@@ -264,15 +223,25 @@ Error openDocument(const json::JsonRpcRequest& request,
    else
       LOG_ERROR(error);
    
+   // set relative order (client will receive docs in relative order on init)
+   pDoc->setRelativeOrder(numSourceDocuments() + 1);
+
    // write to the source_database
    error = sourceDatabasePutWithUpdatedContents(pDoc);
    if (error)
       return error;
 
-   // return the doc
+   // broadcast doc added event -- it's important to do this after it's in the 
+   // database but before we serialize it so hooks can operate on the doc 
+   // before it's written to the client
+   events().onDocAdded(pDoc->id());
+
+   // create JSON representation of doc
    json::Object jsonDoc;
    writeDocToJson(pDoc, &jsonDoc);
+
    pResponse->setResult(jsonDoc);
+
    return Success();
 } 
 
@@ -281,18 +250,20 @@ Error saveDocumentCore(const std::string& contents,
                        const json::Value& jsonType,
                        const json::Value& jsonEncoding,
                        const json::Value& jsonFoldSpec,
+                       const json::Value& jsonChunkOutput,
                        boost::shared_ptr<SourceDocument> pDoc)
 {
    // check whether we have a path and if we do get/resolve its value
-   std::string path;
+   std::string oldPath, path;
    FilePath fullDocPath;
    bool hasPath = json::isType<std::string>(jsonPath);
    if (hasPath)
    {
+      oldPath = pDoc->path();
       path = jsonPath.get_str();
       fullDocPath = module_context::resolveAliasedPath(path);
    }
-   
+
    // update dirty state: dirty if there was no path AND the new contents
    // are different from the old contents (and was thus a content autosave
    // as distinct from a fold-spec or scroll-position/selection autosave)
@@ -316,6 +287,18 @@ Error saveDocumentCore(const std::string& contents,
    if (hasFoldSpec)
    {
       pDoc->setFolds(jsonFoldSpec.get_str());
+   }
+
+   // note that it's entirely possible for the chunk output to be null if the
+   // document is unrendered (in which case we want to leave the chunk output
+   // as-is)
+   bool hasChunkOutput = json::isType<json::Array>(jsonChunkOutput);
+   if (hasChunkOutput && pDoc->isRMarkdownDocument())
+   {
+      error = rmarkdown::notebook::setChunkDefs(pDoc, 
+            jsonChunkOutput.get_array());
+      if (error)
+         LOG_ERROR(error);
    }
 
    // handle document (varies depending upon whether we have a path)
@@ -350,7 +333,7 @@ Error saveDocumentCore(const std::string& contents,
 
       // write the contents to the file
       error = writeStringToFile(fullDocPath, encoded,
-                                options().sourcePersistLineEnding());
+                                module_context::lineEndings(fullDocPath));
       if (error)
          return error ;
 
@@ -374,6 +357,12 @@ Error saveDocumentCore(const std::string& contents,
 
       // save could change the extended type of the file so check it
       detectExtendedType(pDoc);
+
+      // if we changed the path, notify other modules
+      if (oldPath != pDoc->path())
+      {
+         source_database::events().onDocRenamed(oldPath, pDoc);
+      }
    }
 
    // always update the contents so it holds the original UTF-8 data
@@ -388,13 +377,14 @@ Error saveDocument(const json::JsonRpcRequest& request,
 {
    // params
    std::string id, contents;
-   json::Value jsonPath, jsonType, jsonEncoding, jsonFoldSpec;
+   json::Value jsonPath, jsonType, jsonEncoding, jsonFoldSpec, jsonChunkOutput;
    Error error = json::readParams(request.params, 
                                   &id, 
                                   &jsonPath, 
                                   &jsonType, 
                                   &jsonEncoding,
                                   &jsonFoldSpec,
+                                  &jsonChunkOutput,
                                   &contents);
    if (error)
       return error ;
@@ -406,7 +396,7 @@ Error saveDocument(const json::JsonRpcRequest& request,
       return error ;
    
    error = saveDocumentCore(contents, jsonPath, jsonType, jsonEncoding,
-                            jsonFoldSpec, pDoc);
+                            jsonFoldSpec, jsonChunkOutput, pDoc);
    if (error)
       return error;
    
@@ -423,11 +413,11 @@ Error saveDocument(const json::JsonRpcRequest& request,
 Error saveDocumentDiff(const json::JsonRpcRequest& request,
                        json::JsonRpcResponse* pResponse)
 {
-   using namespace core::string_utils;
+   using namespace rstudio::core::string_utils;
 
    // unique id and jsonPath (can be null for auto-save)
    std::string id;
-   json::Value jsonPath, jsonType, jsonEncoding, jsonFoldSpec;
+   json::Value jsonPath, jsonType, jsonEncoding, jsonFoldSpec, jsonChunkOutput;
    
    // This is a chunk of text that should be inserted into the
    // current document. It replaces the subrange [offset, offset+length).
@@ -446,6 +436,7 @@ Error saveDocumentDiff(const json::JsonRpcRequest& request,
                                   &jsonType,
                                   &jsonEncoding,
                                   &jsonFoldSpec,
+                                  &jsonChunkOutput,
                                   &replacement,
                                   &offset,
                                   &length,
@@ -486,7 +477,7 @@ Error saveDocumentDiff(const json::JsonRpcRequest& request,
       contents.insert(rangeBegin, replacement.begin(), replacement.end());
       
       error = saveDocumentCore(contents, jsonPath, jsonType, jsonEncoding,
-                               jsonFoldSpec, pDoc);
+                               jsonFoldSpec, jsonChunkOutput, pDoc);
       if (error)
          return error;
       
@@ -684,6 +675,24 @@ Error modifyDocumentProperties(const json::JsonRpcRequest& request,
    return source_database::put(pDoc);
 }
 
+Error getDocumentProperties(const json::JsonRpcRequest& request,
+                            json::JsonRpcResponse* pResponse)
+{
+   std::string path; 
+   json::Object properties;
+   Error error = json::readParams(request.params, &path);
+   if (error)
+      return error;
+
+   error = source_database::getDurableProperties(path, &properties);
+   if (error)
+      return error;
+
+   pResponse->setResult(properties);
+
+   return Success();
+}
+
 Error closeDocument(const json::JsonRpcRequest& request,
                     json::JsonRpcResponse* pResponse)
 {
@@ -692,12 +701,31 @@ Error closeDocument(const json::JsonRpcRequest& request,
    Error error = json::readParam(request.params, 0, &id);
    if (error)
       return error ;
-   
+
+   // get the path (it's okay if this fails, unsaved docs don't have a path)
+   std::string path;
+   source_database::getPath(id, &path);
+
+   // retrieve document from source database
+   boost::shared_ptr<source_database::SourceDocument> pDoc(
+               new source_database::SourceDocument());
+   error = source_database::get(id, pDoc);
+   if (error)
+   {
+      LOG_ERROR(error);
+   }
+   else
+   {
+      // do any cleanup necessary prior to removal
+      source_database::events().onDocPendingRemove(pDoc);
+   }
+
+   // actually remove from the source database
    error = source_database::remove(id);
    if (error)
       return error;
 
-   rSourceIndexes().remove(id);
+   source_database::events().onDocRemoved(id, path);
 
    return Success();
 }
@@ -709,7 +737,7 @@ Error closeAllDocuments(const json::JsonRpcRequest& request,
    if (error)
       return error;
 
-   rSourceIndexes().removeAll();
+   source_database::events().onRemoveAll();
 
    return Success();
 }
@@ -872,6 +900,25 @@ Error isReadOnlyFile(const json::JsonRpcRequest& request,
    return Success();
 }
 
+Error getMinimalSourcePath(const json::JsonRpcRequest& request,
+                           json::JsonRpcResponse* pResponse)
+{
+   // params
+   std::string path;
+   Error error = json::readParams(request.params, &path);
+   if (error)
+      return error ;
+   FilePath filePath = module_context::resolveAliasedPath(path);
+
+   // calculate path
+   pResponse->setResult(module_context::pathRelativeTo(
+            module_context::safeCurrentPath(),
+            filePath));
+
+   return Success();
+}
+
+
 Error getScriptRunCommand(const json::JsonRpcRequest& request,
                           json::JsonRpcResponse* pResponse)
 {
@@ -930,7 +977,96 @@ Error getScriptRunCommand(const json::JsonRpcRequest& request,
    return Success();
 }
 
+Error setDocOrder(const json::JsonRpcRequest& request,
+                  json::JsonRpcResponse* pResponse)
+{
+   json::Array ids;
+   std::vector<boost::shared_ptr<SourceDocument> > docs;
+   Error error = json::readParams(request.params, &ids);
+   if (error)
+      return error;
+   source_database::list(&docs);
 
+   BOOST_FOREACH( boost::shared_ptr<SourceDocument>& pDoc, docs )
+   {
+      for (unsigned i = 0; i < ids.size(); i++) 
+      {
+         // docs are ordered starting at 1; the special value 0 indicates a
+         // document with no order
+         if (pDoc->id() == ids[i].get_str() && 
+             pDoc->relativeOrder() != static_cast<int>(i + 1))
+         {
+            pDoc->setRelativeOrder(i + 1);
+            source_database::put(pDoc);
+         }
+      }
+   }
+
+   return Success();
+}
+
+Error getSourceDocument(const json::JsonRpcRequest& request,
+                        json::JsonRpcResponse* pResponse)
+{
+   std::string id;
+   Error error = json::readParams(request.params, &id);
+   if (error)
+      return error;
+
+   // get the document from the source database
+   boost::shared_ptr<SourceDocument> pDoc(new SourceDocument());
+   error = source_database::get(id, pDoc);
+   if (error)
+      return error;
+
+   // write the doc to JSON and return it
+   json::Object jsonDoc;
+   writeDocToJson(pDoc, &jsonDoc);
+   pResponse->setResult(jsonDoc);
+
+   return Success();
+}
+
+void onDocUpdated(boost::shared_ptr<SourceDocument> pDoc)
+{
+   source_database::events().onDocUpdated(pDoc);
+}
+
+Error setSourceDocumentDirty(const json::JsonRpcRequest& request,
+                             json::JsonRpcResponse* pResponse)
+{
+   std::string id;
+   bool dirty;
+   Error error = json::readParams(request.params, &id, &dirty);
+   if (error)
+      return error;
+
+   boost::shared_ptr<SourceDocument> pDoc(new SourceDocument());
+   error = source_database::get(id, pDoc);
+   if (error)
+      return error;
+   
+   pDoc->setDirty(dirty);
+
+   // if marking clean, ignore external edits too
+   if (!dirty)
+   {
+      // don't move the write time backwards (the intent is to sync an edit
+      // which has just occurred)
+      std::time_t writeTime =
+            module_context::resolveAliasedPath(pDoc->path()).lastWriteTime();
+      if (writeTime > pDoc->lastKnownWriteTime())
+         pDoc->setLastKnownWriteTime(writeTime);
+   }
+
+   error = source_database::put(pDoc);
+   if (error)
+      return error;
+
+   onDocUpdated(pDoc);
+
+   return Success();
+}
 
 void enqueFileEditEvent(const std::string& file)
 {
@@ -944,8 +1080,9 @@ void enqueFileEditEvent(const std::string& file)
    // if it doesn't exist then create it
    if (!filePath.exists())
    {
-      Error error = core::writeStringToFile(filePath, "",
-                                            options().sourcePersistLineEnding());
+      Error error = core::writeStringToFile(
+                               filePath, "",
+                               module_context::lineEndings(filePath));
       if (error)
       {
          LOG_ERROR(error);
@@ -971,7 +1108,7 @@ void onSuspend(Settings*)
 
 void onResume(const Settings&)
 {
-   rSourceIndexes().removeAll();
+   source_database::events().onRemoveAll();
 
    // get the docs and sort them by created
    std::vector<boost::shared_ptr<SourceDocument> > docs ;
@@ -983,10 +1120,8 @@ void onResume(const Settings&)
    }
    std::sort(docs.begin(), docs.end(), sortByCreated);
 
-   // update the indexes
-   std::for_each(docs.begin(),
-                 docs.end(),
-                 boost::bind(&RSourceIndexes::update, &rSourceIndexes(), _1));
+   // notify listeners of updates
+   std::for_each(docs.begin(), docs.end(), onDocUpdated);
 }
 
 void onShutdown(bool terminatedNormally)
@@ -1032,15 +1167,14 @@ SEXP rs_fileEdit(SEXP fileSEXP)
 
 Error clientInitDocuments(core::json::Array* pJsonDocs)
 {
-   // remove all items from the source index database
-   rSourceIndexes().removeAll();
+   source_database::events().onRemoveAll();
 
-   // get the docs and sort them by created
+   // get the docs and sort them by relative order
    std::vector<boost::shared_ptr<SourceDocument> > docs ;
    Error error = source_database::list(&docs);
    if (error)
       return error ;
-   std::sort(docs.begin(), docs.end(), sortByCreated);
+   std::sort(docs.begin(), docs.end(), sortByRelativeOrder);
 
    // populate the array
    pJsonDocs->clear();
@@ -1065,23 +1199,17 @@ Error clientInitDocuments(core::json::Array* pJsonDocs)
       writeDocToJson(pDoc, &jsonDoc);
       pJsonDocs->push_back(jsonDoc);
 
-      // update the source index
-      rSourceIndexes().update(pDoc);
+      source_database::events().onDocUpdated(pDoc);
    }
 
    return Success();
-}
-
-std::vector<boost::shared_ptr<core::r_util::RSourceIndex> > rIndexes()
-{
-   return rSourceIndexes().indexes();
 }
 
 Error initialize()
 {   
    // connect to events
    using namespace module_context;
-   events().onShutdown.connect(onShutdown);
+   module_context::events().onShutdown.connect(onShutdown);
 
    // add suspend/resume handler
    addSuspendHandler(SuspendHandler(boost::bind(onSuspend, _2), onResume));
@@ -1095,7 +1223,7 @@ Error initialize()
 
    // install rpc methods
    using boost::bind;
-   using namespace r::function_hook;
+   using namespace rstudio::r::function_hook;
    ExecBlock initBlock ;
    initBlock.addFunctions()
       (bind(registerRpcMethod, "new_document", newDocument))
@@ -1106,6 +1234,7 @@ Error initialize()
       (bind(registerRpcMethod, "ignore_external_edit", ignoreExternalEdit))
       (bind(registerRpcMethod, "set_source_document_on_save", setSourceDocumentOnSave))
       (bind(registerRpcMethod, "modify_document_properties", modifyDocumentProperties))
+      (bind(registerRpcMethod, "get_document_properties", getDocumentProperties))
       (bind(registerRpcMethod, "revert_document", revertDocument))
       (bind(registerRpcMethod, "reopen_with_encoding", reopenWithEncoding))
       (bind(registerRpcMethod, "close_document", closeDocument))
@@ -1113,7 +1242,11 @@ Error initialize()
       (bind(registerRpcMethod, "get_source_template", getSourceTemplate))
       (bind(registerRpcMethod, "create_rd_shell", createRdShell))
       (bind(registerRpcMethod, "is_read_only_file", isReadOnlyFile))
+      (bind(registerRpcMethod, "get_minimal_source_path", getMinimalSourcePath))
       (bind(registerRpcMethod, "get_script_run_command", getScriptRunCommand))
+      (bind(registerRpcMethod, "set_doc_order", setDocOrder))
+      (bind(registerRpcMethod, "get_source_document", getSourceDocument))
+      (bind(registerRpcMethod, "set_source_document_dirty", setSourceDocumentDirty))
       (bind(sourceModuleRFile, "SessionSource.R"));
    Error error = initBlock.execute();
    if (error)
@@ -1130,4 +1263,5 @@ Error initialize()
 } // namespace source
 } // namespace modules
 } // namesapce session
+} // namespace rstudio
 

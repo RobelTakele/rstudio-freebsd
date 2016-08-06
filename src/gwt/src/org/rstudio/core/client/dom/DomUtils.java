@@ -1,7 +1,7 @@
 /*
  * DomUtils.java
  *
- * Copyright (C) 2009-12 by RStudio, Inc.
+ * Copyright (C) 2009-16 by RStudio, Inc.
  *
  * Unless you have received this program directly from RStudio pursuant
  * to the terms of a commercial license agreement with RStudio, then
@@ -20,17 +20,30 @@ import com.google.gwt.core.client.JsArrayMixed;
 import com.google.gwt.core.client.JsArrayString;
 import com.google.gwt.dom.client.*;
 import com.google.gwt.dom.client.Element;
+import com.google.gwt.event.dom.client.HasAllKeyHandlers;
+import com.google.gwt.event.dom.client.KeyCodes;
+import com.google.gwt.event.dom.client.KeyDownEvent;
+import com.google.gwt.event.dom.client.KeyDownHandler;
+import com.google.gwt.event.dom.client.KeyPressEvent;
+import com.google.gwt.event.dom.client.KeyPressHandler;
+import com.google.gwt.event.dom.client.KeyUpEvent;
+import com.google.gwt.event.dom.client.KeyUpHandler;
 import com.google.gwt.user.client.*;
+import com.google.gwt.user.client.ui.Label;
+import com.google.gwt.user.client.ui.RootPanel;
 import com.google.gwt.user.client.ui.UIObject;
 
 import org.rstudio.core.client.BrowseCap;
 import org.rstudio.core.client.Debug;
 import org.rstudio.core.client.Point;
 import org.rstudio.core.client.Rectangle;
+import org.rstudio.core.client.command.KeyboardShortcut;
 import org.rstudio.core.client.dom.impl.DomUtilsImpl;
 import org.rstudio.core.client.dom.impl.NodeRelativePosition;
 import org.rstudio.core.client.regex.Match;
 import org.rstudio.core.client.regex.Pattern;
+import org.rstudio.core.client.widget.FontSizer;
+import org.rstudio.studio.client.application.Desktop;
 
 /**
  * Helper methods that are mostly useful for interacting with 
@@ -551,6 +564,19 @@ public class DomUtils
       return false ;
    }
    
+   public static boolean isDescendantOfElementWithTag(Element el, String[] tags)
+   {
+      for (Element parent = el.getParentElement(); 
+           parent != null; 
+           parent = parent.getParentElement())
+      {
+         for (String tag : tags)
+            if (tag.toLowerCase().equals(parent.getTagName().toLowerCase()))
+               return true;
+      }
+      return false ;
+   }
+   
    /**
     * Finds a node that matches the predicate.
     * 
@@ -707,17 +733,13 @@ public class DomUtils
    
    public static boolean isCommandClick(NativeEvent nativeEvt)
    {
-      boolean commandKey;
-      if (BrowseCap.isMacintosh())
-      {
-         commandKey = nativeEvt.getMetaKey();
-      }
-      else
-      {
-         commandKey = nativeEvt.getCtrlKey();
-      }
+      int modifierKeys = KeyboardShortcut.getModifierValue(nativeEvt);
       
-      return (nativeEvt.getButton() == NativeEvent.BUTTON_LEFT) && commandKey;
+      boolean isCommandPressed = BrowseCap.isMacintosh() ?
+            modifierKeys == KeyboardShortcut.META :
+               modifierKeys == KeyboardShortcut.CTRL;
+      
+      return (nativeEvt.getButton() == NativeEvent.BUTTON_LEFT) && isCommandPressed;
    }
    
    // Returns the relative vertical position of a child to its parent. 
@@ -758,4 +780,234 @@ public class DomUtils
                                             String value) /*-{
       element.style[name] = value;
    }-*/;
+   
+   public static native final Element getElementById(String id) /*-{
+      return $doc.getElementById(id);
+   }-*/;
+   
+   public static Element[] getElementsByClassName(String classes)
+   {
+      Element documentEl = Document.get().cast();
+      return getElementsByClassName(documentEl, classes);
+   }
+   
+   public static final native Element[] getElementsByClassName(Element parent, String classes) /*-{
+      var result = [];
+      var elements = parent.getElementsByClassName(classes);
+      for (var i = 0; i < elements.length; i++) {
+         result.push(elements[i]);
+      }
+      return result;
+   }-*/;
+   
+   public static final Element getFirstElementWithClassName(Element parent, String classes)
+   {
+      Element[] elements = getElementsByClassName(parent, classes);
+      if (elements.length == 0)
+   	   return null;
+      return elements[0];
+   }
+   
+   public static final Element getParent(Element element, int times)
+   {
+      Element parent = element;
+      for (int i = 0; i < times; i++)
+      {
+         if (parent == null) return null;
+         parent = parent.getParentElement();
+      }
+      return parent;
+   }
+   
+   // NOTE: Not supported in IE8
+   public static final native Style getComputedStyles(Element el)
+   /*-{
+      return $wnd.getComputedStyle(el);
+   }-*/;
+   
+   public static void toggleClass(Element element,
+                                  String cssClass,
+                                  boolean value)
+   {
+      if (value && !element.hasClassName(cssClass))
+         element.addClassName(cssClass);
+      
+      if (!value && element.hasClassName(cssClass))
+         element.removeClassName(cssClass);
+   }
+   
+   public interface NativeEventHandler
+   {
+      public void onNativeEvent(NativeEvent event);
+   }
+   
+   public static void addKeyHandlers(HasAllKeyHandlers widget,
+                                     final NativeEventHandler handler)
+   {
+      widget.addKeyDownHandler(new KeyDownHandler()
+      {
+         @Override
+         public void onKeyDown(final KeyDownEvent event)
+         {
+            handler.onNativeEvent(event.getNativeEvent());
+         }
+      });
+      
+      widget.addKeyPressHandler(new KeyPressHandler()
+      {
+         @Override
+         public void onKeyPress(final KeyPressEvent event)
+         {
+            handler.onNativeEvent(event.getNativeEvent());
+         }
+      });
+      
+      widget.addKeyUpHandler(new KeyUpHandler()
+      {
+         @Override
+         public void onKeyUp(final KeyUpEvent event)
+         {
+            handler.onNativeEvent(event.getNativeEvent());
+         }
+      });
+   }
+   
+   public interface ElementPredicate
+   {
+      public boolean test(Element el);
+   }
+   
+   public static Element findParentElement(Element el,
+   	                                     ElementPredicate predicate)
+   {
+      Element parent = el.getParentElement();
+      while (parent != null)
+      {
+         if (predicate.test(parent))
+            return parent;
+
+         parent = parent.getParentElement();
+      }
+      return null;
+   }
+   
+   public final static native Element elementFromPoint(int x, int y) /*-{
+      return $doc.elementFromPoint(x, y);
+   }-*/;
+   
+   public static final native void setSelectionRange(Element el, int start, int end)
+   /*-{
+      if (el.setSelectionRange)
+         el.setSelectionRange(start, end);
+   }-*/;
+   
+   public static final native void copyCodeToClipboard(String text) /*-{
+      var copyElem = document.createElement('pre');
+      copyElem.contentEditable = true;
+      document.body.appendChild(copyElem);
+      copyElem.innerHTML = text;
+      copyElem.unselectable = "off";
+      copyElem.focus();
+      document.execCommand('SelectAll');
+      document.execCommand("Copy", false, null);
+      document.body.removeChild(copyElem);
+   }-*/;
+   
+   public static final String extractCssValue(String className, 
+         String propertyName)
+   {
+      JsArrayString classes = JsArrayString.createArray().cast();
+      classes.push(className);
+      return extractCssValue(classes, propertyName);
+   }
+   
+   public static final boolean preventBackspaceCausingBrowserBack(NativeEvent event)
+   {
+      if (Desktop.isDesktop())
+         return false;
+      
+      if (event.getKeyCode() != KeyCodes.KEY_BACKSPACE)
+         return false;
+      
+      EventTarget target = event.getEventTarget();
+      if (target == null)
+         return false;
+      
+      Element elementTarget = Element.as(target);
+      if (!elementTarget.getNodeName().equals("BODY"))
+         return false;
+      
+      event.preventDefault();
+      return true;
+   }
+   
+   public static final native String extractCssValue(JsArrayString className, 
+         String propertyName) /*-{
+      // A more elegant way of performing this would be to iterate through the
+      // document's styleSheet collection, but unfortunately browsers don't 
+      // expose the cssRules in all cases 
+      var ele = null, parent = null, root = null;
+      for (var i = 0; i < className.length; i++)
+      {
+         ele = $doc.createElement("div");
+         ele.style.display = "none";
+         ele.className = className[i];
+         if (parent != null)
+            parent.appendChild(ele);
+         parent = ele;
+         if (root == null) 
+            root = ele;
+      }
+      $doc.body.appendChild(root);
+      var computed = $wnd.getComputedStyle(ele);
+      var result = computed[propertyName] || "";
+      $doc.body.removeChild(root);
+      return result;
+   }-*/;
+
+   public static int getCharacterWidth(int clientWidth, int offsetWidth,
+         String style)
+   {
+      // create width checker label and add it to the root panel
+      Label widthChecker = new Label();
+      widthChecker.setStylePrimaryName(style);
+      FontSizer.applyNormalFontSize(widthChecker);
+      RootPanel.get().add(widthChecker, -1000, -1000);
+      
+      // put the text into the label, measure it, and remove it
+      String text = new String("abcdefghijklmnopqrstuvwzyz0123456789");
+      widthChecker.setText(text);
+      int labelWidth = widthChecker.getOffsetWidth();
+      RootPanel.get().remove(widthChecker);
+      
+      // compute the points per character 
+      float pointsPerCharacter = (float)labelWidth / (float)text.length();
+      
+      // compute client width
+      if (clientWidth == offsetWidth)
+      {
+         // if the two widths are the same then there are no scrollbars.
+         // however, we know there will eventually be a scrollbar so we 
+         // should offset by an estimated amount
+         // (is there a more accurate way to estimate this?)
+         clientWidth -= ESTIMATED_SCROLLBAR_WIDTH;
+      }
+      
+      // compute character width (add pad so characters aren't flush to right)
+      final int RIGHT_CHARACTER_PAD = 2;
+      int width = Math.round((float)clientWidth / pointsPerCharacter) - 
+            RIGHT_CHARACTER_PAD;
+
+      // enforce a minimum width
+      final int MINIMUM_WIDTH = 30;
+      return Math.max(width, MINIMUM_WIDTH);
+   }
+
+   public static int getCharacterWidth(Element ele, String style)
+   {
+      return getCharacterWidth(ele.getClientWidth(), ele.getOffsetWidth(), 
+            style);
+   }
+
+   public static final int ESTIMATED_SCROLLBAR_WIDTH = 19;
 }

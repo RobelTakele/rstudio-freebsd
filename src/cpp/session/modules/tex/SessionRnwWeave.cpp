@@ -38,9 +38,10 @@
 #include "SessionRnwConcordance.hpp"
 #include "SessionCompilePdfSupervisor.hpp"
 
-using namespace core;
-using namespace session::modules::tex::rnw_concordance;
+using namespace rstudio::core;
+using namespace rstudio::session::modules::tex::rnw_concordance;
 
+namespace rstudio {
 namespace session {
 namespace modules { 
 namespace tex {
@@ -92,11 +93,13 @@ public:
 
    // tangle the passed file (note that the implementation can assume
    // that the working directory is already set to that of the file)
-   virtual core::Error tangle(const std::string& file) = 0;
+   virtual core::Error tangle(const std::string& file,
+                              const std::string& encoding) = 0;
 
    virtual std::vector<std::string> commandArgs(
                                        const std::string& file,
-                                       const std::string& encoding) const
+                                       const std::string& encoding,
+                                       const std::string& driver) const
    {
       std::vector<std::string> args;
       args.push_back("--slave");
@@ -104,13 +107,14 @@ public:
       args.push_back("--no-restore");
       args.push_back("-e");
       std::string cmd = "grDevices::pdf.options(useDingbats = FALSE); "
-                        + weaveCommand(file, encoding);
+                        + weaveCommand(file, encoding, driver);
       args.push_back(cmd);
       return args;
    }
 
    virtual std::string weaveCommand(const std::string& file,
-                                    const std::string& encoding) const = 0;
+                                    const std::string& encoding,
+                                    const std::string& driver) const = 0;
 
    virtual core::Error parseOutputForErrors(
                                     const std::string& output,
@@ -210,15 +214,24 @@ public:
       return RnwWeave::chunkOptions(".rs.sweaveChunkOptions");
    }
 
-   virtual core::Error tangle(const std::string& file)
+   virtual core::Error tangle(const std::string& file,
+                              const std::string& encoding)
    {
-      return r::exec::RFunction("utils:::Stangle", file).call();
+      r::exec::RFunction stangle("utils:::Stangle");
+      stangle.addParam(file);
+      if (!encoding.empty())
+         stangle.addParam("encoding", encoding);
+      return stangle.call();
    }
 
    virtual std::string weaveCommand(const std::string& file,
-                                    const std::string& encoding) const
+                                    const std::string& encoding,
+                                    const std::string& driver) const
    {
       std::string cmd = "utils::Sweave('" + file + "'";
+
+      if (!driver.empty())
+         cmd += ", driver = " + driver + "";
 
       if (!encoding.empty())
          cmd += (", encoding='" + encoding + "'");
@@ -250,7 +263,8 @@ public:
    }
 
    virtual std::string weaveCommand(const std::string& file,
-                                    const std::string& encoding) const
+                                    const std::string& encoding,
+                                    const std::string& driver) const
    {
       std::string format = "require(knitr); ";
       if (userSettings().alwaysEnableRnwCorcordance())
@@ -331,12 +345,15 @@ public:
          return json::Value();
    }
 
-   virtual core::Error tangle(const std::string& file)
+   virtual core::Error tangle(const std::string& file,
+                              const std::string& encoding)
    {
       r::session::utils::SuppressOutputInScope suppressOutput;
       r::exec::RFunction purlFunc("knitr:::purl");
       purlFunc.addParam("input", file);
       purlFunc.addParam("output", file + ".R");
+      if (!encoding.empty())
+         purlFunc.addParam("encoding", encoding);
       return purlFunc.call();
    }
 };
@@ -415,6 +432,20 @@ std::string weaveTypeForFile(const core::tex::TexMagicComments& magicComments)
       return userSettings().defaultSweaveEngine();
 }
 
+std::string driverForFile(const core::tex::TexMagicComments& magicComments)
+{
+   BOOST_FOREACH(const core::tex::TexMagicComment& mc, magicComments)
+   {
+      if (boost::algorithm::iequals(mc.scope(), "rnw") &&
+          boost::algorithm::iequals(mc.variable(), "driver"))
+      {
+         return mc.value();
+      }
+   }
+
+   return std::string();
+}
+
 
 void onWeaveProcessExit(boost::shared_ptr<RnwWeave> pRnwWeave,
                         int exitCode,
@@ -456,7 +487,9 @@ void onWeaveProcessExit(boost::shared_ptr<RnwWeave> pRnwWeave,
 
 } // anonymous namespace
 
-void runTangle(const std::string& filePath, const std::string& rnwWeave)
+void runTangle(const std::string& filePath,
+               const std::string& encoding,
+               const std::string& rnwWeave)
 {
    using namespace module_context;
    boost::shared_ptr<RnwWeave> pWeave =
@@ -467,7 +500,7 @@ void runTangle(const std::string& filePath, const std::string& rnwWeave)
    }
    else
    {
-      Error error = pWeave->tangle(filePath);
+      Error error = pWeave->tangle(filePath, encoding);
       if (error)
          consoleWriteError(r::endUserErrorMessage(error) + "\n");
    }
@@ -504,12 +537,16 @@ void runWeave(const core::FilePath& rnwPath,
    boost::shared_ptr<RnwWeave> pRnwWeave = weaveRegistry()
                                              .findTypeIgnoreCase(weaveType);
 
+   // determine the driver (if any)
+   std::string driver = driverForFile(magicComments);
+
    // run the weave
    if (pRnwWeave)
    {
       std::vector<std::string> args = pRnwWeave->commandArgs(
                                                          rnwPath.filename(),
-                                                         encoding);
+                                                         encoding,
+                                                         driver);
 
       // call back-end
       Error error = compile_pdf_supervisor::runProgram(
@@ -577,4 +614,5 @@ void getTypesInstalledStatus(json::Object* pObj)
 } // namespace tex
 } // namespace modules
 } // namesapce session
+} // namespace rstudio
 

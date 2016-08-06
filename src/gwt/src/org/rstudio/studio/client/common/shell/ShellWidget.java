@@ -31,12 +31,10 @@ import com.google.gwt.event.shared.HandlerRegistration;
 import com.google.gwt.user.client.ui.*;
 
 import org.rstudio.core.client.ElementIds;
-import org.rstudio.core.client.FilePosition;
 import org.rstudio.core.client.StringUtil;
 import org.rstudio.core.client.TimeBufferedCommand;
 import org.rstudio.core.client.VirtualConsole;
 import org.rstudio.core.client.dom.DomUtils;
-import org.rstudio.core.client.files.FileSystemItem;
 import org.rstudio.core.client.jsonrpc.RpcObjectList;
 import org.rstudio.core.client.widget.BottomScrollPanel;
 import org.rstudio.core.client.widget.FontSizer;
@@ -44,12 +42,8 @@ import org.rstudio.core.client.widget.PreWidget;
 import org.rstudio.studio.client.RStudioGinjector;
 import org.rstudio.studio.client.application.Desktop;
 import org.rstudio.studio.client.application.events.EventBus;
-import org.rstudio.studio.client.common.debugging.model.ErrorFrame;
 import org.rstudio.studio.client.common.debugging.model.UnhandledError;
 import org.rstudio.studio.client.common.debugging.ui.ConsoleError;
-import org.rstudio.studio.client.common.filetypes.FileTypeRegistry;
-import org.rstudio.studio.client.common.filetypes.events.OpenSourceFileEvent;
-import org.rstudio.studio.client.common.filetypes.events.OpenSourceFileEvent.NavigationMethod;
 import org.rstudio.studio.client.workbench.model.ConsoleAction;
 import org.rstudio.studio.client.workbench.views.console.ConsoleResources;
 import org.rstudio.studio.client.workbench.views.console.events.RunCommandWithDebugEvent;
@@ -118,6 +112,10 @@ public class ShellWidget extends Composite implements ShellDisplay,
          @Override
          public void onKeyDown(KeyDownEvent event)
          {
+            // Don't capture keys when a completion popup is visible.
+            if (input_.isPopupVisible())
+               return;
+            
             // If the user hits Page-Up from inside the console input, we need
             // to simulate pageup because focus is not contained in the scroll
             // panel (it's in the hidden textarea that Ace uses under the
@@ -171,12 +169,13 @@ public class ShellWidget extends Composite implements ShellDisplay,
 
       secondaryInputHandler.setInput(editor);
 
-      scrollToBottomCommand_ = new TimeBufferedCommand(5)
+      resizeCommand_ = new TimeBufferedCommand(5)
       {
          @Override
          protected void performAction(boolean shouldSchedulePassive)
          {
-            if (!DomUtils.selectionExists())
+            scrollPanel_.onContentSizeChanged();
+            if (!DomUtils.selectionExists() && !scrollPanel_.isScrolledToBottom())
                scrollPanel_.scrollToBottom();
          }
       };
@@ -272,32 +271,12 @@ public class ShellWidget extends Composite implements ShellDisplay,
          if (expand)
             errorWidget.setTracebackVisible(true);
          
-         // The widget must be added to the root panel to have its event handlers
-         // wired properly, but this isn't an ideal structure; consider showing
-         // console output as cell widgets in a virtualized scrolling CellTable
-         // so we can easily add arbitrary controls. 
-         RootPanel.get().add(errorWidget);
          output_.getElement().replaceChild(errorWidget.getElement(), 
                                            errorNode);
          
          scrollPanel_.onContentSizeChanged();
          errorNodes_.remove(error);
       }
-   }
-   
-   @Override
-   public void showSourceForFrame(ErrorFrame frame)
-   {
-      if (events_ == null)
-         return;
-      FileSystemItem sourceFile = FileSystemItem.createFile(
-            frame.getFileName());
-      events_.fireEvent(new OpenSourceFileEvent(sourceFile,
-                             FilePosition.create(
-                                   frame.getLineNumber(),
-                                   frame.getCharacterNumber()),
-                             FileTypeRegistry.R,
-                             NavigationMethod.HighlightLine));      
    }
    
    @Override
@@ -312,8 +291,14 @@ public class ShellWidget extends Composite implements ShellDisplay,
       output(output, styles_.output(), false);
    }
 
-   public void consoleWriteInput(final String input)
+   public void consoleWriteInput(final String input, String console)
    {
+      // if coming from another console id (i.e. notebook chunk), clear the
+      // prompt since this input hasn't been processed yet (we'll redraw when
+      // the prompt reappears)
+      if (!StringUtil.isNullOrEmpty(console))
+         prompt_.setHTML("");
+
       clearPendingInput();
       output(input, styles_.command() + KEYWORD_CLASS_NAME, false);
    }
@@ -445,9 +430,7 @@ public class ShellWidget extends Composite implements ShellDisplay,
       }
       boolean result = !trimExcess();
 
-      scrollPanel_.onContentSizeChanged();
-      if (scrollPanel_.isScrolledToBottom())
-         scrollToBottomCommand_.nudge();
+      resizeCommand_.nudge();
 
       return result;
    }
@@ -555,13 +538,8 @@ public class ShellWidget extends Composite implements ShellDisplay,
          // Don't drive focus to the input unless there is no selection.
          // Otherwise it would interfere with the ability to select stuff
          // from the output buffer for copying to the clipboard.
-         // (BUG: DomUtils.selectionExists() doesn't work in a timely
-         // fashion on IE8.)
          if (!DomUtils.selectionExists() && isInputOnscreen())
-         {
             input_.setFocus(true) ;
-            DomUtils.collapseSelection(false);
-         }
       }
 
       public void onKeyDown(KeyDownEvent event)
@@ -695,45 +673,12 @@ public class ShellWidget extends Composite implements ShellDisplay,
       return input_.addKeyPressHandler(handler) ;
    }
    
+   
    public int getCharacterWidth()
    {
-      // create width checker label and add it to the root panel
-      Label widthChecker = new Label();
-      widthChecker.setStylePrimaryName(styles_.console());
-      FontSizer.applyNormalFontSize(widthChecker);
-      RootPanel.get().add(widthChecker, -1000, -1000);
-      
-      // put the text into the label, measure it, and remove it
-      String text = new String("abcdefghijklmnopqrstuvwzyz0123456789");
-      widthChecker.setText(text);
-      int labelWidth = widthChecker.getOffsetWidth();
-      RootPanel.get().remove(widthChecker);
-      
-      // compute the points per character 
-      int pointsPerCharacter = labelWidth / text.length();
-      
-      // compute client width
-      int clientWidth = getElement().getClientWidth();
-      int offsetWidth = getOffsetWidth();
-      if (clientWidth == offsetWidth)
-      {
-         // if the two widths are the same then there are no scrollbars.
-         // however, we know there will eventually be a scrollbar so we 
-         // should offset by an estimated amount
-         // (is there a more accurate way to estimate this?)
-         final int ESTIMATED_SCROLLBAR_WIDTH = 19;
-         clientWidth -= ESTIMATED_SCROLLBAR_WIDTH;
-      }
-      
-      // compute character width (add pad so characters aren't flush to right)
-      final int RIGHT_CHARACTER_PAD = 2;
-      int width = (clientWidth / pointsPerCharacter) - RIGHT_CHARACTER_PAD ;
-      
-      // enforce a minimum width
-      final int MINIMUM_WIDTH = 30;
-      return Math.max(width, MINIMUM_WIDTH);
+      return DomUtils.getCharacterWidth(getElement(), styles_.console());
    }
-
+   
    public boolean isPromptEmpty()
    {
       return StringUtil.isNullOrEmpty(prompt_.getText());
@@ -793,7 +738,7 @@ public class ShellWidget extends Composite implements ShellDisplay,
    private final VerticalPanel verticalPanel_ ;
    protected final ClickableScrollPanel scrollPanel_ ;
    private ConsoleResources.ConsoleStyles styles_;
-   private final TimeBufferedCommand scrollToBottomCommand_;
+   private final TimeBufferedCommand resizeCommand_;
    private boolean suppressPendingInput_;
    private final EventBus events_;
    

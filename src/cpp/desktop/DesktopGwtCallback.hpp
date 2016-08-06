@@ -25,6 +25,7 @@
 #include "DesktopWordViewer.hpp"
 #endif
 
+namespace rstudio {
 namespace desktop {
 
 class MainWindow;
@@ -64,8 +65,8 @@ public slots:
                            bool forceDefaultExtension);
    QString getExistingDirectory(const QString& caption,
                                 const QString& dir);
-   void undo();
-   void redo();
+   void undo(bool forAce);
+   void redo(bool forAce);
    void clipboardCut();
    void clipboardCopy();
    void clipboardPaste();
@@ -81,13 +82,16 @@ public slots:
    QString chooseRVersion();
    bool canChooseRVersion();
 
-   bool isRetina();
+   double devicePixelRatio();
 
    void openMinimalWindow(QString name, QString url, int width, int height);
    void activateMinimalWindow(QString name);
    void activateSatelliteWindow(QString name);
-   void prepareForSatelliteWindow(QString name, int width, int height);
-
+   void prepareForSatelliteWindow(QString name, int x, int y, int width,
+                                  int height);
+   void prepareForNamedWindow(QString name, bool allowExternalNavigate,
+                              bool showToolbar);
+   void closeNamedWindow(QString name);
 
    // Image coordinates are relative to the window contents
    void copyImageToClipboard(int left, int top, int width, int height);
@@ -122,6 +126,7 @@ public slots:
 
    void showAboutDialog();
    void bringMainFrameToFront();
+   void bringMainFrameBehindActive();
 
    QString filterText(QString text);
 
@@ -130,6 +135,7 @@ public slots:
    void setPendingQuit(int pendingQuit);
 
    void openProjectInNewWindow(QString projectFilePath);
+   void openSessionInNewWindow(QString workingDirectoryPath);
 
    void openTerminal(QString terminalPath,
                      QString workingDirectory,
@@ -167,9 +173,12 @@ public slots:
    void setViewerUrl(QString url);
    void reloadViewerZoomWindow(QString url);
 
+   void setShinyDialogUrl(QString url);
+
    QString getScrollingCompensationType();
 
    bool isOSXMavericks();
+   bool isCentOS();
 
    void setBusy(bool busy);
 
@@ -177,12 +186,15 @@ public slots:
 
    void installRtools(QString version, QString installerPath);
 
+   int getDisplayDpi();
+
 private:
    Synctex& synctex();
 
    void activateAndFocusOwner();
 
 private:
+   void doAction(const QKeySequence& keys);
    void doAction(QKeySequence::StandardKey key);
    MainWindow* pMainWindow_;
    GwtCallbackOwner* pOwner_;
@@ -195,5 +207,6 @@ private:
 };
 
 } // namespace desktop
+} // namespace rstudio
 
 #endif // DESKTOP_GWT_CALLBACK_HPP

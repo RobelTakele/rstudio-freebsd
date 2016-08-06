@@ -17,9 +17,12 @@
 
 #include <core/Error.hpp>
 #include <core/PeriodicCommand.hpp>
+#include <core/Thread.hpp>
 #include <core/system/Process.hpp>
+#include <core/FileSerializer.hpp>
 #include <core/system/Crypto.hpp>
 #include <core/system/PosixSystem.hpp>
+#include <core/system/PosixUser.hpp>
 
 #include <core/http/Request.hpp>
 #include <core/http/Response.hpp>
@@ -38,10 +41,12 @@
 #include <server/ServerUriHandlers.hpp>
 #include <server/ServerSessionProxy.hpp>
 
+namespace rstudio {
 namespace server {
 namespace pam_auth {
 
 bool canSetSignInCookies();
+bool canStaySignedIn();
 void onUserAuthenticated(const std::string& username,
                          const std::string& password);
 void onUserUnauthenticated(const std::string& username);
@@ -80,6 +85,30 @@ const char * const kErrorMessage = "errorMessage";
 
 const char * const kFormAction = "formAction";
 
+const char * const kStaySignedInDisplay = "staySignedInDisplay";
+
+const char * const kLoginPageHtml = "loginPageHtml";
+
+enum ErrorType 
+{
+   kErrorNone,
+   kErrorInvalidLogin,
+   kErrorServer 
+};
+
+std::string errorMessage(ErrorType error)
+{
+   switch (error)
+   {
+      case kErrorNone:
+         return "";
+      case kErrorInvalidLogin: 
+         return "Incorrect or invalid username/password";
+      case kErrorServer:
+         return "Temporary server error, please try again";
+   }
+   return "";
+}
 
 std::string applicationURL(const http::Request& request,
                            const std::string& path = std::string())
@@ -91,14 +120,15 @@ std::string applicationURL(const http::Request& request,
 
 std::string applicationSignInURL(const http::Request& request,
                                  const std::string& appUri,
-                                 const std::string& errorMessage=std::string())
+                                 ErrorType error = kErrorNone)
 {
    // build fields
    http::Fields fields ;
    if (appUri != "/")
       fields.push_back(std::make_pair(kAppUri, appUri));
-   if (!errorMessage.empty())
-     fields.push_back(std::make_pair(kErrorParam, errorMessage));
+   if (error != kErrorNone)
+     fields.push_back(std::make_pair(kErrorParam, 
+                                     safe_convert::numberToString(error)));
 
    // build query string
    std::string queryString ;
@@ -122,7 +152,39 @@ std::string getUserIdentifier(const core::http::Request& request)
 
 std::string userIdentifierToLocalUsername(const std::string& userIdentifier)
 {
-   return userIdentifier;
+   static core::thread::ThreadsafeMap<std::string, std::string> cache;
+   std::string username = userIdentifier;
+
+   if (cache.contains(userIdentifier)) 
+   {
+      username = cache.get(userIdentifier);
+   }
+   else
+   {
+      // The username returned from this function is eventually used to create
+      // a local stream path, so it's important that it agree with the system
+      // view of the username (as that's what the session uses to form the
+      // stream path), which is why we do a username => username transform
+      // here. See case 5413 for details.
+      core::system::user::User user;
+      Error error = core::system::user::userFromUsername(userIdentifier, &user);
+      if (error) 
+      {
+         // log the error and return the PAM user identifier as a fallback
+         LOG_ERROR(error);
+      }
+      else
+      {
+         username = user.username;
+      }
+
+      // cache the username -- we do this even if the lookup fails since
+      // otherwise we're likely to keep hitting (and logging) the error on
+      // every request
+      cache.set(userIdentifier, username);
+   }
+
+   return username;
 }
 
 bool mainPageFilter(const http::Request& request,
@@ -162,7 +224,10 @@ void refreshCredentialsThenContinue(
 void signIn(const http::Request& request,
             http::Response* pResponse)
 {
-   auth::secure_cookie::remove(request, kUserId, "", pResponse);
+   auth::secure_cookie::remove(request,
+                               kUserId,
+                               "/",
+                               pResponse);
 
    std::map<std::string,std::string> variables;
    variables["action"] = applicationURL(request, kDoSignIn);
@@ -170,8 +235,10 @@ void signIn(const http::Request& request,
 
    // setup template variables
    std::string error = request.queryParamValue(kErrorParam);
-   variables[kErrorMessage] = error;
+   variables[kErrorMessage] = errorMessage(static_cast<ErrorType>(
+            safe_convert::stringTo<unsigned>(error, kErrorNone)));
    variables[kErrorDisplay] = error.empty() ? "none" : "block";
+   variables[kStaySignedInDisplay] = canStaySignedIn() ? "block" : "none";
    if (server::options().authEncryptPassword())
       variables[kFormAction] = "action=\"javascript:void\" "
                                "onsubmit=\"submitRealForm();return false\"";
@@ -179,6 +246,9 @@ void signIn(const http::Request& request,
       variables[kFormAction] = "action=\"" + variables["action"] + "\"";
 
    variables[kAppUri] = request.queryParamValue(kAppUri);
+
+   // include custom login page html
+   variables[kLoginPageHtml] = server::options().authLoginPageHtml();
 
    // get the path to the JS file
    Options& options = server::options();
@@ -206,21 +276,22 @@ void setSignInCookies(const core::http::Request& request,
                       bool persist,
                       core::http::Response* pResponse)
 {
+   int staySignedInDays = server::options().authStaySignedInDays();
    boost::optional<boost::gregorian::days> expiry;
-   if (persist)
-      expiry = boost::gregorian::days(3652);
+   if (persist && canStaySignedIn())
+      expiry = boost::gregorian::days(staySignedInDays);
    else
       expiry = boost::none;
 
    auth::secure_cookie::set(kUserId,
                             username,
                             request,
-                            boost::posix_time::time_duration(24*3652,
+                            boost::posix_time::time_duration(24*staySignedInDays,
                                                              0,
                                                              0,
                                                              0),
                             expiry,
-                            std::string(),
+                            "/",
                             pResponse);
 }
 
@@ -249,8 +320,7 @@ void doSignIn(const http::Request& request,
                request,
                applicationSignInURL(request,
                                     appUri,
-                                    "Temporary server error,"
-                                    " please try again"));
+                                    kErrorServer));
          return;
       }
 
@@ -262,8 +332,7 @@ void doSignIn(const http::Request& request,
                request,
                applicationSignInURL(request,
                                     appUri,
-                                    "Temporary server error,"
-                                    " please try again"));
+                                    kErrorServer));
          return;
       }
 
@@ -302,11 +371,18 @@ void doSignIn(const http::Request& request,
    }
    else
    {
+      // register failed login with monitor
+      using namespace monitor;
+      client().logEvent(Event(kAuthScope,
+                              kAuthLoginFailedEvent,
+                              "",
+                              username));
+
       pResponse->setMovedTemporarily(
             request,
             applicationSignInURL(request,
                                  appUri,
-                                 "Incorrect or invalid username/password"));
+                                 kErrorInvalidLogin));
    }
 }
 
@@ -328,7 +404,11 @@ void signOut(const http::Request& request,
       onUserUnauthenticated(username);
    }
 
-   auth::secure_cookie::remove(request, kUserId, "", pResponse);
+   auth::secure_cookie::remove(request,
+                               kUserId,
+                               "/",
+                               pResponse);
+
    pResponse->setMovedTemporarily(request, auth::handler::kSignIn);
 }
 
@@ -398,3 +478,4 @@ Error initialize()
 
 } // namespace pam_auth
 } // namespace server
+} // namespace rstudio

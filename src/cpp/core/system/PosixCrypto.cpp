@@ -38,8 +38,9 @@
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
 #endif
 
-using namespace core;
+using namespace rstudio::core;
 
+namespace rstudio {
 namespace core {
 namespace system {
 namespace crypto {
@@ -106,7 +107,7 @@ void initialize()
    ::ERR_load_crypto_strings();
 }
    
-Error HMAC_SHA1(const std::string& data, 
+Error HMAC_SHA2(const std::string& data,
                 const std::string& key,
                 std::vector<unsigned char>* pHMAC)
 {
@@ -115,10 +116,10 @@ Error HMAC_SHA1(const std::string& data,
    std::copy(key.begin(), key.end(), std::back_inserter(keyVector));  
    
    // call core
-   return HMAC_SHA1(data, keyVector, pHMAC);
+   return HMAC_SHA2(data, keyVector, pHMAC);
 }
    
-Error HMAC_SHA1(const std::string& data, 
+Error HMAC_SHA2(const std::string& data,
                 const std::vector<unsigned char>& key,
                 std::vector<unsigned char>* pHMAC)
 {
@@ -129,7 +130,7 @@ Error HMAC_SHA1(const std::string& data,
    // perform the hash
    unsigned int md_len = 0;
    pHMAC->resize(EVP_MAX_MD_SIZE);
-   unsigned char* pResult = ::HMAC(EVP_sha1(),
+   unsigned char* pResult = ::HMAC(EVP_sha256(),
                                    &(key[0]),
                                    key.size(),
                                    &(dataVector[0]),
@@ -317,4 +318,5 @@ core::Error rsaPrivateDecrypt(const std::string& cipherText, std::string* pPlain
 } // namespace crypto
 } // namespace system
 } // namespace core
+} // namespace rstudio
 

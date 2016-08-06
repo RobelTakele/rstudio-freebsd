@@ -1,7 +1,7 @@
 /*
  * DataEditingTarget.java
  *
- * Copyright (C) 2009-12 by RStudio, Inc.
+ * Copyright (C) 2009-15 by RStudio, Inc.
  *
  * Unless you have received this program directly from RStudio pursuant
  * to the terms of a commercial license agreement with RStudio, then
@@ -17,6 +17,7 @@ package org.rstudio.studio.client.workbench.views.source.editors.data;
 import com.google.gwt.resources.client.ImageResource;
 import com.google.gwt.user.client.ui.Widget;
 import com.google.inject.Inject;
+
 import org.rstudio.core.client.Debug;
 import org.rstudio.core.client.widget.SimplePanelWithProgress;
 import org.rstudio.studio.client.application.events.EventBus;
@@ -28,13 +29,23 @@ import org.rstudio.studio.client.server.ServerRequestCallback;
 import org.rstudio.studio.client.server.Void;
 import org.rstudio.studio.client.workbench.commands.Commands;
 import org.rstudio.studio.client.workbench.views.source.editors.urlcontent.UrlContentEditingTarget;
+import org.rstudio.studio.client.workbench.views.source.events.DataViewChangedEvent;
+import org.rstudio.studio.client.workbench.views.source.events.PopoutDocEvent;
 import org.rstudio.studio.client.workbench.views.source.model.DataItem;
 import org.rstudio.studio.client.workbench.views.source.model.SourceServerOperations;
 
 import java.util.HashMap;
 
 public class DataEditingTarget extends UrlContentEditingTarget
+                               implements DataViewChangedEvent.Handler
 {
+   enum QueuedRefreshType
+   {
+      NoRefresh,
+      DataRefresh,
+      StructureRefresh
+   }
+
    @Inject
    public DataEditingTarget(SourceServerOperations server,
                             Commands commands,
@@ -42,6 +53,9 @@ public class DataEditingTarget extends UrlContentEditingTarget
                             EventBus events)
    {
       super(server, commands, globalDisplay, events);
+      events_ = events;
+      isActive_ = true;
+      events.addHandler(DataViewChangedEvent.TYPE, this);
    }
 
    @Override
@@ -64,6 +78,65 @@ public class DataEditingTarget extends UrlContentEditingTarget
       };
    }
 
+   @Override
+   public void onDataViewChanged(DataViewChangedEvent event)
+   {
+      if (event.getData().getCacheKey().equals(getDataItem().getCacheKey()))
+      {
+         // figure out what kind of refresh we need--if we already have a full
+         // (structural) refresh queued, it trumps other refresh types
+         if (queuedRefresh_ != QueuedRefreshType.StructureRefresh)
+         {
+            queuedRefresh_ = event.getData().structureChanged() ? 
+                  QueuedRefreshType.StructureRefresh : 
+                  QueuedRefreshType.DataRefresh;
+         }
+
+         // perform the refresh immediately if the tab is active; otherwise,
+         // leave it in the queue and it'll be run when the tab is activated
+         if (isActive_)
+         {
+            doQueuedRefresh(false);
+         }
+      }
+   }
+
+   @Override
+   public void onActivate()
+   {
+      super.onActivate();
+      if (view_ != null)
+      {
+         if (queuedRefresh_ != QueuedRefreshType.NoRefresh)
+         {
+            // the data change while the window wasn't active, so refresh it,
+            // and recompute the size when finished
+            doQueuedRefresh(true);
+         }
+         else
+         {
+            view_.onActivate();
+         }
+      }
+   }
+
+   @Override
+   public void onDeactivate()
+   {
+      super.onDeactivate();
+      view_.onDeactivate();
+      isActive_ = false;
+   }
+   
+   private void doQueuedRefresh(boolean onActivate)
+   {
+      if (queuedRefresh_ == QueuedRefreshType.DataRefresh)
+         view_.refreshData(false, onActivate);
+      else if (queuedRefresh_ == QueuedRefreshType.StructureRefresh)
+         view_.refreshData(true, onActivate);
+      queuedRefresh_ = QueuedRefreshType.NoRefresh;
+   }
+
    private void clearDisplay()
    {
       progressPanel_.showProgress(1);
@@ -71,13 +144,13 @@ public class DataEditingTarget extends UrlContentEditingTarget
 
    private void reloadDisplay()
    {
-      DataEditingTargetWidget view = new DataEditingTargetWidget(
+      view_ = new DataEditingTargetWidget(
             commands_,
             getDataItem());
-      view.setSize("100%", "100%");
-      progressPanel_.setWidget(view);
+      view_.setSize("100%", "100%");
+      progressPanel_.setWidget(view_);
    }
-
+   
    @Override
    public String getPath()
    {
@@ -107,13 +180,24 @@ public class DataEditingTarget extends UrlContentEditingTarget
       return getDataItem().getContentUrl();
    }
 
+   @Override
+   public void popoutDoc()
+   {
+      events_.fireEvent(new PopoutDocEvent(getId(), null));
+   }
+
+   protected String getCacheKey()
+   {
+      return getDataItem().getCacheKey();
+   }
+
    public void updateData(final DataItem data)
    {
       final Widget originalWidget = progressPanel_.getWidget();
 
       clearDisplay();
       
-      final String oldContentUrl = getContentUrl();
+      final String oldCacheKey = getCacheKey();
 
       HashMap<String, String> props = new HashMap<String, String>();
       data.fillProperties(props);
@@ -125,8 +209,8 @@ public class DataEditingTarget extends UrlContentEditingTarget
                @Override
                public void onResponseReceived(Void response)
                {
-                  server_.removeContentUrl(
-                        oldContentUrl,
+                  server_.removeCachedData(
+                        oldCacheKey,
                         new ServerRequestCallback<Void>() {
 
                            @Override
@@ -150,4 +234,8 @@ public class DataEditingTarget extends UrlContentEditingTarget
    }
 
    private SimplePanelWithProgress progressPanel_;
+   private DataEditingTargetWidget view_;
+   private final EventBus events_;
+   private boolean isActive_;
+   private QueuedRefreshType queuedRefresh_;
 }

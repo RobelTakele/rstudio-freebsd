@@ -58,7 +58,8 @@ public class RWebContentFileType extends TextFileType
             true,
             false,
             true,
-            true);
+            true,
+            false);
       
       isMarkdown_ = isMarkdown;
    }
@@ -67,8 +68,6 @@ public class RWebContentFileType extends TextFileType
    public HashSet<AppCommand> getSupportedCommands(Commands commands)
    {
       HashSet<AppCommand> result = super.getSupportedCommands(commands);
-      if (isMarkdown_)
-         result.add(commands.markdownHelp());
       result.add(commands.jumpTo());
       result.add(commands.jumpToMatching());
       result.add(commands.goToHelp());

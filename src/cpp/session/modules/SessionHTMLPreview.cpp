@@ -54,8 +54,9 @@
 #define kHTMLPreview "html_preview"
 #define kHTMLPreviewLocation "/" kHTMLPreview "/"
 
-using namespace core;
+using namespace rstudio::core;
 
+namespace rstudio {
 namespace session {
 namespace modules { 
 namespace html_preview {
@@ -487,11 +488,12 @@ Error previewHTML(const json::JsonRpcRequest& request,
                                        "requires_knit", &knit,
                                        "is_notebook", &isNotebook);
 
-   if (isNotebook)
-      file = deriveNotebookPath(file);
-
    if (error)
       return error;
+
+   if (isNotebook)
+      file = deriveNotebookPath(file);
+   
    FilePath filePath = module_context::resolveAliasedPath(file);
 
    // if we have a preview already running then just return false
@@ -550,12 +552,17 @@ bool okToGenerateFile(const FilePath& rmdPath,
          return false;
       }
 
+      // copy the file's contents
+      std::vector<char> contents;
+      std::copy(std::istream_iterator<char>(*pStr),
+                std::istream_iterator<char>(),
+                std::back_inserter(contents));
+
       std::string magicGuid(MAGIC_GUID);
-      std::istreambuf_iterator<char> eod;
-      if (eod == std::search(std::istreambuf_iterator<char>(*pStr),
-                             eod,
-                             magicGuid.begin(),
-                             magicGuid.end()))
+      if (contents.end() == std::search(contents.begin(),
+                                        contents.end(),
+                                        magicGuid.begin(),
+                                        magicGuid.end()))
       {
          *pErrMsg = "Unable to generate the file '" +
                     filePath.filename() + "' because it already "
@@ -758,13 +765,7 @@ void modifyOutputForPreview(std::string* pOutput)
             boost::regex("tt, code, pre \\{\\n\\s+font-family:[^\n]+;"),
            "tt, code, pre {\n   font-family: " + preFontFamily() + ";");
 
-#ifdef __APPLE__
-      // use SVG fonts on MacOS (because HTML-CSS fonts crash QtWebKit)
-       boost::algorithm::replace_first(
-                *pOutput,
-                "config=TeX-AMS-MML_HTMLorMML",
-                "config=TeX-AMS-MML_SVG");
-#else
+#if defined(_WIN32)
       // add HTML-CSS options required for correct qtwebkit rendering
       std::string target = "<!-- MathJax scripts -->";
       boost::algorithm::replace_first(
@@ -775,7 +776,7 @@ void modifyOutputForPreview(std::string* pOutput)
    }
 
    // serve mathjax locally
-   std::string previewMathjax = "mathjax-23";
+   std::string previewMathjax = "mathjax-26";
    boost::algorithm::replace_first(
         *pOutput,
         "https://cdn.mathjax.org/mathjax/latest",
@@ -937,7 +938,7 @@ void handlePreviewRequest(const http::Request& request,
    }
 
    // request for mathjax file
-   else if (boost::algorithm::starts_with(path, "mathjax-23"))
+   else if (boost::algorithm::starts_with(path, "mathjax-26"))
    {
 
       FilePath filePath =
@@ -1027,4 +1028,5 @@ Error initialize()
 } // namespace html_preview
 } // namespace modules
 } // namesapce session
+} // namespace rstudio
 

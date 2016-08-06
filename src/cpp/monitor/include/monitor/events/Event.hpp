@@ -22,6 +22,7 @@
 
 #include <core/system/System.hpp>
 
+namespace rstudio {
 namespace monitor {
 
 enum EventScope
@@ -30,14 +31,17 @@ enum EventScope
    kSessionScope = 1
 };
 
-#define kAuthLoginEvent       1001
-#define kAuthLogoutEvent      1002
+#define kAuthLoginEvent          1001
+#define kAuthLogoutEvent         1002
+#define kAuthLoginFailedEvent    1003
 
-#define kSessionStartEvent    2001
-#define kSessionSuicideEvent  2002
-#define kSessionSuspendEvent  2003
-#define kSessionQuitEvent     2004
-#define kSessionExitEvent     2005
+#define kSessionStartEvent       2001
+#define kSessionSuicideEvent     2002
+#define kSessionSuspendEvent     2003
+#define kSessionQuitEvent        2004
+#define kSessionExitEvent        2005
+#define kSessionAdminSuspend     2006
+#define kSessionAdminTerminate   2007
 
 class Event
 {
@@ -83,9 +87,12 @@ private:
    std::string data_;
 };
 
+std::string eventScopeAndIdAsString(const Event& event);
+
 std::ostream& operator<<(std::ostream& ostr, const Event& event);
 
 } // namespace monitor
+} // namespace rstudio
 
 #endif // MONITOR_EVENTS_EVENT_HPP
 

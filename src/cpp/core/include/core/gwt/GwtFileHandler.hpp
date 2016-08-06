@@ -18,6 +18,7 @@
 
 #include <core/http/UriHandler.hpp>
 
+namespace rstudio {
 namespace core {
 namespace gwt {
       
@@ -26,10 +27,12 @@ http::UriHandlerFunction fileHandlerFunction(
       const std::string& baseUri = std::string(),
       http::UriFilterFunction mainPageFilter = http::UriFilterFunction(),
       const std::string& initJs = std::string(),
+      const std::string& gwtPrefix = std::string(),
       bool useEmulatedStack = false);
    
 } // namespace gwt
 } // namespace core
+} // namespace rstudio
 
 #endif // CORE_GWT_FILE_HANDLER_HPP
 

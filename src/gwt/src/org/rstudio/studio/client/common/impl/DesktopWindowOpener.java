@@ -14,6 +14,7 @@
  */
 package org.rstudio.studio.client.common.impl;
 
+import org.rstudio.core.client.Point;
 import org.rstudio.studio.client.application.Desktop;
 import org.rstudio.studio.client.common.GlobalDisplay;
 import org.rstudio.studio.client.common.GlobalDisplay.NewWindowOptions;
@@ -53,6 +54,21 @@ public class DesktopWindowOpener extends WebWindowOpener
    }
 
    @Override
+   public void openWebMinimalWindow(GlobalDisplay globalDisplay,
+                                    String url,
+                                    NewWindowOptions options,
+                                    int width,
+                                    int height,
+                                    boolean showLocation)
+   {
+      Desktop.getFrame().prepareForNamedWindow(options.getName(),
+            options.allowExternalNavigation(),
+            options.showDesktopToolbar());
+      super.openWebMinimalWindow(globalDisplay, url, options, width, 
+                                 height, showLocation);
+   }
+
+   @Override
    public void openMinimalWindow(GlobalDisplay globalDisplay,
                                  String url,
                                  NewWindowOptions options,
@@ -74,7 +90,20 @@ public class DesktopWindowOpener extends WebWindowOpener
                                    NewWindowOptions options)
    {  
       String windowName = SatelliteUtils.getSatelliteWindowName(mode);
-      Desktop.getFrame().prepareForSatelliteWindow(windowName, width, height);
+
+      // default to desktop-assigned location, but if a specific position was
+      // assigned, use it
+      int x = -1;
+      int y = -1;
+      Point pos = options.getPosition();
+      if (pos != null)
+      {
+         x = pos.getX();
+         y = pos.getY();
+      }
+
+      Desktop.getFrame().prepareForSatelliteWindow(windowName, x, y,
+                                                   width, height);
       super.openSatelliteWindow(globalDisplay, mode, width, height, options);
    }
    

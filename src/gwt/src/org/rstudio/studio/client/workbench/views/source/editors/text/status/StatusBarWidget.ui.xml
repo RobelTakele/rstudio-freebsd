@@ -57,11 +57,22 @@
                                  showArrows="false"/>
       <g:Image ui:field="scopeIcon_"
                styleName="{style.scopeIcon}"/>
+               
       <sb:StatusBarElementWidget ui:field="scope_"
                                  styleName="{style.element}"
                                  showArrows="true"/>
+                                 
+      <sb:StatusBarElementWidget ui:field="message_"
+                                 styleName="{style.element}"
+                                 showArrows="false"/>
+                                 
+      <sb:NotebookProgressWidget ui:field="progress_"
+                                 styleName="{style.element} {style.last}" 
+                                 visible="false" />
+                              
       <sb:StatusBarElementWidget ui:field="language_"
                                  styleName="{style.element} {style.last}"
-                                 showArrows="true"/>
+                                 showArrows="true"
+                                 popupAlignment="right"/>
    </g:HorizontalPanel>
 </ui:UiBinder>

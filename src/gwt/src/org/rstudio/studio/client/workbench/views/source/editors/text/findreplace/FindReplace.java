@@ -23,6 +23,7 @@ import com.google.gwt.event.dom.client.KeyUpHandler;
 import com.google.gwt.event.logical.shared.ValueChangeEvent;
 import com.google.gwt.event.logical.shared.ValueChangeHandler;
 import com.google.gwt.user.client.ui.HasValue;
+import com.google.gwt.user.client.ui.Widget;
 
 import org.rstudio.core.client.StringUtil;
 import org.rstudio.core.client.regex.Match;
@@ -57,6 +58,7 @@ public class FindReplace
                     boolean inSelection);
       
       void focusFindField(boolean selectAll);
+      Widget getUnderlyingWidget();
    }
 
    public FindReplace(AceEditor editor,
@@ -145,6 +147,10 @@ public class FindReplace
                return ;
             }
             
+            // bail on control characters
+            if (event.getNativeKeyCode() < 32)
+               return;
+            
             // perform incremental search
             find(defaultForward_ ? FindType.Forward : FindType.Reverse, true);
          }
@@ -197,6 +203,24 @@ public class FindReplace
    private boolean find(FindType findType)
    {
       return find(findType, false);
+   }
+   
+   public void selectAll()
+   {
+      // NOTE: 'null' range here implies whole document
+      Range range = null;
+      if (targetSelection_ != null)
+         range = targetSelection_.getRange();
+      
+      boolean wholeWord = display_.getWholeWord().getValue();
+      boolean caseSensitive = display_.getCaseSensitive().getValue();
+      
+      String searchString = display_.getFindValue().getValue();
+      if (searchString.length() != 0)
+      {
+         editor_.selectAll(searchString, range, wholeWord, caseSensitive);
+         editor_.focus();
+      }
    }
    
    private boolean find(FindType findType, boolean incremental)
@@ -391,6 +415,15 @@ public class FindReplace
 
             // Point to the end of this match
             pos = index + m.getValue().length();
+            
+            // If the data matched is an empty string (which can happen for
+            // regexps that don't consume characters such as ^ or $), then we
+            // didn't advance the state of the underlying RegExp object, and
+            // we'll loop forever (see case 4191). Bail out.
+            if (m.getValue().length() == 0)
+            {
+               break;
+            }
          }
          result.append(code, pos, code.length());
 
@@ -502,8 +535,10 @@ public class FindReplace
          editor_.fitSelectionToLines(true);
          Position start = editor_.getSelectionStart();
          Position end = editor_.getSelectionEnd();
-         anchoredSelection_ = editor_.createAnchoredSelection(start,end);
-         
+         anchoredSelection_ = editor_.createAnchoredSelection(
+               display_.getUnderlyingWidget(),
+               start,
+               end);
          // collapse the cursor to the beginning or end
          editor_.collapseSelection(defaultForward_);
          
@@ -528,6 +563,9 @@ public class FindReplace
       
       public void clear()
       {
+         if (anchoredSelection_ != null)
+            anchoredSelection_.detach();
+         
          if (markerId_ != null)
             editor_.getSession().removeMarker(markerId_);
       }
@@ -550,7 +588,6 @@ public class FindReplace
       clearTargetSelection();
       targetSelection_ = new TargetSelectionTracker();
    }
-   
    
    private static boolean defaultCaseSensitive_ = false;
    private static boolean defaultWrapSearch_ = true;

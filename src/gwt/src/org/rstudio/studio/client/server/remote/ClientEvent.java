@@ -1,7 +1,7 @@
 /*
  * ClientEvent.java
  *
- * Copyright (C) 2009-12 by RStudio, Inc.
+ * Copyright (C) 2009-15 by RStudio, Inc.
  *
  * Unless you have received this program directly from RStudio pursuant
  * to the terms of a commercial license agreement with RStudio, then
@@ -105,14 +105,54 @@ class ClientEvent extends JavaScriptObject
    public static final String RmdTemplateDiscovered = "rmd_template_discovered";
    public static final String RmdTemplateDiscoveryCompleted = "rmd_template_discovery_completed";
    public static final String RmdShinyDocStarted = "rmd_shiny_doc_started";
-   public static final String ShinyAppsDeploymentOutput = "shiny_apps_deployment_output";
-   public static final String ShinyAppsDeploymentCompleted = "shiny_apps_deployment_completed";
+   public static final String RSConnectDeploymentOutput = "rsconnect_deployment_output";
+   public static final String RSConnectDeploymentCompleted = "rsconnect_deployment_completed";
+   public static final String RSConnectDeploymentFailed = "rsconnect_deployment_failed";
    public static final String UserPrompt = "user_prompt";
    public static final String InstallRtools = "install_r_tools";
    public static final String InstallShiny = "install_shiny";
    public static final String SuspendAndRestart = "suspend_and_restart";
    public static final String PackratRestoreNeeded = "packrat_restore_needed";
-   
+   public static final String DataViewChanged = "data_view_changed";
+   public static final String ViewFunction = "view_function";
+   public static final String MarkersChanged = "markers_changed";
+   public static final String EnableRStudioConnect = "enable_rstudio_connect";
+   public static final String UpdateGutterMarkers = "update_gutter_markers";
+   public static final String SnippetsChanged = "snippets_changed";
+   public static final String JumpToFunction = "jump_to_function";
+   public static final String CollabEditStarted = "collab_edit_started";
+   public static final String SessionCountChanged = "session_count_changed";
+   public static final String CollabEditEnded = "collab_edit_ended";
+   public static final String ProjectUsersChanged = "project_users_changed";
+   public static final String RVersionsChanged = "r_versions_changed";
+   public static final String ShinyGadgetDialog = "shiny_gadget_dialog";
+   public static final String RmdParamsReady = "rmd_params_ready";
+   public static final String RegisterUserCommand = "register_user_command";
+   public static final String SendToConsole = "send_to_console";
+   public static final String UserFollowStarted = "user_follow_started";
+   public static final String UserFollowEnded = "user_follow_ended";
+   public static final String ProjectAccessRevoked = "project_access_revoked";
+   public static final String CollabEditSaved = "collab_edit_saved";
+   public static final String AddinRegistryUpdated = "addin_registry_updated";
+   public static final String ChunkOutput = "chunk_output";
+   public static final String ChunkOutputFinished = "chunk_output_finished";
+   public static final String RprofStarted = "rprof_started";
+   public static final String RprofStopped = "rprof_stopped";
+   public static final String RprofCreated = "rprof_created";
+   public static final String EditorCommand = "editor_command";
+   public static final String PreviewRmd = "preview_rmd";
+   public static final String WebsiteFileSaved = "website_file_saved";
+   public static final String ChunkPlotRefreshed = "chunk_plot_refreshed";
+   public static final String ChunkPlotRefreshFinished = "chunk_plot_refresh_finished";
+   public static final String ReloadWithLastChanceSave = "reload_with_last_chance_save";
+   public static final String ConnectionUpdated = "connection_updated";
+   public static final String EnableConnections = "enable_connections";
+   public static final String ConnectionListChanged = "connection_list_changed";
+   public static final String ActiveConnectionsChanged = "active_connections_changed";
+   public static final String ConnectionOpened = "connection_opened";
+   public static final String NotebookRangeExecuted = "notebook_range_executed";
+   public static final String ChunkExecStateChanged = "chunk_exec_state_changed";
+
    protected ClientEvent()
    {
    }

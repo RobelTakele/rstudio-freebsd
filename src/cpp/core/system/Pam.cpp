@@ -21,6 +21,7 @@
 #include <core/Log.hpp>
 #include <core/system/System.hpp>
 
+namespace rstudio {
 namespace core {
 namespace system {
 
@@ -137,11 +138,12 @@ int conv(int num_msg,
 } // anonymous namespace
 
 
-PAM::PAM(const std::string& service, bool silent) :
+PAM::PAM(const std::string& service, bool silent, bool closeOnDestroy) :
       service_(service),
       defaultFlags_(silent ? PAM_SILENT : 0),
       pamh_(NULL),
-      status_(PAM_SUCCESS)
+      status_(PAM_SUCCESS),
+      closeOnDestroy_(closeOnDestroy)
 {
 }
 
@@ -149,7 +151,8 @@ PAM::~PAM()
 {
    try
    {
-      close();
+      if (closeOnDestroy_)
+         close();
    }
    catch(...)
    {
@@ -208,3 +211,4 @@ void PAM::close()
 
 } // namespace system
 } // namespace core
+} // namespace rstudio

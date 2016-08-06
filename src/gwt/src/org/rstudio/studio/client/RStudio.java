@@ -18,13 +18,15 @@ package org.rstudio.studio.client;
 import com.google.gwt.core.client.EntryPoint;
 import com.google.gwt.core.client.GWT;
 import com.google.gwt.core.client.RunAsyncCallback;
-import com.google.gwt.dom.client.DivElement;
 import com.google.gwt.dom.client.Document;
+import com.google.gwt.dom.client.Element;
 import com.google.gwt.dom.client.Style;
 import com.google.gwt.dom.client.StyleInjector;
 import com.google.gwt.user.client.Command;
 import com.google.gwt.user.client.Window;
+import com.google.gwt.user.client.ui.Label;
 import com.google.gwt.user.client.ui.RootLayoutPanel;
+import com.google.gwt.user.client.ui.SimplePanel;
 
 import org.rstudio.core.client.BrowseCap;
 import org.rstudio.core.client.Debug;
@@ -49,30 +51,32 @@ import org.rstudio.studio.client.application.ui.appended.ApplicationEndedPopupPa
 import org.rstudio.studio.client.application.ui.serializationprogress.ApplicationSerializationProgress;
 import org.rstudio.studio.client.application.ui.support.SupportPopupMenu;
 import org.rstudio.studio.client.common.StudioResources;
-import org.rstudio.studio.client.common.compile.errorlist.CompileErrorListResources;
 import org.rstudio.studio.client.common.mirrors.ChooseMirrorDialog;
 import org.rstudio.studio.client.common.rpubs.ui.RPubsUploadDialog;
+import org.rstudio.studio.client.common.sourcemarkers.SourceMarkerListResources;
 import org.rstudio.studio.client.common.spelling.ui.SpellingCustomDictionariesWidget;
 import org.rstudio.studio.client.common.vcs.CreateKeyDialog;
 import org.rstudio.studio.client.common.vcs.ShowPublicKeyDialog;
 import org.rstudio.studio.client.common.vcs.SshKeyWidget;
 import org.rstudio.studio.client.common.vcs.ignore.IgnoreDialog;
 import org.rstudio.studio.client.htmlpreview.HTMLPreviewApplication;
-import org.rstudio.studio.client.impl.BrowserFence;
 import org.rstudio.studio.client.notebookv2.CompileNotebookv2OptionsDialog;
 import org.rstudio.studio.client.packrat.ui.PackratActionDialog;
 import org.rstudio.studio.client.packrat.ui.PackratResolveConflictDialog;
 import org.rstudio.studio.client.projects.ui.newproject.NewProjectResources;
 import org.rstudio.studio.client.projects.ui.prefs.ProjectPreferencesDialogResources;
 import org.rstudio.studio.client.rmarkdown.RmdOutputSatellite;
+import org.rstudio.studio.client.rsconnect.ui.RSConnectDeploy;
 import org.rstudio.studio.client.shiny.ShinyApplicationSatellite;
+import org.rstudio.studio.client.vcs.VCSApplication;
 import org.rstudio.studio.client.workbench.codesearch.ui.CodeSearchResources;
 import org.rstudio.studio.client.workbench.exportplot.ExportPlotResources;
 import org.rstudio.studio.client.workbench.prefs.views.PreferencesDialog;
 import org.rstudio.studio.client.workbench.ui.unsaved.UnsavedChangesDialog;
 import org.rstudio.studio.client.workbench.views.buildtools.ui.BuildPaneResources;
+import org.rstudio.studio.client.workbench.views.connections.ui.NewSparkConnectionDialog;
 import org.rstudio.studio.client.workbench.views.console.ConsoleResources;
-import org.rstudio.studio.client.workbench.views.files.ui.FilesListCellTableResources;
+import org.rstudio.studio.client.workbench.views.files.ui.FilesListDataGridResources;
 import org.rstudio.studio.client.workbench.views.history.view.HistoryPane;
 import org.rstudio.studio.client.workbench.views.history.view.Shelf;
 import org.rstudio.studio.client.workbench.views.packages.ui.CheckForUpdatesDialog;
@@ -80,8 +84,10 @@ import org.rstudio.studio.client.workbench.views.packages.ui.InstallPackageDialo
 import org.rstudio.studio.client.workbench.views.packages.ui.PackagesCellTableResources;
 import org.rstudio.studio.client.workbench.views.packages.ui.actions.ActionCenter;
 import org.rstudio.studio.client.workbench.views.plots.ui.manipulator.ManipulatorResources;
+import org.rstudio.studio.client.workbench.views.source.SourceSatellite;
 import org.rstudio.studio.client.workbench.views.source.editors.codebrowser.CodeBrowserEditingTargetWidget;
 import org.rstudio.studio.client.workbench.views.source.editors.text.AceEditor;
+import org.rstudio.studio.client.workbench.views.source.editors.text.cpp.CppCompletionResources;
 import org.rstudio.studio.client.workbench.views.source.editors.text.findreplace.FindReplaceBar;
 import org.rstudio.studio.client.workbench.views.vcs.common.ChangelistTable;
 import org.rstudio.studio.client.workbench.views.vcs.common.diff.LineTableView;
@@ -93,46 +99,49 @@ public class RStudio implements EntryPoint
    public void onModuleLoad() 
    {
       Debug.injectDebug();
-
       Document.get().getBody().getStyle().setBackgroundColor("#e1e2e5");
-
-      BrowserFence fence = GWT.create(BrowserFence.class);
-      fence.go(new Command()
-      {
-         public void execute()
-         {
-            Command dismissProgressAnimation = showProgress();
-            delayLoadApplication(dismissProgressAnimation);
-         }
-      });
+      Command dismissProgressAnimation = showProgress();
+      delayLoadApplication(dismissProgressAnimation);
    }
 
    private Command showProgress()
    {
+      final Label background = new Label();
+      background.getElement().getStyle().setZIndex(1000);
+      background.getElement().getStyle().setBackgroundColor("#e1e2e5");
+      final RootLayoutPanel rootPanel = RootLayoutPanel.get();
+      rootPanel.add(background);
+      rootPanel.setWidgetTopBottom(background, 0, Style.Unit.PX, 
+                                               0, Style.Unit.PX);
+      rootPanel.setWidgetLeftRight(background, 0, Style.Unit.PX, 
+                                               0, Style.Unit.PX);
+      
       String progressUrl = ProgressImages.createLargeGray().getUrl();
-      final DivElement div = Document.get().createDivElement();
       StringBuilder str = new StringBuilder();
       str.append("<img src=\"");
       str.append(progressUrl);
       str.append("\"");
-      if (BrowseCap.isRetina())
+      if (BrowseCap.devicePixelRatio() > 1.0)
          str.append("width=24 height=24");
       str.append("/>");
+      final SimplePanel progressPanel = new SimplePanel();
+      final Element div = progressPanel.getElement();
       div.setInnerHTML(str.toString());
       div.getStyle().setWidth(100, Style.Unit.PCT);
       div.getStyle().setMarginTop(200, Style.Unit.PX);
       div.getStyle().setProperty("textAlign", "center");
       div.getStyle().setZIndex(1000);
       ElementIds.assignElementId(div, ElementIds.LOADING_SPINNER);
-      Document.get().getBody().appendChild(div);
-
+      rootPanel.add(progressPanel);
+     
       return new Command()
       {
          public void execute()
          {
             try
             {
-               Document.get().getBody().removeChild(div);
+               rootPanel.remove(progressPanel);
+               rootPanel.remove(background);
             }
             catch (Exception e)
             {
@@ -161,7 +170,7 @@ public class RStudio implements EntryPoint
                   ensureStylesInjected();
                   
                   String view = Window.Location.getParameter("view");
-                  if ("review_changes".equals(view))
+                  if (VCSApplication.NAME.equals(view))
                   {
                      RStudioGinjector.INSTANCE.getVCSApplication().go(
                            RootLayoutPanel.get(),
@@ -185,6 +194,13 @@ public class RStudio implements EntryPoint
                            RootLayoutPanel.get(), 
                            dismissProgressAnimation);
                   }
+                  else if (view != null && 
+                           view.startsWith(SourceSatellite.NAME_PREFIX))
+                  {
+                     SourceSatellite satellite = new SourceSatellite(view);
+                     satellite.go(RootLayoutPanel.get(), 
+                           dismissProgressAnimation);
+                  }
                   else
                   {
                      RStudioGinjector.INSTANCE.getApplication().go(
@@ -206,10 +222,10 @@ public class RStudio implements EntryPoint
       FileDialogResources.INSTANCE.styles().ensureInjected();
       ManipulatorResources.INSTANCE.manipulatorStyles().ensureInjected();
       PackagesCellTableResources.INSTANCE.cellTableStyle().ensureInjected();
-      FilesListCellTableResources.INSTANCE.cellTableStyle().ensureInjected();
+      FilesListDataGridResources.INSTANCE.dataGridStyle().ensureInjected();
       ExportPlotResources.INSTANCE.styles().ensureInjected();
       CodeSearchResources.INSTANCE.styles().ensureInjected();
-      CompileErrorListResources.INSTANCE.styles().ensureInjected();
+      SourceMarkerListResources.INSTANCE.styles().ensureInjected();
       BuildPaneResources.INSTANCE.styles().ensureInjected();
       
       ProgressDialog.ensureStylesInjected();
@@ -252,6 +268,9 @@ public class RStudio implements EntryPoint
       PackratResolveConflictDialog.ensureStylesInjected();
       PackratActionDialog.ensureStylesInjected();
       LocalRepositoriesWidget.ensureStylesInjected();
+      CppCompletionResources.INSTANCE.styles().ensureInjected();
+      RSConnectDeploy.RESOURCES.style().ensureInjected();
+      NewSparkConnectionDialog.ensureStylesInjected();
       
       StyleInjector.inject(
             "button::-moz-focus-inner {border:0}");

@@ -23,6 +23,12 @@ public class Position extends JavaScriptObject
    public static native Position create(int row, int column) /*-{
       return {row: row, column: column};
    }-*/;
+   
+   public static native Position create(Position other) /*-{
+      if (other === null)
+        return null;
+      return {row: other.row, column: other.column };
+   }-*/;
 
    public native final int getRow() /*-{
       return this.row;
@@ -63,6 +69,11 @@ public class Position extends JavaScriptObject
    {
       return compareTo(other) >= 0;
    }
+   
+   public final boolean isEqualTo(Position other)
+   {
+      return compareTo(other) == 0;
+   }
 
    public native final void setRow(int row) /*-{
       this.row = row;
@@ -71,4 +82,15 @@ public class Position extends JavaScriptObject
    public native final void setColumn(int column) /*-{
       this.column = column;
    }-*/;
+   
+   public native final void setPosition(Position position) /*-{
+      this.row = position.row;
+      this.column = position.column;
+   }-*/;
+   
+   public final String asString()
+   {
+      return "[" + getRow() + ", " + getColumn() + "]";
+   }
+      
 }

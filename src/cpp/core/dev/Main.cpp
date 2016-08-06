@@ -14,18 +14,19 @@
  */
 
 #include <iostream>
+#include <fstream>
 
 #include <boost/test/minimal.hpp>
-#include <boost/foreach.hpp>
 
 #include <core/Error.hpp>
 #include <core/Log.hpp>
 #include <core/system/System.hpp>
 
-#include <core/r_util/RVersionInfo.hpp>
-#include <core/r_util/RVersionsPosix.hpp>
 
-using namespace core ;
+#include <core/r_util/RSessionContext.hpp>
+
+using namespace rstudio;
+using namespace rstudio::core;
 
 int test_main(int argc, char * argv[])
 {
@@ -39,22 +40,16 @@ int test_main(int argc, char * argv[])
       if (error)
          LOG_ERROR(error);
 
-      using namespace core::r_util;
 
-      std::vector<RVersionNumber> vers;
-      vers.push_back(RVersionNumber::parse("3.0"));
-      vers.push_back(RVersionNumber::parse("2.14.3"));
-      vers.push_back(RVersionNumber::parse("3.0.1"));
-      vers.push_back(RVersionNumber::parse("2.15"));
-      vers.push_back(RVersionNumber::parse("3.1.0"));
+      r_util::SessionContext context(
+          "jsmith", r_util::SessionScope("~/finance/reports/q1-final", "45"));
 
-      std::sort(vers.begin(), vers.end());
-      std::reverse(vers.begin(), vers.end());
+      std::string file = r_util::sessionContextToStreamFile(context);
+      std::cerr << file << std::endl;
 
-      BOOST_FOREACH(RVersionNumber ver, vers)
-      {
-         std::cerr << ver << std::endl;
-      }
+      r_util::SessionContext context2 = r_util::streamFileToSessionContext(file);
+
+      BOOST_CHECK(context == context2);
 
       return EXIT_SUCCESS;
    }

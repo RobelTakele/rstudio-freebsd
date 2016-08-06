@@ -17,13 +17,16 @@ package org.rstudio.studio.client.application.events;
 public interface ApplicationEventHandlers extends LogoutRequestedHandler,
                                                   UnauthorizedHandler,
                                                   ReloadEvent.Handler,
+                                                  ReloadWithLastChanceSaveEvent.Handler,
                                                   QuitHandler,
+                                                  SwitchToRVersionEvent.Handler,
                                                   SuicideHandler,
                                                   SessionAbendWarningHandler,
                                                   SessionSerializationHandler,
                                                   ServerUnavailableHandler,
                                                   ClientDisconnectedHandler,
                                                   InvalidClientVersionHandler,
-                                                  ServerOfflineHandler
+                                                  ServerOfflineHandler,
+                                                  InvalidSessionEvent.Handler
 {
 }

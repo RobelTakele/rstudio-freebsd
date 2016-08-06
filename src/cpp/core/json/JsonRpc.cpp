@@ -21,6 +21,7 @@
 #include <core/http/Response.hpp>
 
 
+namespace rstudio {
 namespace core {
 namespace json {
 
@@ -86,12 +87,21 @@ Error parseJsonRpcRequest(const std::string& input, JsonRpcRequest* pRequest)
             
             pRequest->clientId = fieldValue.get_str();
          }
+         // legacy version field
          else if (fieldName == "version" )
          {
-            if (!json::isType<double>(fieldValue))
-               return Error(errc::InvalidRequest, ERROR_LOCATION);
-            
-            pRequest->version = fieldValue.get_value<double>();
+            if (json::isType<double>(fieldValue))
+               pRequest->version = fieldValue.get_value<double>();
+            else
+               pRequest->version = 0;
+         }
+         // new version field
+         else if (fieldName == "clientVersion")
+         {
+            if (fieldValue.type() == json::StringType)
+               pRequest->clientVersion = fieldValue.get_str();
+            else
+               pRequest->clientVersion = std::string();
          }
       }
 
@@ -217,7 +227,8 @@ void JsonRpcResponse::setError(const Error& error)
    setError(error, json::Value());
 }
    
-void JsonRpcResponse::setError(const boost::system::error_code& ec)
+void JsonRpcResponse::setError(const boost::system::error_code& ec,
+                               const json::Value& clientInfo)
 {
    // remove result
    response_.erase(kRpcResult);
@@ -226,6 +237,12 @@ void JsonRpcResponse::setError(const boost::system::error_code& ec)
    // error from error code
    json::Object error ;
    copyErrorCodeToJsonError(ec, &error);
+
+   // client info if provided
+   if (!clientInfo.is_null())
+   {
+      error["client_info"] = clientInfo;
+   }
    
    // sub-error is null
    error["error"] = json::Value();
@@ -273,7 +290,7 @@ void setJsonRpcResponse(const core::json::JsonRpcResponse& jsonRpcResponse,
 class JsonRpcErrorCategory : public boost::system::error_category
 {
 public:
-   virtual const char * name() const;
+   virtual const char * name() const BOOST_NOEXCEPT;
    virtual std::string message( int ev ) const;
 };
 
@@ -283,7 +300,7 @@ const boost::system::error_category& jsonRpcCategory()
    return jsonRpcErrorCategoryConst ;
 }
 
-const char * JsonRpcErrorCategory::name() const
+const char * JsonRpcErrorCategory::name() const BOOST_NOEXCEPT
 {
    return "jsonrpc" ;
 }
@@ -340,6 +357,9 @@ std::string JsonRpcErrorCategory::message( int ev ) const
       case errc::ServerOffline:
          return "Server is offline";
 
+      case errc::InvalidSession:
+         return "Invalid session";
+
       default:
          BOOST_ASSERT(false);
          return "Unknown error type" ;
@@ -375,6 +395,7 @@ JsonRpcAsyncMethod adaptMethodToAsync(JsonRpcMethod synchronousMethod)
 
 } // namespace json
 } // namespace core
+} // namespace rstudio
 
 
 

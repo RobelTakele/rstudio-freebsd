@@ -72,8 +72,36 @@
         ""
      })
   }
-  else
-    ""
+  else {
+    # return render_site if we are in a website
+    siteGenerator <- tryCatch(rmarkdown::site_generator(file),
+                              error = function(e) NULL)
+    if (!is.null(siteGenerator))
+      "rmarkdown::render_site"
+    else
+      ""
+  }
+})
+
+# given an input file, return the associated output file, and attempt to deduce
+# whether it's up to date (e.g. for input.Rmd producing input.html, see whether
+# input.html exists and has been written since input.Rmd)
+.rs.addFunction("getRmdOutputInfo", function(target) {
+  # compute the name of the output file
+  lines <- readLines(target, warn = FALSE)
+  outputFormat <- rmarkdown:::output_format_from_yaml_front_matter(lines)
+  outputFormat <- rmarkdown:::create_output_format(
+                                    outputFormat$name, outputFormat$options)
+  outputFile <- rmarkdown:::pandoc_output_file(target, outputFormat$pandoc)
+  outputPath <- file.path(dirname(target), outputFile) 
+
+  # ensure output file exists
+  current <- file.exists(outputPath) && 
+             file.info(outputPath)$mtime >= file.info(target)$mtime
+  
+  return(list(
+    output_file = .rs.scalar(outputPath),
+    is_current  = .rs.scalar(current)))
 })
 
 # given a path to a folder on disk, return information about the R Markdown
@@ -95,6 +123,24 @@
       templateDetails$create_dir <- TRUE
 
    templateDetails
+})
+
+
+.rs.addFunction("evaluateRmdParams", function(contents) {
+
+   # extract the params using knitr::knit_params
+   knitParams <- knitr::knit_params(contents)
+
+   if (length(knitParams) > 0)
+   {
+      # turn them into a named list
+      params <- list()
+      for (param in knitParams)
+         params[[param$name]] <- param$value
+
+      # inject into global environment
+      assign("params", params, envir = globalenv())
+   }
 })
 
 .rs.addJsonRpcHandler("convert_to_yaml", function(input)
@@ -132,10 +178,105 @@
 
 
 .rs.addJsonRpcHandler("rmd_output_format", function(input, encoding) {
+  if (Encoding(input) == "unknown")
+    Encoding(input) <- "UTF-8"
   formats <- rmarkdown:::enumerate_output_formats(input, encoding = encoding)
   if (is.character(formats))
     .rs.scalar(formats[[1]])
   else
     NULL
 })
+
+.rs.addGlobalFunction("knit_with_parameters", 
+                      function(file, encoding = getOption("encoding")) {
+   
+   # result to return via event
+   result <- NULL
+   
+   # check for parameters 
+   if (length(knitr::knit_params(readLines(file, 
+                                           warn = FALSE, 
+                                           encoding = encoding),
+                                 evaluate = FALSE)) > 0) {
+      
+      # allocate temp file to hold parameter values
+      paramsFile <- .Call("rs_paramsFileForRmd", file)
+     
+      # read any existing parameters contained therin
+      params <- list()
+      if (file.exists(paramsFile))
+         params <- readRDS(paramsFile)
+      
+      # ask for parameters
+      params <- rmarkdown::knit_params_ask(
+         file, 
+         params = params,
+         shiny_args = list(
+            launch.browser = function(url, ...) {
+               .Call("rs_showShinyGadgetDialog",
+                     "Knit with Parameters",
+                     url,
+                     600,
+                     600)
+            },
+            quiet = TRUE),
+         save_caption = "Knit",
+         encoding = encoding
+      )
+      
+      if (!is.null(params)) {
+         saveRDS(params, file = paramsFile)
+         result <- paramsFile
+      }
+      
+   } else {
+      # return special "none" value if there are no params
+      result <- "none"
+   }
+   
+   .rs.enqueClientEvent("rmd_params_ready", result)
+
+   invisible(NULL)
+})
+
+.rs.addJsonRpcHandler("get_rmd_output_info", function(target) {
+  return(.rs.getRmdOutputInfo(target))
+})
+
+.rs.addFunction("inputDirToIndexFile", function(input_dir) {
+   index <- file.path(input_dir, "index.Rmd")
+   if (file.exists(index))
+      index
+   else {
+      index <- file.path(input_dir, "index.md")
+      if (file.exists(index))
+         index
+      else
+         NULL
+   }
+})
+
+.rs.addFunction("getAllOutputFormats", function(input_dir, encoding) {
+   index <- .rs.inputDirToIndexFile(input_dir)
+   if (!is.null(index))
+      rmarkdown:::enumerate_output_formats(input = index,
+                                           envir = parent.frame(),
+                                           encoding = encoding)
+   else
+      character()
+})
+
+.rs.addFunction("isBookdownWebsite", function(input_dir, encoding) {
+   index <- .rs.inputDirToIndexFile(input_dir)
+   if (!is.null(index)) {
+      
+      formats <- rmarkdown:::enumerate_output_formats(input = index,
+                                                      envir = parent.frame(),
+                                                      encoding = encoding)
+      any(grepl("^bookdown", formats))
+   }
+   else
+      FALSE
+})
+
 

@@ -14,53 +14,104 @@
  */
 package org.rstudio.studio.client.rmarkdown.model;
 
+import org.rstudio.studio.client.workbench.views.source.editors.text.DocDisplay;
+import org.rstudio.studio.client.workbench.views.source.editors.text.ace.Position;
+import org.rstudio.studio.client.workbench.views.source.editors.text.ace.Range;
+
+import com.google.gwt.regexp.shared.MatchResult;
+import com.google.gwt.regexp.shared.RegExp;
+
 public class YamlFrontMatter
 {
-   public static int[] getFrontMatterRange(String code)
+   public static Range getFrontMatterRange(DocDisplay display)
    {
-      String separator = RmdFrontMatter.FRONTMATTER_SEPARATOR;
-      int beginPos = code.indexOf(separator) + separator.length();
-      if (beginPos < 0)
+      // front matter can end with ... rather than ---; see spec:
+      // http://www.yaml.org/spec/1.2/spec.html#id2760395
+      RegExp frontMatterBegin = RegExp.compile("^---\\s*$", "gm");
+      RegExp frontMatterEnd = RegExp.compile("^(---|\\.\\.\\.)\\s*$", "gm");
+      Position begin = null;
+      Position end = null;
+      
+      for (int i = 0; i < display.getRowCount(); i++)
+      {
+         String code = display.getLine(i);
+         if (begin == null)
+         {
+            // haven't found front matter begin yet; test this line
+            MatchResult beginMatch = frontMatterBegin.exec(code);
+            if (beginMatch == null)
+            {
+               // ensure that only whitespace exists before the beginning --- 
+               // (this matches front matter extraction behavior in the R
+               // Markdown package)
+               if (!code.matches("\\s*"))
+                  break;
+            }
+            else
+            {
+               begin = Position.create(i + 1, 0);
+               continue;
+            }
+         }
+         else if (end == null)
+         {
+            // haven't found front matter end yet; test this line
+            MatchResult endMatch = frontMatterEnd.exec(code);
+            if (endMatch != null)
+            {
+               end = Position.create(i, 0);
+               break;
+            }
+         }
+      }
+      
+      if (begin == null || end == null)
          return null;
-      int endPos = code.indexOf(separator, beginPos);
-      if (endPos < 0)
-         return null;
-      return new int[] { beginPos, endPos };
+      
+      return Range.fromPoints(begin, end);
    }
    
-   public static String getFrontMatter(String code)
+   public static String getFrontMatter(DocDisplay display)
    {
-      int[] range = getFrontMatterRange(code);
+      Range range = getFrontMatterRange(display);
       if (range == null)
       {
          return "output: html_document\n";
       } 
       else
       {
-         return code.substring(range[0], range[1]);
+         return display.getTextForRange(range);
       }
    }
    
-   public static String applyFrontMatter(String code, String yaml) 
+   /**
+    * Replaces the document's front matter with the given front matter; 
+    * adds a new front matter section if none exists.
+    * 
+    * @param display The editor to mutate
+    * @param yaml    The new front matter
+    * @return Whether the editor buffer was mutated
+    */
+   public static boolean applyFrontMatter(DocDisplay display, String yaml) 
    {
       if (yaml == null || yaml.isEmpty())
-         return code;
+         return false;
       
-      int[] range = YamlFrontMatter.getFrontMatterRange(code);
+      Range range = YamlFrontMatter.getFrontMatterRange(display);
       if (range == null)
       {
          // add the YAML if no front matter exists
-         code = RmdFrontMatter.FRONTMATTER_SEPARATOR +
+         range = Range.create(0, 0, 0, 0);
+         yaml = RmdFrontMatter.FRONTMATTER_SEPARATOR +
                 yaml +
-                RmdFrontMatter.FRONTMATTER_SEPARATOR +
-                code;
+                RmdFrontMatter.FRONTMATTER_SEPARATOR;
       }
-      else
+      else if (display.getTextForRange(range) == yaml)
       {
-         // replace the front matter if already present
-         code = code.substring(0, range[0]) + yaml + 
-                code.substring(range[1], code.length());
+         return false;
       }
-      return code;
+
+      display.replaceRange(range, yaml);
+      return true;
    }
 }

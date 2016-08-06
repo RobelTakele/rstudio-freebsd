@@ -28,12 +28,14 @@
 #include <core/FilePath.hpp>
 #include <core/StringUtils.hpp>
 #include <core/FileSerializer.hpp>
+#include <core/HtmlUtils.hpp>
 
 #include "MathJax.hpp"
 
 #include "sundown/markdown.h"
 #include "sundown/html.h"
 
+namespace rstudio {
 namespace core {
 namespace markdown {
 
@@ -350,6 +352,7 @@ Error markdownToHTML(const std::string& markdownInput,
 
 {
    // exclude fenced code blocks
+   using namespace rstudio::core::html_utils;
    std::vector<ExcludePattern> excludePatterns;
    excludePatterns.push_back(ExcludePattern(boost::regex("^`{3,}[^\\n]*?$"),
                                             boost::regex("^`{3,}\\s*$")));
@@ -369,6 +372,11 @@ Error markdownToHTML(const std::string& markdownInput,
                                           &input,
                                           pHTMLOutput));
    }
+
+   // respect html-preserve
+   html_utils::HtmlPreserver htmlPreserver;
+   if (extensions.htmlPreserve)
+      htmlPreserver.preserve(&input);
 
    // strip yaml front-matter / pandoc metadata if requested
    if (extensions.stripMetadata)
@@ -443,8 +451,13 @@ Error markdownToHTML(const std::string& markdownInput,
    if (error)
       return error;
 
-   // append output and return success
+   // append output
    pHTMLOutput->append(output);
+
+   // restore htmlPreserve
+   if (extensions.htmlPreserve)
+      htmlPreserver.restore(pHTMLOutput);
+
    return Success();
 }
 
@@ -455,6 +468,7 @@ bool isMathJaxRequired(const std::string& htmlOutput)
 
 } // namespace markdown
 } // namespace core
+} // namespace rstudio
    
 
 

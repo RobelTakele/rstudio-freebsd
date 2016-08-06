@@ -34,12 +34,17 @@ import org.rstudio.studio.client.application.events.SuspendAndRestartEvent;
 import org.rstudio.studio.client.common.DelayedProgressRequestCallback;
 import org.rstudio.studio.client.common.GlobalDisplay;
 import org.rstudio.studio.client.common.SimpleRequestCallback;
-import org.rstudio.studio.client.common.compile.CompileError;
 import org.rstudio.studio.client.common.compile.CompileOutput;
-import org.rstudio.studio.client.common.compile.errorlist.CompileErrorList;
+import org.rstudio.studio.client.common.dependencies.DependencyManager;
 import org.rstudio.studio.client.common.filetypes.FileTypeRegistry;
+import org.rstudio.studio.client.common.sourcemarkers.SourceMarker;
+import org.rstudio.studio.client.common.sourcemarkers.SourceMarkerList;
+import org.rstudio.studio.client.server.ServerError;
+import org.rstudio.studio.client.workbench.WorkbenchContext;
 import org.rstudio.studio.client.workbench.WorkbenchView;
 import org.rstudio.studio.client.workbench.commands.Commands;
+import org.rstudio.studio.client.workbench.model.Session;
+import org.rstudio.studio.client.workbench.model.SessionInfo;
 import org.rstudio.studio.client.workbench.prefs.events.UiPrefsChangedEvent;
 import org.rstudio.studio.client.workbench.prefs.events.UiPrefsChangedHandler;
 import org.rstudio.studio.client.workbench.prefs.model.UIPrefs;
@@ -65,13 +70,15 @@ public class BuildPresenter extends BasePresenter
       void scrollToBottom();
       
       void showErrors(String basePath,
-                      JsArray<CompileError> errors, 
+                      JsArray<SourceMarker> errors, 
                       boolean ensureVisible,
                       int autoSelect);
       void buildCompleted();
       
       HasSelectionCommitHandlers<CodeNavigationTarget> errorList();
       
+      HasSelectionCommitHandlers<String> buildSubType();
+          
       HasClickHandlers stopButton();
    }
    
@@ -79,10 +86,13 @@ public class BuildPresenter extends BasePresenter
    public BuildPresenter(Display display, 
                          GlobalDisplay globalDisplay,
                          UIPrefs uiPrefs,
+                         WorkbenchContext workbenchContext,
                          BuildServerOperations server,
                          final Commands commands,
                          EventBus eventBus,
                          FileTypeRegistry fileTypeRegistry,
+                         Session session,
+                         DependencyManager dependencyManager,
                          SourceBuildHelper sourceBuildHelper)
    {
       super(display);
@@ -90,10 +100,13 @@ public class BuildPresenter extends BasePresenter
       server_ = server;
       globalDisplay_ = globalDisplay;
       uiPrefs_ = uiPrefs;
+      workbenchContext_ = workbenchContext;
       eventBus_ = eventBus;
       commands_ = commands;
       fileTypeRegistry_ = fileTypeRegistry;
       sourceBuildHelper_ = sourceBuildHelper;
+      session_ = session;
+      dependencyManager_ = dependencyManager;
         
       eventBus.addHandler(BuildStartedEvent.TYPE, 
                           new BuildStartedEvent.Handler()
@@ -129,12 +142,12 @@ public class BuildPresenter extends BasePresenter
                              event.getErrors(), 
                              true,
                              uiPrefs_.navigateToBuildError().getValue() ?
-                                 CompileErrorList.AUTO_SELECT_FIRST_ERROR :
-                                 CompileErrorList.AUTO_SELECT_NONE);
+                                 SourceMarkerList.AUTO_SELECT_FIRST_ERROR :
+                                 SourceMarkerList.AUTO_SELECT_NONE);
             
             if (uiPrefs_.navigateToBuildError().getValue())
             {
-               CompileError error = CompileError.getFirstError(event.getErrors());
+               SourceMarker error = SourceMarker.getFirstError(event.getErrors());
                if (error != null)
                {
                   fileTypeRegistry_.editFile(
@@ -152,6 +165,8 @@ public class BuildPresenter extends BasePresenter
          @Override
          public void onBuildCompleted(BuildCompletedEvent event)
          {
+            workbenchContext_.setBuildInProgress(false);
+            
             commands.stopBuild().setEnabled(false);
             
             view_.bringToFront();
@@ -195,6 +210,15 @@ public class BuildPresenter extends BasePresenter
             fileTypeRegistry_.editFile(fsi, target.getPosition());
          }
       });
+      
+      view_.buildSubType().addSelectionCommitHandler(
+         new SelectionCommitHandler<String>() {
+            @Override
+            public void onSelectionCommit(SelectionCommitEvent<String> event)
+            {
+               startBuild("build-all", event.getSelectedItem());
+            }
+      });
 
       view_.stopButton().addClickHandler(new ClickHandler() {
          @Override
@@ -217,7 +241,7 @@ public class BuildPresenter extends BasePresenter
          view_.showErrors(buildState.getErrorsBaseDir(),
                           buildState.getErrors(), 
                           false,
-                          CompileErrorList.AUTO_SELECT_NONE);
+                          SourceMarkerList.AUTO_SELECT_NONE);
       
       if (!buildState.isRunning())
          view_.buildCompleted();
@@ -291,21 +315,54 @@ public class BuildPresenter extends BasePresenter
       startBuild("clean-all");
    }
    
-    
    private void startBuild(final String type)
+   {
+      startBuild(type, "");
+   }
+   
+   private void startBuild(final String type, final String subType)
+   {
+      if (session_.getSessionInfo().getBuildToolsType().equals(
+                                       SessionInfo.BUILD_TOOLS_WEBSITE))
+      {
+          dependencyManager_.withRMarkdown("Building sites", new Command() {
+            @Override
+            public void execute()
+            {
+               executeBuild(type, subType);
+            }
+          });
+      }
+      else
+      {
+         executeBuild(type, subType);
+      }
+   }
+   
+   private void executeBuild(final String type, final String subType)
    {
       // attempt to start a build (this will be a silent no-op if there
       // is already a build running)
+      workbenchContext_.setBuildInProgress(true);
       sourceBuildHelper_.withSaveFilesBeforeCommand(new Command() {
          @Override
          public void execute()
          {
-            server_.startBuild(type, new SimpleRequestCallback<Boolean>() {
+            server_.startBuild(type, subType, 
+                               new SimpleRequestCallback<Boolean>() {
                @Override
                public void onResponseReceived(Boolean response)
                {
 
                }
+               
+               @Override
+               public void onError(ServerError error)
+               {
+                  super.onError(error);
+                  workbenchContext_.setBuildInProgress(false);
+               }
+              
             });
          }
       }, "Build");
@@ -370,7 +427,10 @@ public class BuildPresenter extends BasePresenter
    private final BuildServerOperations server_;
    private final Display view_ ; 
    private final EventBus eventBus_;
+   private final Session session_;
+   private final DependencyManager dependencyManager_;
    private final Commands commands_;
    private final FileTypeRegistry fileTypeRegistry_;
    private final SourceBuildHelper sourceBuildHelper_;
+   private final WorkbenchContext workbenchContext_;
 }

@@ -31,8 +31,9 @@
 
 #include <session/SessionModuleContext.hpp>
 
-using namespace core;
+using namespace rstudio::core;
 
+namespace rstudio {
 namespace session {
 namespace modules { 
 namespace presentation {
@@ -218,9 +219,14 @@ std::vector<std::string> Slide::invalidFields() const
 
 namespace {
 
-void insertField(std::vector<Slide::Field>* pFields, const Slide::Field& field)
+bool insertField(std::vector<Slide::Field>* pFields, const Slide::Field& field)
 {
+   // ignore empty records
+   if (field.first.empty())
+      return true;
+
    pFields->push_back(field);
+   return true;
 }
 
 } // anonymous namespace
@@ -501,4 +507,5 @@ Error SlideDeck::readSlides(const std::string& slides, const FilePath& baseDir)
 } // namespace presentation
 } // namespace modules
 } // namesapce session
+} // namespace rstudio
 

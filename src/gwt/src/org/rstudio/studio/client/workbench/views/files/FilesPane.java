@@ -24,6 +24,7 @@ import com.google.gwt.user.client.ui.Widget;
 import com.google.gwt.user.client.ui.PopupPanel.PositionCallback;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
+
 import org.rstudio.core.client.cellview.ColumnSortInfo;
 import org.rstudio.core.client.command.AppCommand;
 import org.rstudio.core.client.files.FileSystemItem;
@@ -34,12 +35,17 @@ import org.rstudio.core.client.widget.ToolbarPopupMenu;
 import org.rstudio.studio.client.common.FileDialogs;
 import org.rstudio.studio.client.common.GlobalDisplay;
 import org.rstudio.studio.client.common.filetypes.FileTypeRegistry;
+import org.rstudio.studio.client.common.icons.StandardIcons;
 import org.rstudio.studio.client.server.ServerDataSource;
 import org.rstudio.studio.client.server.ServerError;
 import org.rstudio.studio.client.server.ServerRequestCallback;
 import org.rstudio.studio.client.workbench.commands.Commands;
 import org.rstudio.studio.client.workbench.model.RemoteFileSystemContext;
+import org.rstudio.studio.client.workbench.model.Session;
+import org.rstudio.studio.client.workbench.model.SessionInfo;
 import org.rstudio.studio.client.workbench.ui.WorkbenchPane;
+import org.rstudio.studio.client.workbench.views.console.shell.assist.PopupPositioner;
+import org.rstudio.studio.client.workbench.views.files.model.DirectoryListing;
 import org.rstudio.studio.client.workbench.views.files.model.FileChange;
 import org.rstudio.studio.client.workbench.views.files.model.PendingFileUpload;
 import org.rstudio.studio.client.workbench.views.files.ui.*;
@@ -53,6 +59,7 @@ public class FilesPane extends WorkbenchPane implements Files.Display
                     FileDialogs fileDialogs,
                     Commands commands,
                     FileTypeRegistry fileTypeRegistry,
+                    Session session,
                     Provider<FileCommandToolbar> pFileCommandToolbar)
    {
       super("Files");
@@ -61,6 +68,7 @@ public class FilesPane extends WorkbenchPane implements Files.Display
       fileDialogs_ = fileDialogs;
       fileTypeRegistry_ = fileTypeRegistry;
       pFileCommandToolbar_ = pFileCommandToolbar;
+      session_ = session;
       ensureWidget();
    }
    
@@ -105,16 +113,31 @@ public class FilesPane extends WorkbenchPane implements Files.Display
    }
     
    public void listDirectory(final FileSystemItem directory, 
-                             ServerDataSource<JsArray<FileSystemItem>> dataSource)
+                             ServerDataSource<DirectoryListing> dataSource)
    {
       setProgress(true);
         
-      dataSource.requestData(new ServerRequestCallback<JsArray<FileSystemItem>>(){
-         public void onResponseReceived(JsArray<FileSystemItem> response)
+      dataSource.requestData(new ServerRequestCallback<DirectoryListing>(){
+         public void onResponseReceived(DirectoryListing response)
          {
             setProgress(false);
-            filePathToolbar_.setPath(directory.getPath());
-            filesList_.displayFiles(directory, response); 
+            String lastBrowseable = null;
+            if (!response.isParentBrowseable())
+            {
+               // if we can't go up, disable everything up to the current path
+               lastBrowseable = directory.getPath();
+            }
+            else
+            {
+               // if we're in someone else's project, disable paths above
+               // the project
+               SessionInfo si = session_.getSessionInfo();
+               if (si.getActiveProjectDir() != null && !si.projectParentBrowseable())
+                  lastBrowseable = si.getActiveProjectDir().getPath();
+            }
+               
+            filePathToolbar_.setPath(directory.getPath(), lastBrowseable);
+            filesList_.displayFiles(directory, response.getFiles()); 
          }
          public void onError(ServerError error)
          {
@@ -203,17 +226,43 @@ public class FilesPane extends WorkbenchPane implements Files.Display
        
        menu.addItem(new MenuItem(editLabel, true, onEdit));
        menu.addItem(new MenuItem(openLabel, true, onBrowse));
-      
+       
        menu.setPopupPositionAndShow(new PositionCallback() {
           @Override
           public void setPosition(int offsetWidth, int offsetHeight)
           {
              Event event = Event.getCurrentEvent();
-             menu.setPopupPosition(event.getClientX(), event.getClientY());     
+             PopupPositioner.setPopupPosition(menu, event.getClientX(), event.getClientY());
           }
        });
    }
 
+   @Override
+   public void showDataImportFileChoice(FileSystemItem file, 
+                                  Command onView,
+                                  Command onImport)
+   {
+       final ToolbarPopupMenu menu = new ToolbarPopupMenu();
+       
+       String editLabel = AppCommand.formatMenuLabel(
+          commands_.renameFile().getImageResource(), "View File", null);
+       String importLabel = AppCommand.formatMenuLabel(
+          StandardIcons.INSTANCE.import_dataset(), 
+          "Import Dataset...", 
+          null);
+       
+       menu.addItem(new MenuItem(editLabel, true, onView));
+       menu.addItem(new MenuItem(importLabel, true, onImport));
+       
+       menu.setPopupPositionAndShow(new PositionCallback() {
+          @Override
+          public void setPosition(int offsetWidth, int offsetHeight)
+          {
+             Event event = Event.getCurrentEvent();
+             PopupPositioner.setPopupPosition(menu, event.getClientX(), event.getClientY());
+          }
+       });
+   }
    
    @Override 
    protected Widget createMainWidget()
@@ -239,6 +288,10 @@ public class FilesPane extends WorkbenchPane implements Files.Display
          FileSystemItem home = FileSystemItem.home();
          observer_.onFileNavigation(home);
       }
+      else
+      {
+         filesList_.redraw();
+      }
    }
 
    @Override
@@ -253,6 +306,7 @@ public class FilesPane extends WorkbenchPane implements Files.Display
    private final GlobalDisplay globalDisplay_ ;
    private final FileDialogs fileDialogs_;
    private Files.Display.Observer observer_;
+   private final Session session_;
 
    private final FileTypeRegistry fileTypeRegistry_;
    private final Commands commands_;

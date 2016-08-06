@@ -1,0 +1,140 @@
+<!DOCTYPE ui:UiBinder SYSTEM "http://dl.google.com/gwt/DTD/xhtml.ent">
+<ui:UiBinder xmlns:ui="urn:ui:com.google.gwt.uibinder"
+   xmlns:g="urn:import:com.google.gwt.user.client.ui"
+   xmlns:txt="urn:import:org.rstudio.studio.client.workbench.views.source.editors.text">
+   
+   <ui:with field="res" type="org.rstudio.studio.client.workbench.views.source.editors.text.ChunkOutputWidget.Resources"/>
+
+   <ui:style type="org.rstudio.studio.client.workbench.views.source.editors.text.ChunkOutputWidget.ChunkStyle">
+   .clear, .expand
+   {
+      position: absolute;
+      top: 2px;
+      padding: 5px;
+      cursor: pointer;
+      z-index: 25;
+   }
+   
+   .clear
+   {
+      right: 12px;
+      padding: 5px;
+   }
+   
+   .expand 
+   {
+      right: 35px;
+      transition: transform 400ms ease, -webkit-transform 400ms ease;
+   }
+   
+   .collapsed .expand
+   {
+      transform: rotate(180deg);
+      -webkit-transform: rotate(180deg);
+   }
+   
+   .overflowY .clear
+   {
+      right: 25px;
+   }
+   
+   .overflowY .expand
+   {
+      right: 48px;
+   }
+
+   .frame
+   {
+      border: 1px solid #e5e5e5;
+      padding-top: 10px;
+      overflow: hidden;
+   }
+   
+   .outer
+   {
+      padding-bottom: 10px;
+      position: relative;
+   }
+
+   .root
+   {
+      position: relative;
+      overflow: auto;
+      max-height: 630px;
+      transition: opacity 400ms ease;
+      margin: 10px;
+   }
+   
+   .root pre 
+   {
+      margin-bottom: 0px;
+   }
+   
+   .empty
+   {
+      margin-left: auto;
+      margin-right: auto;
+      overflow: hidden;
+      opacity: 0.50;
+      text-align: center;
+      font-style: italic;
+   }
+   
+   .collapsed
+   {
+   }
+   
+   .expander
+   {
+      position: absolute;
+      top: 0px;
+      left: 0px;
+      display: none;
+      z-index: 25;
+   }
+
+   .collapsed .expander
+   {
+      display: block;
+      width: 90%;
+      height: 25px;
+      cursor: pointer;
+   }
+   
+   .spinner
+   {
+      display: block;
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      z-index: 25;
+      width: 20px;
+      height: 20px;
+      opacity: 0;
+      margin: -10px 0 0 -10px;
+      transition: opacity 400ms ease;
+   }
+   
+   .pendingResize
+   {
+      opacity: 0.5;
+      transition: opacity 400ms ease;
+   }
+   </ui:style>
+   <g:HTMLPanel styleName="{style.outer}">
+      <g:HTMLPanel styleName="{style.expander}"
+               ui:field="expander_"></g:HTMLPanel>
+      <g:HTMLPanel ui:field="frame_" styleName="{style.frame}">
+        <g:Image styleName="{style.clear}"
+                 ui:field="clear_"
+                 resource="{res.removeChunkIcon}"
+                 title="Clear Output"></g:Image>
+        <g:Image styleName="{style.expand}" 
+                 resource="{res.collapseChunkIcon}"
+                 title="Expand/Collapse Output"
+                 ui:field="expand_"></g:Image>
+        <g:FlowPanel styleName="{style.root}" ui:field="root_">
+        </g:FlowPanel>
+      </g:HTMLPanel>
+   </g:HTMLPanel>
+</ui:UiBinder> 

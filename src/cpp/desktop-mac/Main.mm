@@ -11,7 +11,8 @@
 #import "AppDelegate.h"
 #import "Utils.hpp"
 
-using namespace core;
+using namespace rstudio;
+using namespace rstudio::core;
 
 int main(int argc, char* argv[])
 {
@@ -24,6 +25,9 @@ int main(int argc, char* argv[])
    // initialize language environment variables
    desktop::utils::initializeLang();
  
+   // initialize prefs
+   desktop::utils::initializeSystemPrefs();
+   
    // initialize log
    core::system::initializeLog("rdesktop",
                                core::system::kLogLevelWarning,

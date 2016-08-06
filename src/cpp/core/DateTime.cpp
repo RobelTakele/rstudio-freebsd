@@ -15,6 +15,7 @@
 
 #include <core/DateTime.hpp>
 
+namespace rstudio {
 namespace core {
 namespace date_time {   
 
@@ -87,9 +88,18 @@ std::string format(const boost::posix_time::ptime& datetime,
    dateStream << datetime;
    return dateStream.str();
 }
+
+std::string millisecondsSinceEpochAsString(double ms)
+{
+   boost::posix_time::ptime time =
+                   date_time::timeFromMillisecondsSinceEpoch(ms);
+
+   return date_time::format(time, "%d %b %Y %H:%M:%S");
+}
    
 } // namespace date_time
 } // namespace core 
+} // namespace rstudio
 
 
 

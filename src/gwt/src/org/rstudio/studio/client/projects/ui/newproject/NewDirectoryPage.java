@@ -77,6 +77,7 @@ public class NewDirectoryPage extends NewProjectWizardPage
       namePanel.add(dirNameLabel_);
       txtProjectName_ = new TextBox();
       txtProjectName_.setWidth("100%");
+      txtProjectName_.getElement().setAttribute("spellcheck", "false");
       namePanel.add(txtProjectName_);
       panel.add(namePanel);
       addWidget(panel);
@@ -119,6 +120,11 @@ public class NewDirectoryPage extends NewProjectWizardPage
       // Initialize project with packrat
       chkPackratInit_ = new CheckBox("Use packrat with this project");
       chkPackratInit_.setValue(uiPrefs.newProjUsePackrat().getValue());
+      if (!sessionInfo.getPackratAvailable())
+      {
+         chkPackratInit_.setValue(false);
+         chkPackratInit_.setVisible(false);
+      }
       
       if (optionsPanel != null)
       {
@@ -226,6 +232,11 @@ public class NewDirectoryPage extends NewProjectWizardPage
    public void focus()
    {
       txtProjectName_.setFocus(true);
+   }
+   
+   public String getProjectName()
+   {
+      return txtProjectName_.getText().trim();
    }
    
    protected Label dirNameLabel_;

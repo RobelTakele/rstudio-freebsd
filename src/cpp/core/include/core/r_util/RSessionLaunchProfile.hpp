@@ -22,12 +22,15 @@
 
 #include <core/json/Json.hpp>
 
+#include <core/r_util/RSessionContext.hpp>
+
+namespace rstudio {
 namespace core {
 namespace r_util {
 
 struct SessionLaunchProfile
 {
-   std::string username;
+   SessionContext context;
    std::string password;
    std::string executablePath;
    core::system::ProcessConfig config;
@@ -40,6 +43,7 @@ SessionLaunchProfile sessionLaunchProfileFromJson(
 
 } // namespace r_util
 } // namespace core 
+} // namespace rstudio
 
 
 #endif // CORE_R_UTIL_R_SESSION_LAUNCH_PROFILE_HPP

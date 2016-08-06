@@ -15,9 +15,14 @@
 
 #include <server/ServerOptions.hpp>
 
+#include <fstream>
+
+#include <boost/algorithm/string/trim.hpp>
+
 #include <core/ProgramStatus.hpp>
 #include <core/ProgramOptions.hpp>
 #include <core/FilePath.hpp>
+#include <core/FileSerializer.hpp>
 
 #include <core/system/PosixUser.hpp>
 #include <core/system/PosixSystem.hpp>
@@ -26,8 +31,9 @@
 
 #include "ServerAppArmor.hpp"
 
-using namespace core ;
+using namespace rstudio::core ;
 
+namespace rstudio {
 namespace server {
 
 namespace {
@@ -72,6 +78,60 @@ void reportDeprecationWarnings(const Deprecated& userOptions,
 
    if (userOptions.authPamRequiresPriv != defaultOptions.authPamRequiresPriv)
       reportDeprecationWarning("auth-pam-requires-priv", os);
+}
+
+unsigned int stringToUserId(std::string minimumUserId,
+                            unsigned int defaultMinimumId,
+                            std::ostream& osWarnings)
+{
+   try
+   {
+      return boost::lexical_cast<unsigned int>(minimumUserId);
+   }
+   catch(boost::bad_lexical_cast&)
+   {
+      osWarnings << "Invalid value for auth-minimum-user-id '"
+                 << minimumUserId << "'. Using default of "
+                 << defaultMinimumId << "." << std::endl;
+
+      return defaultMinimumId;
+   }
+}
+
+unsigned int resolveMinimumUserId(std::string minimumUserId,
+                                  std::ostream& osWarnings)
+{
+   // default for invalid input
+   const unsigned int kDefaultMinimumId = 1000;
+
+   // auto-detect if requested
+   if (minimumUserId == "auto")
+   {
+      // if /etc/login.defs exists, scan it and look for a UID_MIN setting
+      FilePath loginDefs("/etc/login.defs");
+      if (loginDefs.exists())
+      {
+         const char uidMin[] = "UID_MIN";
+         std::ifstream defStream(loginDefs.absolutePath().c_str());
+         std::string line;
+         while (std::getline(defStream, line))
+         {
+            if (line.substr(0, sizeof(uidMin) - 1) == uidMin)
+            {
+               std::string value = boost::algorithm::trim_copy(
+                                       line.substr(sizeof(uidMin) + 1));
+               return stringToUserId(value, kDefaultMinimumId, osWarnings);
+            }
+         }
+      }
+
+      // none found, return default
+      return kDefaultMinimumId;
+   }
+   else
+   {
+      return stringToUserId(minimumUserId, kDefaultMinimumId, osWarnings);
+   }
 }
 
 } // anonymous namespace
@@ -139,7 +199,10 @@ ProgramStatus Options::read(int argc,
          "run program as daemon")
       ("server-app-armor-enabled",
          value<bool>(&serverAppArmorEnabled_)->default_value(1),
-         "is app armor enabled for this session");
+         "is app armor enabled for this session")
+      ("server-set-umask",
+         value<bool>(&serverSetUmask_)->default_value(1),
+         "set the umask to 022 on startup");
 
    // www - web server options
    options_description www("www") ;
@@ -165,7 +228,10 @@ ProgramStatus Options::read(int argc,
          "thread pool size")
       ("www-proxy-localhost",
          value<bool>(&wwwProxyLocalhost_)->default_value(true),
-         "proxy requests to localhost ports over main server port");
+         "proxy requests to localhost ports over main server port")
+      ("www-verify-user-agent",
+         value<bool>(&wwwVerifyUserAgent_)->default_value(true),
+         "verify that the user agent is compatible");
 
    // rsession
    Deprecated dep;
@@ -197,6 +263,7 @@ ProgramStatus Options::read(int argc,
          "rsession user process limit - DEPRECATED");
    
    // still read depracated options (so we don't break config files)
+   std::string authMinimumUserId, authLoginPageHtml;
    options_description auth("auth");
    auth.add_options()
       ("auth-none",
@@ -207,12 +274,21 @@ ProgramStatus Options::read(int argc,
         value<bool>(&authValidateUsers_)->default_value(
                                  core::system::effectiveUserIsRoot()),
         "validate that authenticated users exist on the target system")
+      ("auth-stay-signed-in-days",
+        value<int>(&authStaySignedInDays_)->default_value(30),
+       "number of days for stay signed in option")
       ("auth-encrypt-password",
         value<bool>(&authEncryptPassword_)->default_value(true),
         "encrypt password sent from login form")
+      ("auth-login-page-html",
+        value<std::string>(&authLoginPageHtml)->default_value("/etc/rstudio/login.html"),
+        "path to file containing additional html for login page")
       ("auth-required-user-group",
         value<std::string>(&authRequiredUserGroup_)->default_value(""),
         "limit to users belonging to the specified group")
+      ("auth-minimum-user-id",
+        value<std::string>(&authMinimumUserId)->default_value("auto"),
+        "limit to users with a required minimum user id")
       ("auth-pam-helper-path",
         value<std::string>(&authPamHelperPath_)->default_value("rserver-pam"),
        "path to PAM helper binary")
@@ -317,6 +393,18 @@ ProgramStatus Options::read(int argc,
    resolvePath(binaryPath, &rldpathPath_);
    resolvePath(resourcePath, &rsessionConfigFile_);
 
+   // resolve minimum user id
+   authMinimumUserId_ = resolveMinimumUserId(authMinimumUserId, osWarnings);
+
+   // read auth login html
+   FilePath loginPageHtmlPath(authLoginPageHtml);
+   if (loginPageHtmlPath.exists())
+   {
+      Error error = core::readStringFromFile(loginPageHtmlPath, &authLoginPageHtml_);
+      if (error)
+         LOG_ERROR(error);
+   }
+
    // return status
    return status;
 }
@@ -329,3 +417,4 @@ void Options::resolvePath(const FilePath& basePath,
 }
 
 } // namespace server
+} // namespace rstudio

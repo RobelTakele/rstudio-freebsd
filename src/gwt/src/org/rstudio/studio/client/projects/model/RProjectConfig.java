@@ -113,6 +113,14 @@ public class RProjectConfig extends JavaScriptObject
       this.strip_trailing_whitespace = stripTrailingWhitespace;
    }-*/; 
    
+   public native final int getLineEndings() /*-{
+      return this.line_endings;
+   }-*/;  
+   
+   public native final void setLineEndings(int lineEndings) /*-{
+      this.line_endings = lineEndings;
+   }-*/;
+   
    public native final String getEncoding() /*-{
       return this.default_encoding;
    }-*/;
@@ -148,6 +156,7 @@ public class RProjectConfig extends JavaScriptObject
    public static final String BUILD_TYPE_NONE = "None";
    public static final String BUILD_TYPE_PACKAGE = "Package";
    public static final String BUILD_TYPE_MAKEFILE = "Makefile";
+   public static final String BUILD_TYPE_WEBSITE = "Website";
    public static final String BUILD_TYPE_CUSTOM = "Custom";
    
    public native final String getBuildType() /*-{
@@ -228,9 +237,15 @@ public class RProjectConfig extends JavaScriptObject
       return getPackageRoxygenize(ROXYGENIZE_COLLATE);
    }
    
+   public final boolean getPackageRoxygenizeVignette()
+   {
+      return getPackageRoxygenize(ROXYGENIZE_VIGNETTE);
+   }
+   
    public final void setPackageRoxygenize(boolean rd,
                                           boolean collate,
-                                          boolean namespace)
+                                          boolean namespace,
+                                          boolean vignette)
    {
       ArrayList<String> roclets = new ArrayList<String>();
       if (rd)
@@ -239,6 +254,8 @@ public class RProjectConfig extends JavaScriptObject
          roclets.add(ROXYGENIZE_COLLATE);
       if (namespace)
          roclets.add(ROXYGENIZE_NAMESPACE);
+      if (vignette)
+         roclets.add(ROXYGENIZE_VIGNETTE);
       
       String roxygenize = StringUtil.join(roclets, ROXYGENIZE_DELIM);
       setPackageRoxygenizeNative(roxygenize);
@@ -247,6 +264,7 @@ public class RProjectConfig extends JavaScriptObject
    private static final String ROXYGENIZE_RD = "rd";
    private static final String ROXYGENIZE_COLLATE = "collate";
    private static final String ROXYGENIZE_NAMESPACE = "namespace";
+   private static final String ROXYGENIZE_VIGNETTE = "vignette";
    private static final String ROXYGENIZE_DELIM = ",";
  
    private final boolean getPackageRoxygenize(String roclet)
@@ -273,6 +291,14 @@ public class RProjectConfig extends JavaScriptObject
 
    public native final void setMakefilePath(String makefilePath) /*-{
       this.makefile_path = makefilePath;
+   }-*/;
+   
+   public native final String getWebsitePath() /*-{
+      return this.website_path;
+   }-*/;
+
+   public native final void setWebsitePath(String websitePath) /*-{
+      this.website_path = websitePath;
    }-*/;
    
    public native final String getCustomScriptPath() /*-{

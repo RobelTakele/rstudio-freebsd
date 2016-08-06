@@ -2,14 +2,16 @@
 @eval fixedWidthFont org.rstudio.core.client.theme.ThemeFonts.getFixedWidthFont();
 
 @external fixedWidthFont;
-@external ace_editor, ace_text-layer, ace_gutter, ace_gutter-layer, ace_gutter-cell;
+@external ace_editor, ace_text-layer, ace_gutter, ace_gutter-layer, ace_gutter-cell, ace_info;
+@external ace_info, ace_warning, ace_error;
 @external ace_breakpoint, ace_inactive-breakpoint, ace_pending-breakpoint, ace_executing-line;
+@external ace_chunk-queued-line, ace_chunk-executed-line, ace_chunk-resting-line, ace_chunk-error-line;
 @external ace_sb;
 @external cueText;
 @external search;
 @external highlight, disabled;
 @external gwt-Button, gwt-Button-DialogAction, gwt-Button-DefaultDialogAction;
-@external gwt-CheckBox;
+@external gwt-CheckBox, gwt-RadioButton;
 @external gwt-DialogBox, gwt-DialogBox-ModalDialog;
 @external gwt-PopupPanelGlass;
 @external gwt-Label;
@@ -18,14 +20,17 @@
 @external gwt-MenuBar, gwt-MenuBar-vertical;
 @external gwt-SplitLayoutPanel-HDragger, gwt-SplitLayoutPanel-VDragger;
 @external gwt-SuggestBoxPopup, item-selected;
-@external gwt-TabLayoutPanel-Workbench;
 @external gwt-TabLayoutPanelTab, gwt-TabLayoutPanelTab-selected;
+@external gwt-TabLayoutPanelContentContainer, gwt-TabLayoutPanelTabs;
+@external gwt-TabLayoutPanelContent;
+@external gwt-TabLayoutPanel-Workbench;
 @external gwt-TabLayoutPanelTabs;
 @external gwt-DecoratedPopupPanel;
+@external editor_dark;
 
 @external windowframe, windowframe-maximized, windowframe-exclusive;
 
-@external windows, macintosh, linux;
+@external windows, windows-highdpi, macintosh, linux;
 @external ubuntu_mono;
 
 @external dialogTopLeft, dialogTopLeftInner,
@@ -105,7 +110,18 @@
 @url PENDINGBREAKPOINT pendingBreakpoint;
 @url EXECUTINGLINE executingLine;
 
+@url INFO syntaxInfo;
+@url WARNING syntaxWarning;
+@url ERROR syntaxError;
+
+@url INFODARK syntaxInfoDark;
+@url WARNINGDARK syntaxWarningDark;
+@url ERRORDARK syntaxErrorDark;
+
+@url HANDCURSOR handCursor;
+
 @url MACCHECK macCheck;
+@url RADIOBUTTONON radioButtonOn;
 
 body.windows, body.macintosh, body.linux {}
 
@@ -116,7 +132,10 @@ body {
 body {
    font-family: proportionalFont;
    font-size: 12px;
+   -ms-user-select: none;
+   -moz-user-select: none;
    -webkit-user-select: none;
+   user-select: none;
 }
 
 select {
@@ -148,7 +167,10 @@ button, input[type="reset"], input[type="button"], input[type="submit"] {
 }
 
 .selectableText {
+  -ms-user-select: text;
+  -moz-user-select: text;
   -webkit-user-select: text;
+  user-select: text;
   cursor: text;
 }
 
@@ -199,6 +221,20 @@ iframe {
 button {
    cursor: pointer;
 }
+.handCursor {
+	cursor: pointer;
+}
+
+@if rstudio.desktop true {
+.linux button {
+   cursor: HANDCURSOR 9 5, pointer;
+}
+
+.linux .handCursor {
+    
+   cursor: HANDCURSOR 9 5, pointer;
+}
+}
 
 textarea {
    outline: none;
@@ -222,29 +258,73 @@ pre {
 .ace_inactive-breakpoint,
 .ace_executing-line
 {
-   background-position: 10% center;
-   background-repeat: no-repeat;
+   background-position: 12% center !important;
+   background-repeat: no-repeat !important;
 }
 
 .ace_breakpoint
 {
-   background-image: ACTIVEBREAKPOINT;	
+   background-image: ACTIVEBREAKPOINT !important;
 }
 
 .ace_pending-breakpoint
 {
-	background-image: PENDINGBREAKPOINT;
+	background-image: PENDINGBREAKPOINT !important;
 }
 
 .ace_inactive-breakpoint
 {
-	background-image: INACTIVEBREAKPOINT;
+	background-image: INACTIVEBREAKPOINT !important;
 }
 
 .ace_executing-line
 {
-	background-image: EXECUTINGLINE;
+	background-image: EXECUTINGLINE !important;
 }
+
+
+.ace_gutter-cell.ace_chunk-queued-line,
+.ace_gutter-cell.ace_chunk-error-line
+{
+   position: relative;
+}
+
+.ace_chunk-queued-line:before,
+.ace_chunk-error-line:before
+{
+   position: absolute;
+   top: 0;
+   right: 3px;
+   content: '';
+   display: block;
+   height: 100%;
+   width: 7px;
+   z-index: -100;
+}
+
+.ace_chunk-queued-line:before
+{
+   background-color: rgb(24, 163, 82);
+   opacity: 0.3;
+}
+
+.ace_chunk-error-line:before
+{
+   background-color: rgb(201, 90, 96);
+}
+
+.ace_chunk-error-line:before,
+.ace_chunk-executed-line:before
+{
+   opacity: 1;
+}
+
+.ace_chunk-resting-line:before
+{
+   transition: opacity 500ms ease;
+   opacity: 0;
+}
+
 
 .ace_sb
 {
@@ -287,6 +367,11 @@ pre {
 .scrollableMenuBar .gwt-MenuItem {
    padding-right: 20px;
 }
+
+.menuRightImage {
+   cursor: pointer;
+}
+
 
 .highlight {
    color: #900 !important;
@@ -344,11 +429,11 @@ pre {
 }
 
 .gwt-DialogBox-ModalDialog, .gwt-DecoratedPopupPanel {
-   z-index: 1001;
+   z-index: 1000;
 }
 
 .gwt-SuggestBoxPopup {
-   z-index: 1002;	
+   z-index: 1000;	
    cursor: default;
 }
 
@@ -450,11 +535,9 @@ pre {
    height: 3px;
 }
 
-
 .windowframe .maximize {
    background-image: MAXIMIZE;
    z-index: 50;
-   cursor: pointer;
 }
 .windowframe-maximized .maximize,
 .windowframe-exclusive .maximize {
@@ -464,7 +547,6 @@ pre {
 .windowframe .minimize {
    background-image: MINIMIZE;
    z-index: 50;
-   cursor: pointer;
 }
 .windowframe .maximize:hover {
    background-image: MAXIMIZESELECTED;
@@ -483,6 +565,10 @@ pre {
 
 .windowframe {
    -webkit-font-smoothing: subpixel-antialiased;
+}
+
+.macintosh #rstudio_console_input {
+   margin-left: -1px;
 }
 
 /* on the Mac specifically, keeping the ACE input textarea on the same z-index
@@ -526,14 +612,12 @@ pre {
    height: 14px;
    background: RESTORE center no-repeat;
    margin: 4px 4px 0 0;
-   cursor: pointer;
 }
 .minimizedWindow .maximize {
    width: 14px;
    height: 14px;
    background: MAXIMIZE center no-repeat;
    margin: 4px 3px 0 0;
-   cursor: pointer;
 }
 .minimizedWindow .maximize:hover {
    background-image: MAXIMIZESELECTED;
@@ -611,6 +695,7 @@ body.avoid-move-cursor .gwt-SplitLayoutPanel-VDragger {
 .docTabPanel .gwt-TabLayoutPanelTab {
    cursor: default;
    margin-right: 2px;
+   background: inherit;
 }
 .docTabPanel .gwt-TabLayoutPanelTab-selected {
 }
@@ -632,7 +717,6 @@ body.avoid-move-cursor .gwt-SplitLayoutPanel-VDragger {
 .closeTabButton:hover {
    filter: literal("alpha(opacity = 100)") !important;
    opacity: 1.0;
-   cursor: pointer;
 }
 .tabLayout {
 }
@@ -643,6 +727,12 @@ body.avoid-move-cursor .gwt-SplitLayoutPanel-VDragger {
 .docTabIcon {
    margin-top: 2px;
    margin-right: 3px;
+}
+.docTabLabel {
+   overflow: hidden;
+   max-width: 200px;
+   white-space: nowrap;
+   text-overflow: ellipsis;
 }
 
 .docMenuScroll {
@@ -705,6 +795,7 @@ body.avoid-move-cursor .gwt-SplitLayoutPanel-VDragger {
 }
 .moduleTabPanel .gwt-TabLayoutPanelTab {
    font-size: 11px;
+   background: inherit;
 }
 .moduleTabPanel.minimized .gwt-TabLayoutPanelTab {
    margin-top: -1px;
@@ -770,6 +861,7 @@ body.avoid-move-cursor .gwt-SplitLayoutPanel-VDragger {
    height: 23px;
    background: TOOLBARBACKGROUND repeat-x top;
    padding: 0 0 0 6px;
+   white-space: nowrap;
 }
 
 .toolbar * {
@@ -789,7 +881,6 @@ body.avoid-move-cursor .gwt-SplitLayoutPanel-VDragger {
    vertical-align: top;
    height: 21px;
    overflow: hidden;
-   cursor: pointer;
 }
 .toolbarButton.noLabel {
    margin-right: 4px;
@@ -827,12 +918,18 @@ body.avoid-move-cursor .gwt-SplitLayoutPanel-VDragger {
    background: TABBACKGROUND bottom repeat-x;
    height: TABSTRIPHEIGHT;
 }
+
+.secondaryToolbarPanel {
+  background: rgb(240,241,241);
+  border-bottom: 1px solid rgb(169,169,169);
+}
+
 .toolbarButtonRightImage {
    display: none;
 }
 .toolbarButtonMenu .toolbarButtonRightImage {
    display: inline;
-   margin: 4px 0 0 2px;
+   margin: 4px 0 0 5px;
 }
 .toolbarButtonMenuOnly {
    position: relative;
@@ -852,6 +949,34 @@ body.avoid-move-cursor .gwt-SplitLayoutPanel-VDragger {
    white-space: nowrap;
 }
 
+.toolbarButtonInfoLabel {
+   color: #82868C;
+}
+
+.toolbarButtonLatchable {
+  padding-right: 6px;
+  padding-left: 4px;
+  height: 16px;
+}
+
+.toolbarButtonLatchable .toolbarButtonLabel {
+  margin-top: 1px;
+  margin-left: 3px;
+}
+
+.toolbarButtonLatched {
+  /*
+   -moz-border-image: -moz-linear-gradient(top, #bfc8d0 0%, #cfd4d8 100%);
+   -webkit-border-image: -webkit-linear-gradient(top, #bfc8d0 0%, #cfd4d8 100%);
+   border-image: linear-gradient(to bottom, #bfc8d0 0%, #cfd4d8 100%);
+   border-image-slice: 1;
+   border-width: 1px;
+   */
+   border-radius: 2px;
+   background-color: #e3e7e9;
+   border: 1px solid #bfc8d0;
+}
+
 .globalToolbar {
    height:27px;
    z-index: 1;
@@ -866,6 +991,10 @@ body.avoid-move-cursor .gwt-SplitLayoutPanel-VDragger {
    margin-right: 2px;
 }
 
+.globalToolbar .toolbarButtonMenu .toolbarButtonInfoLabel {
+   margin-left: 1px;
+}
+
 .emptyProjectMenu .toolbarButtonRightImage {
 	margin-left: 4px;
 }
@@ -876,12 +1005,12 @@ body.avoid-move-cursor .gwt-SplitLayoutPanel-VDragger {
 
 @if user.agent gecko1_8 { .webHeaderBarCommandsProjectMenu {
       margin-top: 1px;
-      margin-left: 14px;
+      margin-left: 5px;
    }
  }
  @else { .webHeaderBarCommandsProjectMenu {
       margin-top: 2px;
-      margin-left: 15px;
+      margin-left: 6px;
    }
  }
 
@@ -1010,6 +1139,8 @@ body.ubuntu_mono .searchBox {
    padding-top: 12px;
    width: 300px;
    padding-bottom: 12px;
+   overflow-wrap: break-word;
+   word-wrap: break-word;
 }
 
 .sessionAbendMessage {
@@ -1021,13 +1152,14 @@ body.ubuntu_mono .searchBox {
    font-weight: bold;
 }
 
-.linkDownArrow {
-   cursor: pointer;
-}
-
 @sprite td.environmentDataFrameCol {
    gwt-image: 'zoomDataset';
    background-position: right center; 
+}
+
+@sprite td.environmentFunctionCol {
+   gwt-image: 'viewFunctionCode';
+   background-position: right center;
 }
 
 .odd {
@@ -1078,10 +1210,6 @@ body.ubuntu_mono .searchBox {
    margin-bottom: 0;
 }
 
-.fileList .parentDirIcon {
-   cursor: pointer;
-}
-
 .locatorPanel {
    border: none;
    padding: 0;
@@ -1090,6 +1218,10 @@ body.ubuntu_mono .searchBox {
 
 .locatorPanel:hover {
    cursor: crosshair;
+}
+
+.tabOverflowPopup {
+   z-index: 10;
 }
 
 .tabOverflowPopup .gwt-MenuBar>table {
@@ -1145,28 +1277,79 @@ body.ubuntu_mono .searchBox {
   resize: none;
 }
 
-.macintosh .gwt-CheckBox input[type="checkbox"] {
+.linux .gwt-CheckBox {
+  margin-bottom: 4px;
+}
+
+/* checkboxes on the Cocoa (Mac) desktop client and checks/radio buttons on the
+ * Linux desktop client have some rendering and positioning inconsistencies, so
+ * we redraw them with CSS. */
+
+.macintosh .gwt-CheckBox input[type="checkbox"],
+.linux .gwt-CheckBox input[type="checkbox"],
+.linux .gwt-RadioButton input[type="radio"],
+.windows-highdpi .gwt-CheckBox input[type="checkbox"],
+.windows-highdpi .gwt-RadioButton input[type="radio"] {
   -webkit-appearance: none;
-  -webkit-border-radius: 3px;
   outline: none;
   width: 13px;
   height: 13px;
   border: 1px solid #b0b0b0;
   background: #ffffff;
   vertical-align: middle;
-  margin: 3px;
+  margin: 3px 3px 5px 3px;
+}
+
+.macintosh .gwt-CheckBox input[type="checkbox"],
+.linux .gwt-CheckBox input[type="checkbox"],
+.windows-highdpi .gwt-CheckBox input[type="checkbox"] {
+  -webkit-border-radius: 3px;
+}
+
+.linux .gwt-RadioButton input[type="radio"],
+.windows-highdpi .gwt-RadioButton input[type="radio"] {
+  -webkit-border-radius: 7px;
 }
 
 .macintosh .gwt-CheckBox input[type="checkbox"]:focus,
-.macintosh .gwt-CheckBox input[type="checkbox"]:active {
+.macintosh .gwt-CheckBox input[type="checkbox"]:active,
+.linux .gwt-CheckBox input[type="checkbox"]:focus,
+.linux .gwt-CheckBox input[type="checkbox"]:active,
+.linux .gwt-RadioButton input[type="radio"]:focus,
+.linux .gwt-RadioButton input[type="radio"]:active,
+.windows-highdpi .gwt-CheckBox input[type="checkbox"]:focus,
+.windows-highdpi .gwt-CheckBox input[type="checkbox"]:active,
+.windows-highdpi .gwt-RadioButton input[type="radio"]:focus,
+.windows-highdpi .gwt-RadioButton input[type="radio"]:active
+{
   border-color: #707070;
 }
 
-.macintosh .gwt-CheckBox input[type="checkbox"]:checked {
+.macintosh .gwt-CheckBox input[type="checkbox"]:checked,
+.linux .gwt-CheckBox input[type="checkbox"]:checked,
+.linux .gwt-RadioButton input[type="radio"]:checked,
+.windows-highdpi .gwt-CheckBox input[type="checkbox"]:checked,
+.windows-highdpi .gwt-RadioButton input[type="radio"]:checked
+{
   position: relative;
 }
 
-.macintosh .gwt-CheckBox input[type="checkbox"]:checked:before {
+.macintosh .gwt-CheckBox input[type="checkbox"]:checked:before,
+.linux .gwt-CheckBox input[type="checkbox"]:checked:before, 
+.windows-highdpi .gwt-CheckBox input[type="checkbox"]:checked:before {
+  background: MACCHECK;
+}
+
+.linux .gwt-RadioButton input[type="radio"]:checked:before,
+.windows-highdpi .gwt-RadioButton input[type="radio"]:checked:before {
+  background: RADIOBUTTONON;
+}
+
+.macintosh .gwt-CheckBox input[type="checkbox"]:checked:before,
+.linux .gwt-CheckBox input[type="checkbox"]:checked:before,
+.linux .gwt-RadioButton input[type="radio"]:checked:before,
+.windows-highdpi .gwt-CheckBox input[type="checkbox"]:checked:before,
+.windows-highdpi .gwt-RadioButton input[type="radio"]:checked:before {
   content: '';
   display: block;
   position: absolute;
@@ -1174,9 +1357,129 @@ body.ubuntu_mono .searchBox {
   left: 0px;
   width: 13px;
   height: 13px;
-  background: MACCHECK;
   background-repeat: no-repeat;
   background-position-x: 1px;
   background-position-y: 1px;
+}
+
+.dialogTabPanel .gwt-TabLayoutPanelTab
+{
+  background: #f5f5f5 -moz-linear-gradient(top, rgba(255,255,255,0.9) 0%, rgba(255,255,255,0.9) 17%, rgba(255,255,255,0) 50%); 
+  background: #f5f5f5 -webkit-gradient(linear, left top, left bottom, color-stop(0%,rgba(255,255,255,0.9)), color-stop(17%,rgba(255,255,255,0.9)), color-stop(50%,rgba(255,255,255,0)));
+  background: #f5f5f5 -webkit-linear-gradient(top, rgba(255,255,255,0.9) 0%,rgba(255,255,255,0.9) 17%,rgba(255,255,255,0) 50%);
+  background: #f5f5f5 linear-gradient(to bottom, rgba(255,255,255,0.9) 0%,rgba(255,255,255,0.9) 17%,rgba(255,255,255,0) 50%); 
+  padding-top: 4px;
+  padding-bottom: 4px;
+  padding-left: 12px;
+  padding-right: 12px;
+  border: 1px solid #c0c0c0;
+  border-left: none;
+  float: none;
+}
+
+.dialogTabPanel .gwt-TabLayoutPanelTabs
+{
+  text-align: center;
+  z-index: 10; 
+  margin-bottom: -12px;
+}
+
+.dialogTabPanel .gwt-TabLayoutPanelTab-selected
+{
+  background: #9c9c9c -moz-linear-gradient(top, rgba(0,0,0,0.1) 0%, rgba(255,255,255,0) 20%, rgba(0,0,0,0.01) 85%, rgba(0,0,0,0.1) 100%); 
+  background: #9c9c9c -webkit-gradient(linear, left top, left bottom, color-stop(0%,rgba(0,0,0,0.1)), color-stop(20%,rgba(255,255,255,0)), color-stop(85%,rgba(0,0,0,0.01)), color-stop(100%,rgba(0,0,0,0.1))); 
+  background: #9c9c9c -webkit-linear-gradient(top, rgba(0,0,0,0.1) 0%,rgba(255,255,255,0) 20%,rgba(0,0,0,0.01) 85%,rgba(0,0,0,0.1) 100%); 
+  background: #9c9c9c linear-gradient(to bottom, rgba(0,0,0,0.1) 0%,rgba(255,255,255,0) 20%,rgba(0,0,0,0.01) 85%,rgba(0,0,0,0.1) 100%); 
+  color: #ffffff; 
+}
+
+.dialogTabPanel .gwt-TabLayoutPanelContentContainer
+{
+  border: 1px solid #c0c0c0;
+}
+
+.dialogTabPanel .gwt-TabLayoutPanelContent
+{
+  padding-top: 25px;
+  padding-right: 10px;
+  padding-left: 10px;
+  padding-bottom : 5px;
+}
+
+.dialogTabPanel .gwt-TabLayoutPanelTab:first-child
+{
+  -webkit-border-top-left-radius: 4px;
+  -webkit-border-bottom-left-radius: 4px;
+  -moz-border-radius-topleft: 4px;
+  -moz-border-radius-bottomleft: 4px;
+  border-top-left-radius: 4px;
+  border-bottom-left-radius: 4px;
+  border-left: 1px solid #c0c0c0;
+}
+
+.dialogTabPanel .gwt-TabLayoutPanelTab:last-child
+{
+  -webkit-border-top-right-radius: 4px;
+  -webkit-border-bottom-right-radius: 4px;
+  -moz-border-radius-topright: 4px;
+  -moz-border-radius-bottomright: 4px;
+  border-top-right-radius: 4px;
+  border-bottom-right-radius: 4px;
+}
+
+.ace_gutter-cell.ace_info {
+   background-repeat: no-repeat;
+   background-position: 2px center;
+   background-image: INFO;
+}
+
+.ace_gutter-cell.ace_warning {
+   background-repeat: no-repeat;
+   background-position: 2px center;
+   background-image: WARNING;
+}
+
+.ace_gutter-cell.ace_error {
+   background-repeat: no-repeat;
+   background-position: 2px center;
+   background-image: ERROR;
+}
+
+.editor_dark .ace_gutter-cell.ace_info {
+   background-repeat: no-repeat;
+   background-position: 2px center;
+   background-image: INFODARK;
+}
+
+.editor_dark .ace_gutter-cell.ace_warning {
+   background-repeat: no-repeat;
+   background-position: 2px center;
+   background-image: WARNINGDARK;
+}
+
+.editor_dark .ace_gutter-cell.ace_error {
+   background-repeat: no-repeat;
+   background-position: 2px center;
+   background-image: ERRORDARK;
+}
+
+.menuSubheader {
+   font-family: proportionalFont;
+   text-transform: uppercase;
+   font-size: 11px;
+   color: #909090;
+   padding-left: 28px;
+   padding-top: 2px;
+   padding-bottom: 2px;
+}
+
+.borderedIFrame {
+   border: 1px solid #BBB;    
+}
+
+.toolbarInfoLabel {
+   color: #606060;
+   top: -1px;
+   margin-right: 6px;
 }
 

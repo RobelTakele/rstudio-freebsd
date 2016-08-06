@@ -32,6 +32,7 @@
 #include <core/FileSerializer.hpp>
 #include <core/FilePath.hpp>
 #include <core/FileInfo.hpp>
+#include <core/FileUtils.hpp>
 #include <core/Settings.hpp>
 #include <core/Exec.hpp>
 #include <core/DateTime.hpp>
@@ -45,6 +46,9 @@
 #include <core/system/ShellUtils.hpp>
 #include <core/system/Process.hpp>
 #include <core/system/RecycleBin.hpp>
+#ifndef _WIN32
+#include <core/system/FileMode.hpp>
+#endif
 
 #include <r/RSexp.hpp>
 #include <r/RExec.hpp>
@@ -60,8 +64,9 @@
 #include "SessionFilesQuotas.hpp"
 #include "SessionFilesListingMonitor.hpp"
 
-using namespace core ;
+using namespace rstudio::core ;
 
+namespace rstudio {
 namespace session {
 
 namespace modules { 
@@ -73,7 +78,7 @@ namespace {
 FilesListingMonitor s_filesListingMonitor;
 
 // make sure that monitoring persists accross suspended sessions
-const char * const kMonitoredPath = "files.monitored-path";   
+const char * const kFilesMonitoredPath = "files.monitored-path";
 
 void onSuspend(Settings* pSettings)
 {
@@ -86,7 +91,7 @@ void onSuspend(Settings* pSettings)
    }
 
    // set it
-   pSettings->set(kMonitoredPath, monitoredPath);
+   pSettings->set(kFilesMonitoredPath, monitoredPath);
 }
 
 void onResume(const Settings& settings)
@@ -195,6 +200,8 @@ Error listFiles(const json::JsonRpcRequest& request, json::JsonRpcResponse* pRes
    if (error)
       return error;
    FilePath targetPath = module_context::resolveAliasedPath(path) ;
+
+   json::Object result;
    
    // if this includes a request for monitoring
    core::json::Array jsonFiles;
@@ -224,7 +231,20 @@ Error listFiles(const json::JsonRpcRequest& request, json::JsonRpcResponse* pRes
          return error;
    }
 
-   pResponse->setResult(jsonFiles);
+   result["files"] = jsonFiles;
+
+   bool browseable = true;
+
+#ifndef _WIN32
+   // on *nix systems, see if browsing above this path is possible
+   error = core::system::isFileReadable(targetPath.parent(), &browseable);
+   if (error && !core::isPathNotFoundError(error))
+      LOG_ERROR(error);
+#endif
+
+   result["is_parent_browseable"] = browseable;
+
+   pResponse->setResult(result);
    return Success();
 }
 
@@ -307,33 +327,7 @@ core::Error deleteFiles(const core::json::JsonRpcRequest& request,
    return Success() ;
 }
    
-   
-bool copySourceFile(const FilePath& sourceDir, 
-                    const FilePath& destDir,
-                    int level,
-                    const FilePath& sourceFilePath)
-{
-   // compute the target path
-   std::string relativePath = sourceFilePath.relativePath(sourceDir);
-   FilePath targetPath = destDir.complete(relativePath);
-   
-   // if the copy item is a directory just create it
-   if (sourceFilePath.isDirectory())
-   {
-      Error error = targetPath.ensureDirectory();
-      if (error)
-         LOG_ERROR(error);
-   }
-   // otherwise copy it
-   else
-   {
-      Error error = sourceFilePath.copy(targetPath);
-      if (error)
-         LOG_ERROR(error);
-   }
-   return true;
-}
-   
+
 // IN: String sourcePath, String targetPath
 Error copyFile(const core::json::JsonRpcRequest& request,
                json::JsonRpcResponse* pResponse)
@@ -374,14 +368,7 @@ Error copyFile(const core::json::JsonRpcRequest& request,
    Error copyError ;
    if (sourceFilePath.isDirectory())
    {
-      // create the target directory
-      Error error = targetFilePath.ensureDirectory();
-      if (error)
-         return error ;
-      
-      // iterate over the source
-      copyError = sourceFilePath.childrenRecursive(
-        boost::bind(copySourceFile, sourceFilePath, targetFilePath, _1, _2));
+      copyError = file_utils::copyDirectory(sourceFilePath, targetFilePath);
    }
    else
    {
@@ -887,12 +874,126 @@ SEXP rs_pathInfo(SEXP pathSEXP)
    return R_NilValue;
 }
 
+SEXP rs_readLines(SEXP filePathSEXP)
+{
+   FilePath filePath(r::sexp::asString(filePathSEXP));
+   if (!filePath.exists())
+   {
+      LOG_ERROR(core::fileNotFoundError(ERROR_LOCATION));
+      return R_NilValue;
+   }
+   
+   std::string contents;
+   Error error = core::readStringFromFile(filePath, &contents);
+   if (error)
+      LOG_ERROR(error);
+   
+   r::sexp::Protect protect;
+   if (contents.empty())
+      return r::sexp::create(contents, &protect);
+   
+   std::vector<std::string> splat = core::algorithm::split(contents, "\n");
+   if (splat[splat.size() - 1].empty())
+      splat.pop_back();
+   
+   for (std::size_t i = 0, n = splat.size(); i < n; ++i)
+   {
+      std::string& rElement = splat[i];
+      if (rElement[rElement.size() - 1] == '\r')
+         rElement.erase(rElement.size() - 1);
+   }
+   
+   return r::sexp::create(splat, &protect);
+}
+
 } // anonymous namespace
 
 bool isMonitoringDirectory(const FilePath& directory)
 {
    FilePath monitoredPath = s_filesListingMonitor.currentMonitoredPath();
    return !monitoredPath.empty() && (directory == monitoredPath);
+}
+
+Error writeJSON(const core::json::JsonRpcRequest& request,
+                json::JsonRpcResponse* pResponse)
+{
+   pResponse->setResult(false);
+   
+   std::string path;
+   json::Object object;
+   Error error = json::readParams(request.params, &path, &object);
+   if (error)
+   {
+      LOG_ERROR(error);
+      return error;
+   }
+   
+   FilePath filePath = module_context::resolveAliasedPath(path);
+   error = filePath.parent().ensureDirectory();
+   if (error)
+   {
+      LOG_ERROR(error);
+      return error;
+   }
+   
+   std::string contents = json::writeFormatted(object);
+   error = writeStringToFile(filePath, contents);
+   if (error)
+   {
+      LOG_ERROR(error);
+      return error;
+   }
+   
+   pResponse->setResult(true);
+   return Success();
+}
+
+Error readJSON(const core::json::JsonRpcRequest& request,
+               json::JsonRpcResponse* pResponse)
+{
+   pResponse->setResult(json::Object());
+   
+   std::string path;
+   bool logErrorIfNotFound;
+   Error error = json::readParams(request.params, &path, &logErrorIfNotFound);
+   if (error)
+   {
+      LOG_ERROR(error);
+      return error;
+   }
+   
+   FilePath filePath = module_context::resolveAliasedPath(path);
+   if (!filePath.exists())
+   {
+      Error error = logErrorIfNotFound ?
+               fileNotFoundError(ERROR_LOCATION) :
+               Success();
+      
+      if (error)
+         LOG_ERROR(error);
+      
+      return error;
+   }
+   
+   std::string contents;
+   error = readStringFromFile(filePath, &contents);
+   if (error)
+   {
+      LOG_ERROR(error);
+      return error;
+   }
+   
+   json::Value valueJson;
+   bool success = json::parse(contents, &valueJson);
+   if (!success)
+   {
+      Error error(json::errc::ParseError, ERROR_LOCATION);
+      LOG_ERROR(error);
+      return error;
+   }
+   
+   pResponse->setResult(valueJson);
+   return Success();
 }
 
 Error initialize()
@@ -905,12 +1006,8 @@ Error initialize()
    // subscribe to events
    events().onClientInit.connect(bind(onClientInit));
 
-   // register path info function
-   R_CallMethodDef pathInfoMethodDef ;
-   pathInfoMethodDef.name = "rs_pathInfo" ;
-   pathInfoMethodDef.fun = (DL_FUNC) rs_pathInfo ;
-   pathInfoMethodDef.numArgs = 1;
-   r::routines::addCallMethod(pathInfoMethodDef);
+   RS_REGISTER_CALL_METHOD(rs_readLines, 1);
+   RS_REGISTER_CALL_METHOD(rs_pathInfo, 1);
 
    // install handlers
    using boost::bind;
@@ -929,6 +1026,8 @@ Error initialize()
       (bind(registerUriHandler, "/upload", handleFileUploadRequest))
       (bind(registerUriHandler, "/export", handleFileExportRequest))
       (bind(registerRpcMethod, "complete_upload", completeUpload))
+      (bind(registerRpcMethod, "write_json", writeJSON))
+      (bind(registerRpcMethod, "read_json", readJSON))
       (bind(sourceModuleRFile, "SessionFiles.R"))
       (bind(quotas::initialize));
    return initBlock.execute();
@@ -938,4 +1037,5 @@ Error initialize()
 } // namepsace files
 } // namespace modules
 } // namesapce session
+} // namespace rstudio
 

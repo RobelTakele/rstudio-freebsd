@@ -14,9 +14,11 @@
  */
 
 #include <r/RRoutines.hpp>
+#include <r/RExec.hpp>
 
 #include <algorithm>
 
+namespace rstudio {
 namespace r {
 namespace routines {
  
@@ -34,7 +36,18 @@ void addCallMethod(const R_CallMethodDef method)
 {
    s_callMethods.push_back(method);
 }
-   
+
+void registerCallMethod(const char* name,
+                        DL_FUNC fun,
+                        int numArgs)
+{
+   R_CallMethodDef callMethodDef;
+   callMethodDef.name = name;
+   callMethodDef.fun = fun;
+   callMethodDef.numArgs = numArgs;
+   addCallMethod(callMethodDef);
+}
+
 void registerAll()
 {
    // c methods
@@ -64,12 +77,13 @@ void registerAll()
    }
    
    DllInfo *info = R_getEmbeddingDllInfo() ;
-   R_registerRoutines(info, pCMethods, pCallMethods, NULL, NULL) ;
+   R_registerRoutines(info, pCMethods, pCallMethods, NULL, NULL);
 }
    
    
 } // namespace routines   
 } // namespace r
+} // namespace rstudio
 
 
 

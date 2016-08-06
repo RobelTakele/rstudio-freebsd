@@ -14,11 +14,31 @@
  */
 package org.rstudio.studio.client.workbench.views.source.editors.text.ace;
 
+import org.rstudio.core.client.StringUtil;
+
 import com.google.gwt.core.client.JavaScriptObject;
 
 public class Token extends JavaScriptObject
 {
    protected Token() {}
+   
+   public static native final Token create() /*-{
+      return {
+         "value": "",
+         "type": "",
+         "column": 0
+      };
+   }-*/;
+   
+   public static native final Token create(String value,
+                                           String type,
+                                           int column) /*-{
+      return {
+         "value": value,
+         "type": type,
+         "column": column
+      };
+   }-*/;
 
    public native final String getValue() /*-{
       return this.value;
@@ -26,5 +46,89 @@ public class Token extends JavaScriptObject
 
    public native final String getType() /*-{
       return this.type;
+   }-*/;
+   
+   public native final int getColumn() /*-{
+      return this.column;
+   }-*/;
+   
+   public final boolean valueEquals(String value)
+   {
+      return value.equals(getValue());
+   }
+   
+   public final boolean hasType(String... types)
+   {
+      String tokenType = getType();
+      if (StringUtil.isNullOrEmpty(tokenType))
+         return false;
+      
+      for (String type : types)
+      {
+         if (tokenType.equals(type) ||
+             tokenType.contains(type + ".") ||
+             tokenType.contains("." + type))
+         {
+            return true;
+         }
+      }
+      return false;
+   }
+   
+   public final boolean typeEquals(String type)
+   {
+      return type.equals(getType());
+   }
+   
+   public native final boolean isLeftBracket() /*-{
+      return this.value && (
+         this.value === "{" ||
+         this.value === "(" ||
+         this.value === "["
+      );
+   }-*/;
+   
+   public native final boolean isRightBracket() /*-{
+      return this.value && (
+         this.value === "}" ||
+         this.value === ")" ||
+         this.value === "]"
+      );
+   }-*/;
+   
+   public native final boolean isLeftAssign() /*-{
+      return this.value && (
+         this.value === "=" ||
+         this.value === "<-"
+      );
+   }-*/;
+   
+   public native final boolean isValidForFunctionCall() /*-{
+      return this.type && (
+         this.type.indexOf("identifier") !== -1 ||
+         this.type === "string" ||
+         this.type === "keyword"
+      );
+   }-*/;
+   
+   public native final boolean isExtractionOperator() /*-{
+      return this.value && (
+         this.value === "$" ||
+         this.value === "@" ||
+         this.value === "?" ||
+         this.value === "~"
+      );
+   }-*/;
+   
+   public final String asString()
+   {
+      return "'" + getType() + "' -> '" + getValue() + "'";
+   }
+   
+   // NOTE: Tokens attached to a document should be considered immutable;
+   // use setters only when applying to a tokenized line separate from an
+   // active editor!
+   public native final void setValue(String value) /*-{
+      this.value = value;
    }-*/;
 }

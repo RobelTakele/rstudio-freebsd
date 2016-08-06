@@ -19,6 +19,7 @@ import java.util.ArrayList;
 import org.rstudio.core.client.command.CommandBinder;
 import org.rstudio.core.client.command.Handler;
 import org.rstudio.core.client.command.impl.DesktopMenuCallback;
+import org.rstudio.core.client.dom.DomUtils;
 import org.rstudio.core.client.js.JsObject;
 import org.rstudio.core.client.theme.res.ThemeResources;
 import org.rstudio.core.client.theme.res.ThemeStyles;
@@ -36,6 +37,7 @@ import org.rstudio.studio.client.application.ui.ApplicationHeader;
 import org.rstudio.studio.client.application.ui.GlobalToolbar;
 import org.rstudio.studio.client.common.GlobalDisplay;
 import org.rstudio.studio.client.common.debugging.ErrorManager;
+import org.rstudio.studio.client.events.EditEvent;
 import org.rstudio.studio.client.server.ServerError;
 import org.rstudio.studio.client.server.ServerRequestCallback;
 import org.rstudio.studio.client.workbench.codesearch.CodeSearch;
@@ -50,11 +52,15 @@ import org.rstudio.studio.client.workbench.prefs.model.UIPrefs;
 import org.rstudio.studio.client.workbench.views.console.events.SendToConsoleEvent;
 import org.rstudio.studio.client.workbench.views.files.events.ShowFolderEvent;
 import org.rstudio.studio.client.workbench.views.files.events.ShowFolderHandler;
+import org.rstudio.studio.client.workbench.views.source.editors.text.ace.AceEditorNative;
+import org.rstudio.studio.client.workbench.views.source.editors.text.ace.Selection;
 
 import com.google.gwt.core.client.GWT;
 import com.google.gwt.core.client.JsArrayString;
 import com.google.gwt.core.client.Scheduler;
 import com.google.gwt.core.client.Scheduler.ScheduledCommand;
+import com.google.gwt.dom.client.Document;
+import com.google.gwt.dom.client.Element;
 import com.google.gwt.user.client.Timer;
 import com.google.gwt.user.client.ui.Widget;
 import com.google.inject.Inject;
@@ -74,7 +80,7 @@ public class DesktopApplicationHeader implements ApplicationHeader
    }
 
    @Inject
-   public void initialize(Commands commands,
+   public void initialize(final Commands commands,
                           EventBus events,
                           final Session session,
                           ApplicationServerOperations server, 
@@ -147,6 +153,10 @@ public class DesktopApplicationHeader implements ApplicationHeader
                {
                   Desktop.getFrame().onWorkbenchInitialized(
                         sessionInfo.getScratchDir());
+                  
+                  if (sessionInfo.getDisableCheckForUpdates())
+                     commands.checkForUpdates().remove();
+                  
                   if (!sessionInfo.getDisableCheckForUpdates() &&
                       pUIPrefs_.get().checkForUpdates().getValue())
                   {
@@ -187,33 +197,43 @@ public class DesktopApplicationHeader implements ApplicationHeader
       toolbar_.focusGoToFunction();
    }
 
+   private void fireEditEvent(final int type)
+   {
+      eventBus_.fireEvent(new EditEvent(true, type));
+   }
+   
    @Handler
    void onUndoDummy()
    {
-      Desktop.getFrame().undo();
+      Desktop.getFrame().undo(isFocusInAceInstance());
    }
 
    @Handler
    void onRedoDummy()
    {
-      Desktop.getFrame().redo();
+      Desktop.getFrame().redo(isFocusInAceInstance());
    }
 
    @Handler
    void onCutDummy()
    {
+      if (isSelectionEmpty()) return;
+      fireEditEvent(EditEvent.TYPE_CUT);
       Desktop.getFrame().clipboardCut();
    }
 
    @Handler
    void onCopyDummy()
    {
+      if (isSelectionEmpty()) return;
+      fireEditEvent(EditEvent.TYPE_COPY);
       Desktop.getFrame().clipboardCopy();
    }
 
    @Handler
    void onPasteDummy()
    {
+      fireEditEvent(EditEvent.TYPE_PASTE);
       Desktop.getFrame().clipboardPaste();
    }
 
@@ -227,7 +247,7 @@ public class DesktopApplicationHeader implements ApplicationHeader
    void onDiagnosticsReport()
    {
       eventBus_.fireEvent(
-         new SendToConsoleEvent("rstudio::diagnosticsReport()", true));
+         new SendToConsoleEvent("rstudioDiagnosticsReport()", true));
       
       new Timer() {
          @Override
@@ -311,7 +331,7 @@ public class DesktopApplicationHeader implements ApplicationHeader
                   public void onReadyToQuit(boolean saveChanges)
                   {
                      Desktop.getFrame().browseUrl(result.getUpdateUrl());
-                     appQuit_.performQuit(saveChanges, null);
+                     appQuit_.performQuit(saveChanges);
                   }
                }); 
             }
@@ -353,6 +373,26 @@ public class DesktopApplicationHeader implements ApplicationHeader
                               "No Update Available", 
                               "You're using the newest version of RStudio.");
       }
+   }
+   
+   public static boolean isSelectionEmpty()
+   {
+      Element activeElement = DomUtils.getActiveElement();
+      AceEditorNative editor = AceEditorNative.getEditor(activeElement);
+      if (editor != null)
+      {
+         Selection selection = editor.getSession().getSelection();
+         return selection.isEmpty();
+      }
+      return DomUtils.getSelectionText(Document.get()).isEmpty();
+   }
+   
+   private static boolean isFocusInAceInstance()
+   {
+      Element focusElem = DomUtils.getActiveElement();
+      if (focusElem != null)
+         return focusElem.hasClassName("ace_text-input");
+      return false;
    }
    
    private Session session_;

@@ -20,6 +20,7 @@
 
 #include <core/FilePath.hpp>
 
+namespace rstudio {
 namespace core {
 
 class Error;
@@ -46,7 +47,11 @@ public:
 
    const std::string& name() const { return name_; }
    const std::string& version() const { return version_; }
+   const std::string& depends() const { return depends_; }
+   const std::string& imports() const { return imports_; }
+   const std::string& suggests() const { return suggests_; }
    const std::string& linkingTo() const { return linkingTo_; }
+   const std::string& systemRequirements() const { return systemRequirements_; }
    const std::string& type() const { return type_; }
 
    std::string sourcePackageFilename() const;
@@ -57,7 +62,11 @@ private:
 private:
    std::string name_;
    std::string version_;
+   std::string depends_;
+   std::string imports_;
+   std::string suggests_;
    std::string linkingTo_;
+   std::string systemRequirements_;
    std::string type_;
 };
 
@@ -65,6 +74,7 @@ bool isPackageDirectory(const FilePath& dir);
 
 } // namespace r_util
 } // namespace core 
+} // namespace rstudio
 
 
 #endif // CORE_R_UTIL_R_PACKAGE_INFO_HPP

@@ -22,6 +22,13 @@ public class Renderer extends JavaScriptObject
    public static class ScreenCoordinates extends JavaScriptObject
    {
       protected ScreenCoordinates() {}
+      
+      public native final static ScreenCoordinates create(int pageX, int pageY) /*-{
+         return {
+            pageX: pageX,
+            pageY: pageY
+         };
+      }-*/;
 
       public native final int getPageX() /*-{
          return Math.round(this.pageX);
@@ -38,6 +45,10 @@ public class Renderer extends JavaScriptObject
                                                                  int col) /*-{
       return this.textToScreenCoordinates(row, col);
    }-*/;
+   
+   public native final Position screenToTextCoordinates(int pageX, int pageY) /*-{
+      return this.screenToTextCoordinates(pageX, pageY);
+   }-*/;
 
    public native final void forceScrollbarUpdate() /*-{
       // WebKit-based browsers have problems repainting the scrollbar after
@@ -49,6 +60,10 @@ public class Renderer extends JavaScriptObject
 
    public native final void updateFontSize() /*-{
       this.updateFontSize();
+   }-*/;
+   
+   public native final void updateFull(boolean force) /*-{
+      this.updateFull(force);
    }-*/;
 
    public native final void onResize(boolean force) /*-{
@@ -114,9 +129,21 @@ public class Renderer extends JavaScriptObject
    public native final void scrollToX(int scrollLeft) /*-{
       this.scrollToX(scrollLeft);
    }-*/;
+   
+   public native final void setAnimatedScroll(boolean animate) /*-{
+      this.setAnimatedScroll(animate);
+   }-*/;
+   
+   public native final boolean getAnimatedScroll() /*-{
+      return this.getAnimatedScroll();
+   }-*/;
 
    public native final void forceImmediateRender() /*-{
       this.$renderChanges(this.CHANGE_FULL);
+   }-*/;
+   
+   public native final void renderMarkers() /*-{
+      this.$renderChanges(this.CHANGE_MARKER);
    }-*/;
 
    public native final void fixVerticalOffsetBug() /*-{
@@ -140,10 +167,23 @@ public class Renderer extends JavaScriptObject
    }-*/;
    
    public native final void addGutterDecoration(int line, String clazz) /*-{
-      this.addGutterDecoration(line, clazz);
+      this.session.addGutterDecoration(line, clazz);
    }-*/;
    
    public native final void removeGutterDecoration(int line, String clazz) /*-{
-      this.removeGutterDecoration(line, clazz);
-   }-*/;  
+      this.session.removeGutterDecoration(line, clazz);
+   }-*/;
+   
+   public final native void alignCursor(Position position, double ratio) /*-{
+      this.alignCursor(position, ratio);
+   }-*/;
+   
+   public final native void setScrollPastEnd(boolean value) /*-{
+      this.$scrollPastEnd = value;
+   }-*/;
+   
+   public final native boolean getScrollPastEnd() /*-{
+      return !!this.$scrollPastEnd;
+   }-*/;
+   
 }

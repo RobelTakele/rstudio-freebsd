@@ -14,8 +14,11 @@
  */
 package org.rstudio.studio.client.workbench.prefs.views;
 
+
 import com.google.gwt.user.client.Command;
 import com.google.gwt.user.client.ui.CheckBox;
+import com.google.gwt.user.client.ui.Label;
+
 import org.rstudio.core.client.prefs.PreferencesDialogPaneBase;
 import org.rstudio.core.client.widget.NumericValueWidget;
 import org.rstudio.studio.client.workbench.prefs.model.Prefs.PrefValue;
@@ -34,11 +37,20 @@ public abstract class PreferencesPane extends PreferencesDialogPaneBase<RPrefs>
    }
    
    protected CheckBox checkboxPref(String label,
-                                   final PrefValue<Boolean> prefValue)
+         final PrefValue<Boolean> prefValue)
+   {
+      return checkboxPref(label, prefValue, null);
+   }
+   
+   protected CheckBox checkboxPref(String label,
+                                   final PrefValue<Boolean> prefValue,
+                                   String title)
    {
       final CheckBox checkBox = new CheckBox(label, false);
       lessSpaced(checkBox);
       checkBox.setValue(prefValue.getGlobalValue());
+      if (title != null)
+         checkBox.setTitle(title);
       onApplyCommands_.add(new Command()
       {
          public void execute()
@@ -48,7 +60,6 @@ public abstract class PreferencesPane extends PreferencesDialogPaneBase<RPrefs>
       });
       return checkBox;
    }
-
   
    protected NumericValueWidget numericPref(String label,
                                             final PrefValue<Integer> prefValue)
@@ -73,6 +84,14 @@ public abstract class PreferencesPane extends PreferencesDialogPaneBase<RPrefs>
          }
       });
       return widget;
+   }
+   
+   protected Label headerLabel(String caption) 
+   {
+      Label headerLabel = new Label(caption);
+      headerLabel.addStyleName(res().styles().headerLabel());
+      nudgeRight(headerLabel);
+      return headerLabel;
    }
 
    protected final ArrayList<Command> onApplyCommands_ = new ArrayList<Command>();

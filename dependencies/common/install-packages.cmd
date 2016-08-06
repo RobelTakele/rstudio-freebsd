@@ -2,9 +2,15 @@
 
 setlocal
 
+REM Ensure (the default install location for) Git is on the PATH here. Having
+REM this directory on the PATH by default can be a pain because Rtools (and its
+REM competing tools) can compete with that directory.
+set "PATH=C:\Program Files (x86)\Git\bin;%PATH%"
+
 set PATH=%PATH%;%CD%\tools
 
-call:install shinyapps v0.98.1000
+call:install rsconnect master --no-build-vignettes
+call:install rmarkdown master --no-build-vignettes
 
 GOTO:EOF
 
@@ -12,6 +18,7 @@ GOTO:EOF
 
 set PACKAGE=%1
 set PACKAGE_VERSION=%2
+set PACKAGE_BUILD_OPTIONS=%3
 
 REM git clone if necessary
 set PACKAGE_DIR="%PACKAGE%"
@@ -41,7 +48,7 @@ REM create source package
 popd
 set PACKAGE_ARCHIVE_PATTERN="%PACKAGE%*.tar.gz"
 del /s /q %PACKAGE_ARCHIVE_PATTERN%
-R CMD build "%PACKAGE%"
+R CMD build "%PACKAGE_BUILD_OPTIONS%" "%PACKAGE%"
 
 REM modify filename to include SHA1
 for %%f in (%PACKAGE_ARCHIVE_PATTERN%) do set PACKAGE_ARCHIVE=%%f

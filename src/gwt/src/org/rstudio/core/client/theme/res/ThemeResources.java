@@ -69,6 +69,9 @@ public interface ThemeResources extends ClientBundle
    ImageResource rstudio();
    ImageResource rstudio_small();
    
+   ImageResource rstudio_home();
+   ImageResource rstudio_home_small();
+   
    @Source("backgroundGradient.png")
    DataResource backgroundGradient();
 
@@ -121,6 +124,8 @@ public interface ThemeResources extends ClientBundle
    @Source("busyTab.gif")
    ImageResource busyTab();
 
+   ImageResource closeDialog();
+  
    ImageResource toolbarSeparator();
 
    ImageResource menuDownArrow();
@@ -158,12 +163,14 @@ public interface ThemeResources extends ClientBundle
    @Source("workspaceSectionHeaderTile.png")
    DataResource workspaceSectionHeaderTile();
    ImageResource zoomDataset();
+   ImageResource viewFunctionCode();
 
    @Source("inlineEditIcon.png")
    DataResource inlineEditIcon();
    @Source("inlineDeleteIcon.png")
    DataResource inlineDeleteIcon();
 
+   ImageResource paneLayoutIcon();
    ImageResource smallMagGlassIcon();
    ImageResource dropDownArrow();
    ImageResource mediumDropDownArrow();
@@ -171,10 +178,19 @@ public interface ThemeResources extends ClientBundle
 
    ImageResource help();
    
-   ImageResource warningSmall();
    ImageResource infoSmall();
+   ImageResource warningSmall();
    ImageResource errorSmall();
-
+   
+   ImageResource syntaxInfo();
+   ImageResource syntaxWarning();
+   ImageResource syntaxError();
+   
+   ImageResource syntaxInfoDark();
+   ImageResource syntaxWarningDark();
+   ImageResource syntaxErrorDark();
+   
+   
    ImageResource codeTransform();
 
    ImageResource closeChevron();
@@ -194,6 +210,19 @@ public interface ThemeResources extends ClientBundle
    
    @Source("macCheck.png")
    DataResource macCheck();
+   @Source("radioButtonOn.png")
+   DataResource radioButtonOn();
+   
+   @Source("handCursor.png")
+   DataResource handCursor();
+   
+   ImageResource executeChunk();
+   
+   ImageResource checkboxOff();
+   ImageResource checkboxOn();
+   ImageResource checkboxTri();
    
    ImageResource menuCheck();
+   
+   ImageResource user();
 }

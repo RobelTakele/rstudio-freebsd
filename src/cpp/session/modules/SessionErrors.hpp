@@ -18,10 +18,13 @@
 
 #include <core/json/Json.hpp>
 
+namespace rstudio {
 namespace core {
    class Error;
 }
+}
 
+namespace rstudio {
 namespace session {
 namespace modules {
 namespace errors {
@@ -33,6 +36,7 @@ const int ERRORS_MESSAGE = 0;
 const int ERRORS_TRACEBACK = 1;
 const int ERRORS_BREAK = 2;
 const int ERRORS_CUSTOM = 3;
+const int ERRORS_NOTEBOOK = 4;
 
 core::Error initialize();
 core::json::Value errorStateAsJson();
@@ -40,5 +44,6 @@ core::json::Value errorStateAsJson();
 } // namespace errors
 } // namepace modules
 } // namesapce session
+} // namespace rstudio
 
 #endif // SESSIONERRORS_HPP

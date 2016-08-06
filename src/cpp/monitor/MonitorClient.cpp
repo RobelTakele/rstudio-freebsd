@@ -13,10 +13,13 @@
  *
  */
 
+#include <boost/asio/io_service.hpp>
+
 #include <monitor/MonitorClient.hpp>
 
 #include "MonitorClientImpl.hpp"
 
+namespace rstudio {
 namespace monitor {
 
 namespace {
@@ -81,5 +84,6 @@ Client& client()
 }
 
 } // namespace monitor
+} // namespace rstudio
 
 

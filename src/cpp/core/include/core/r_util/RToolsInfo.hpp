@@ -25,6 +25,7 @@
 #include <core/FilePath.hpp>
 #include <core/system/Environment.hpp>
 
+namespace rstudio {
 namespace core {
 namespace r_util {
 
@@ -33,7 +34,8 @@ class RToolsInfo
 public:
    RToolsInfo() {}
    RToolsInfo(const std::string& name,
-              const FilePath& installPath);
+              const FilePath& installPath,
+              bool usingMingwGcc49);
 
    bool empty() const { return name_.empty(); }
 
@@ -45,18 +47,25 @@ public:
    std::string url(const std::string& repos) const;
    const std::string& versionPredicate() const { return versionPredicate_; }
    const FilePath& installPath() const { return installPath_; }
+   const std::vector<std::string> clangArgs() const { return clangArgs_; }
    const std::vector<FilePath>& pathEntries() const { return pathEntries_; }
+   const std::vector<core::system::Option> environmentVars() const
+   {
+      return environmentVars_;
+   }
 
 private:
    std::string name_;
    FilePath installPath_;
+   std::vector<std::string> clangArgs_;
    std::string versionPredicate_;
    std::vector<FilePath> pathEntries_;
+   std::vector<core::system::Option> environmentVars_;
 };
 
 std::ostream& operator<<(std::ostream& os, const RToolsInfo& info);
 
-Error scanRegistryForRTools(std::vector<RToolsInfo>* pRTools);
+Error scanRegistryForRTools(bool usingMingwGcc49, std::vector<RToolsInfo>* pRTools);
 
 template <typename T>
 void prependToSystemPath(const RToolsInfo& toolsInfo, T* pTarget)
@@ -75,6 +84,7 @@ void prependToSystemPath(const RToolsInfo& toolsInfo, T* pTarget)
 
 } // namespace r_util
 } // namespace core 
+} // namespace rstudio
 
 
 #endif // CORE_R_UTIL_R_TOOLS_INFO_HPP

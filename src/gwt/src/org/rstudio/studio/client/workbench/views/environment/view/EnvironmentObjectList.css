@@ -76,10 +76,9 @@ td.valueCol
 
 .clickableCol
 {
-   cursor: pointer;
 }
 
-td.dataFrameValueCol
+td.decoratedValueCol
 {
    padding-right: 35px;
 }

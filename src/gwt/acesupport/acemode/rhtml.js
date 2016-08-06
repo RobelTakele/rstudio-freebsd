@@ -18,45 +18,90 @@
  *
  */
 
-define("mode/rhtml", function(require, exports, module) {
+define("mode/rhtml", ["require", "exports", "module"], function(require, exports, module) {
 
 var oop = require("ace/lib/oop");
 var HtmlMode = require("ace/mode/html").Mode;
 var Tokenizer = require("ace/tokenizer").Tokenizer;
 var RHtmlHighlightRules = require("mode/rhtml_highlight_rules").RHtmlHighlightRules;
-var SweaveBackgroundHighlighter = require("mode/sweave_background_highlighter").SweaveBackgroundHighlighter;
+var BackgroundHighlighter = require("mode/background_highlighter").BackgroundHighlighter;
 var RCodeModel = require("mode/r_code_model").RCodeModel;
+var MatchingBraceOutdent = require("ace/mode/matching_brace_outdent").MatchingBraceOutdent;
+var RMatchingBraceOutdent = require("mode/r_matching_brace_outdent").RMatchingBraceOutdent;
+var Utils = require("mode/utils");
 
-var Mode = function(suppressHighlighting, doc, session) {
+var Mode = function(suppressHighlighting, session) {
    this.$session = session;
    this.$tokenizer = new Tokenizer(new RHtmlHighlightRules().getRules());
 
-   this.codeModel = new RCodeModel(doc, this.$tokenizer, /^r-/,
-                                   /^<!--\s*begin.rcode\s*(.*)/);
+   this.codeModel = new RCodeModel(
+      session,
+      this.$tokenizer,
+      /^r-/,
+      /^<!--\s*begin.rcode\s*(.*)/,
+      /^\s*end.rcode\s*-->/
+   );
+
+   this.$outdent = new MatchingBraceOutdent();
+   this.$r_outdent = new RMatchingBraceOutdent(this.codeModel);
+   
    this.foldingRules = this.codeModel;
-   this.$sweaveBackgroundHighlighter = new SweaveBackgroundHighlighter(
+   this.$sweaveBackgroundHighlighter = new BackgroundHighlighter(
          session,
          /^<!--\s*begin.rcode\s*(?:.*)/,
-         /^\s*end.rcode\s*-->/,
-         true);
+         /^\s*end.rcode\s*-->/
+   );
 };
 oop.inherits(Mode, HtmlMode);
 
 (function() {
+
+   function activeMode(state)
+   {
+      return Utils.activeMode(state, "html");
+   }
+
    this.insertChunkInfo = {
       value: "<!--begin.rcode\n\nend.rcode-->\n",
-      position: {row: 0, column: 15}
+      position: {row: 0, column: 15},
+      content_position: {row: 1, column: 0}
+   };
+
+   this.checkOutdent = function(state, line, input)
+   {
+      var mode = activeMode(state);
+      if (mode === "r")
+         return this.$r_outdent.checkOutdent(state, line, input);
+      else
+         return this.$outdent.checkOutdent(line, input);
+   };
+
+   this.autoOutdent = function(state, session, row)
+   {
+      var mode = activeMode(state);
+      if (mode === "r")
+         return this.$r_outdent.autoOutdent(state, session, row);
+      else
+         return this.$outdent.autoOutdent(session, row);
    };
     
    this.getLanguageMode = function(position)
    {
-      return this.$session.getState(position.row).match(/^r-/) ? 'R' : 'HTML';
+      var state = Utils.getPrimaryState(this.$session, position.row);
+      return state.match(/^r-/) ? 'R' : 'HTML';
    };
 
-   this.getNextLineIndent = function(state, line, tab, tabSize, row)
+   this.$getNextLineIndent = this.getNextLineIndent;
+   this.getNextLineIndent = function(state, line, tab, row)
    {
-      return this.codeModel.getNextLineIndent(row, line, state, tab, tabSize);
+      var mode = Utils.activeMode(state, "html");
+      if (mode === "r")
+         return this.codeModel.getNextLineIndent(state, line, tab, row);
+      else
+         return this.$getNextLineIndent(state, line, tab);
    };
+
+   this.$id = "mode/rhtml";
 
 }).call(Mode.prototype);
 

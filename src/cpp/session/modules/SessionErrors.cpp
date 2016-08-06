@@ -28,8 +28,9 @@
 #include "SessionErrors.hpp"
 #include "SessionBreakpoints.hpp"
 
-using namespace core;
+using namespace rstudio::core;
 
+namespace rstudio {
 namespace session {
 namespace modules {
 namespace errors {
@@ -152,7 +153,11 @@ void detectHandlerChange(boost::shared_ptr<SEXP> pErrorHandler,
       }
       if (recordSetting)
          userSettings().setErrorHandlerType(handlerType);
-      enqueErrorHandlerChanged(handlerType);
+
+      // the notebook error handler is transient, so don't send it to the 
+      // client
+      if (handlerType != ERRORS_NOTEBOOK)
+         enqueErrorHandlerChanged(handlerType);
    }
 }
 
@@ -219,5 +224,6 @@ Error initialize()
 } // namespace errors
 } // namespace modules
 } // namespace session
+} // namespace rstudio
 
 

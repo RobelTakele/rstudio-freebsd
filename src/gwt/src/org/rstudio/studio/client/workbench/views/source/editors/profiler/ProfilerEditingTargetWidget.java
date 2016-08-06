@@ -14,16 +14,16 @@
  */
 package org.rstudio.studio.client.workbench.views.source.editors.profiler;
 
-import com.google.gwt.user.client.ui.CheckBox;
 import com.google.gwt.user.client.ui.Composite;
-import com.google.gwt.user.client.ui.HasValue;
-import com.google.gwt.user.client.ui.IntegerBox;
-import com.google.gwt.user.client.ui.Label;
-
 import com.google.gwt.user.client.ui.VerticalPanel;
 import com.google.gwt.user.client.ui.Widget;
 
+import org.rstudio.core.client.dom.WindowEx;
+import org.rstudio.core.client.widget.RStudioFrame;
 import org.rstudio.core.client.widget.Toolbar;
+import org.rstudio.studio.client.rsconnect.RSConnect;
+import org.rstudio.studio.client.rsconnect.model.PublishHtmlSource;
+import org.rstudio.studio.client.rsconnect.ui.RSConnectPublishButton;
 import org.rstudio.studio.client.workbench.commands.Commands;
 import org.rstudio.studio.client.workbench.views.source.PanelWithToolbars;
 import org.rstudio.studio.client.workbench.views.source.editors.EditingTargetToolbar;
@@ -32,31 +32,49 @@ public class ProfilerEditingTargetWidget extends Composite
                                          implements ProfilerPresenter.Display
               
 {
-   public ProfilerEditingTargetWidget(Commands commands)
+   private RStudioFrame profilePage_;
+   
+   public ProfilerEditingTargetWidget(Commands commands, PublishHtmlSource publishHtmlSource)
    {
       VerticalPanel panel = new VerticalPanel();
-      panel.add(new Label("PropA"));
-      txtPropA_ = new IntegerBox();
-      panel.add(txtPropA_);
-      panel.add(new Label("PropB"));
-      chkPropB_ = new CheckBox();
-      panel.add(chkPropB_); 
-      panel.setSize("100%", "100%");
+
 
       PanelWithToolbars mainPanel = new PanelWithToolbars(
-                                          createToolbar(commands), 
+                                          createToolbar(commands, publishHtmlSource), 
                                           panel);
 
+      profilePage_ = new RStudioFrame();
+      profilePage_.setWidth("100%");
+      profilePage_.setHeight("100%");
+      
+      panel.add(profilePage_);
+      panel.setWidth("100%");
+      panel.setHeight("100%");
+      
       initWidget(mainPanel);
-
    }
 
-   private Toolbar createToolbar(Commands commands)
+   public void print()
    {
-      Toolbar toolbar = new EditingTargetToolbar(commands);
-      toolbar.addLeftSeparator();
-      toolbar.addLeftWidget(commands.startProfiler().createToolbarButton());
-      toolbar.addLeftWidget(commands.stopProfiler().createToolbarButton());
+      WindowEx window = profilePage_.getWindow();
+      window.focus();
+      window.print();
+   }
+
+   private Toolbar createToolbar(Commands commands, PublishHtmlSource publishHtmlSource)
+   {
+      Toolbar toolbar = new EditingTargetToolbar(commands, true);
+      
+      toolbar.addLeftWidget(commands.gotoProfileSource().createToolbarButton());
+      toolbar.addLeftWidget(commands.saveProfileAs().createToolbarButton());
+      
+      toolbar.addRightWidget(
+            publishButton_ = new RSConnectPublishButton(
+                  RSConnect.CONTENT_TYPE_DOCUMENT, true, null));
+      
+      publishButton_.setPublishHtmlSource(publishHtmlSource);
+      publishButton_.setContentType(RSConnect.CONTENT_TYPE_HTML);
+      
       return toolbar;
    }
    
@@ -65,18 +83,15 @@ public class ProfilerEditingTargetWidget extends Composite
       return this;
    }
    
-   @Override
-   public HasValue<Integer> getPropA()
+   public void showProfilePage(String path)
    {
-      return txtPropA_;
-   }
-
-   @Override
-   public HasValue<Boolean> getPropB()
-   {
-      return chkPropB_;
+      profilePage_.setUrl(path);
    }
    
-   private IntegerBox txtPropA_;
-   private CheckBox chkPropB_;   
+   public String getUrl()
+   {
+      return profilePage_.getUrl();
+   }
+   
+   private RSConnectPublishButton publishButton_;
 }

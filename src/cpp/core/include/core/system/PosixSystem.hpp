@@ -26,10 +26,13 @@ typedef pid_t PidType;
 typedef rlim_t RLimitType;
 
 
+namespace rstudio {
 namespace core {
    class Error;
 }
+}
 
+namespace rstudio {
 namespace core {
 namespace system {
 
@@ -145,6 +148,9 @@ struct ProcessLimits
    RLimitType filesLimit;
 };
 
+void setProcessLimits(ProcessLimits limits);
+
+
 struct ProcessConfig
 {
    ProcessConfig()
@@ -160,9 +166,15 @@ struct ProcessConfig
 
 core::Error waitForProcessExit(PidType processId);
 
+// filter to call after the setuid has occurred (i.e. after
+// the user's home directory has become visible)
+typedef boost::function<void(const user::User&, ProcessConfig*)>
+                                                   ProcessConfigFilter;
+
 core::Error launchChildProcess(std::string path,
                                std::string runAsUser,
                                ProcessConfig config,
+                               ProcessConfigFilter configFilter,
                                PidType* pProcessId ) ;
 
 bool isUserNotFoundError(const core::Error& error);
@@ -184,6 +196,7 @@ core::Error restorePriv();
 
 } // namespace system
 } // namespace core
+} // namespace rstudio
 
 #endif // CORE_SYSTEM_POSIX_SYSTEM_HPP
 

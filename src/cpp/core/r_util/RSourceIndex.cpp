@@ -13,18 +13,42 @@
  *
  */
 
-#include <core/r_util/RSourceIndex.hpp>
+#define RSTUDIO_DEBUG_LABEL "source_index"
+// #define RSTUDIO_ENABLE_DEBUG_MACROS
 
-#include <boost/algorithm/string.hpp>
+#include <iostream>
 
 #include <core/StringUtils.hpp>
+#include <core/Macros.hpp>
 
+#include <core/r_util/RSourceIndex.hpp>
 #include <core/r_util/RTokenizer.hpp>
+#include <core/r_util/RTokenCursor.hpp>
 
+#include <boost/bind.hpp>
+#include <boost/algorithm/string.hpp>
+
+namespace rstudio {
 namespace core {
 namespace r_util {
 
+using namespace token_utils;
+using namespace token_cursor;
+
+// static members
+std::set<std::string> RSourceIndex::s_allInferredPkgNames_;
+std::set<std::string> RSourceIndex::s_importedPackages_;
+RSourceIndex::ImportFromMap RSourceIndex::s_importFromDirectives_;
+std::map<std::string, PackageInformation> RSourceIndex::s_packageInformation_;
+FunctionInformation RSourceIndex::s_noSuchFunction_;
+
 namespace {
+
+bool isValidRPackageName(const std::string& pkgName)
+{
+   static const boost::regex rePkgName("[a-zA-Z][a-zA-Z0-9._]*");
+   return boost::regex_match(pkgName, rePkgName);
+}
 
 std::wstring removeQuoteDelims(const std::wstring& input)
 {
@@ -82,7 +106,7 @@ bool advancePastNextToken(
 
 bool advancePastNextToken(RTokens::const_iterator* pBegin,
                           RTokens::const_iterator end,
-                          const wchar_t type)
+                          RToken::TokenType type)
 {
    return advancePastNextToken(pBegin,
                                end,
@@ -189,189 +213,271 @@ void parseSignature(RTokens::const_iterator begin,
    }
 }
 
+bool isMethodOrClassDefinition(const RToken& token)
+{
+   return token.contentStartsWith(L"set") && (
+            token.contentEquals(L"setGeneric") ||
+            token.contentEquals(L"setMethod") ||
+            token.contentEquals(L"setClass") ||
+            token.contentEquals(L"setGroupGeneric") ||
+            token.contentEquals(L"setClassUnion") ||
+            token.contentEquals(L"setRefClass"));
+}
+
+class IndexStatus
+{
+public:
+   
+   IndexStatus()
+      : braceLevel_(0),
+        parenLevel_(0),
+        bracketLevel_(0),
+        doubleBracketLevel_(0)
+   {}
+   
+   void update(const RTokenCursor& cursor)
+   {
+      switch (cursor.type())
+      {
+      
+      case RToken::LBRACE: ++braceLevel_; break;
+      case RToken::LPAREN: ++parenLevel_; break;
+      case RToken::LBRACKET: ++bracketLevel_; break;
+      case RToken::LDBRACKET: ++doubleBracketLevel_; break;
+         
+      case RToken::RBRACE: --braceLevel_; break;
+      case RToken::RPAREN: --parenLevel_; break;
+      case RToken::RBRACKET: --bracketLevel_; break;
+      case RToken::RDBRACKET: --doubleBracketLevel_; break;
+         
+      default:
+         ; // no-op
+         
+      }
+   }
+   
+   bool isAtTopLevel() const
+   {
+      return braceLevel_ == 0 &&
+             parenLevel_ == 0 &&
+             bracketLevel_ == 0 &&
+             doubleBracketLevel_ == 0;
+   }
+   
+   int braceLevel() const { return braceLevel_; }
+   int parenLevel() const { return parenLevel_; }
+   int bracketLevel() const { return bracketLevel_; }
+   int doubleBracketLevel() const { return doubleBracketLevel_; }
+   
+private:
+   
+   // NOTE: We use 'int' here to accomodate documents
+   // where we might have more closing than opening parens.
+   int braceLevel_;            // '{'
+   int parenLevel_;            // '('
+   int bracketLevel_;          // '['
+   int doubleBracketLevel_;    // '[['
+};
+
+void addSourceItem(RSourceItem::Type type,
+                   const std::vector<RS4MethodParam>& signature,
+                   const RToken& token,
+                   const IndexStatus& status,
+                   RSourceIndex* pIndex)
+{
+   pIndex->addSourceItem(RSourceItem(
+                            type,
+                            string_utils::strippedOfQuotes(token.contentAsUtf8()),
+                            signature,
+                            status.braceLevel(),
+                            token.row() + 1,
+                            token.column() + 1));
+}
+
+void addSourceItem(RSourceItem::Type type,
+                   const RToken& token,
+                   const IndexStatus& status,
+                   RSourceIndex* pIndex)
+{
+   addSourceItem(type,
+                 std::vector<RS4MethodParam>(),
+                 token,
+                 status,
+                 pIndex);
+}
+
+typedef boost::function<void(const RTokenCursor&, const IndexStatus&, RSourceIndex*)> Indexer;
+
+void libraryCallIndexer(const RTokenCursor& cursor, const IndexStatus& status, RSourceIndex* pIndex)
+{
+   if (!cursor.isType(RToken::ID))
+      return;
+   
+   if (!(cursor.contentEquals(L"library") || cursor.contentEquals(L"require")))
+      return;
+   
+   RTokenCursor clone = cursor.clone();
+   if (!clone.moveToNextToken())
+      return;
+   
+   if (!clone.isType(RToken::LPAREN))
+      return;
+   
+   if (!clone.moveToNextToken())
+      return;
+   
+   // If the package name is supplied as a string, then we're done.
+   if (clone.isType(RToken::STRING))
+   {
+      std::string pkgName = string_utils::strippedOfQuotes(clone.contentAsUtf8());
+      if (isValidRPackageName(pkgName))
+         pIndex->addInferredPackage(pkgName);
+   }
+   
+   // If the package name is a symbol, then look forward and check for
+   // the 'character.only' argument.
+   else if (clone.isType(RToken::ID))
+   {
+      std::string pkgName = clone.contentAsUtf8();
+      if (isValidRPackageName(pkgName))
+         pIndex->addInferredPackage(pkgName);
+   }
+}
+
+void s4MethodIndexer(const RTokenCursor& cursor, const IndexStatus& status, RSourceIndex* pIndex)
+{
+   if (isMethodOrClassDefinition(cursor))
+   {
+      bool isSetMethod = false;
+      RSourceItem::Type setType = RSourceItem::None;
+
+      if (cursor.contentEquals(L"setMethod"))
+      {
+         isSetMethod = true;
+         setType = RSourceItem::Method;
+      }
+      else if (cursor.contentEquals(L"setGeneric") ||
+               cursor.contentEquals(L"setGroupGeneric"))
+      {
+         setType = RSourceItem::Method;
+      }
+      else if (cursor.contentEquals(L"setClass") ||
+               cursor.contentEquals(L"setClassUnion") ||
+               cursor.contentEquals(L"setRefClass"))
+      {
+         setType = RSourceItem::Class;
+      }
+      else
+      {
+         return;
+      }
+
+      // make sure there are at least 4 more tokens
+      const RTokens& rTokens = cursor.tokens();
+      std::size_t i = cursor.offset();
+      
+      if (i + 3 >= rTokens.size())
+         return;
+      
+      if ( (rTokens.at(i + 1).type() != RToken::LPAREN) ||
+           (rTokens.at(i + 2).type() != RToken::STRING) ||
+           (rTokens.at(i + 3).type() != RToken::COMMA))
+         return;
+
+      // if this was a setMethod then try to lookahead for the signature
+      std::vector<RS4MethodParam> signature;
+      if (isSetMethod)
+      {
+         parseSignature(rTokens.begin() + (i + 4),
+                        rTokens.end(),
+                        &signature);
+      }
+      
+      addSourceItem(setType,
+                    signature,
+                    rTokens.at(i + 2),
+                    status,
+                    pIndex);
+   }
+}
+
+void variableAssignmentIndexer(const RTokenCursor& cursor, const IndexStatus& status, RSourceIndex* pIndex)
+{
+   if (status.isAtTopLevel() && isLeftAssign(cursor) && cursor.offset() >= 1)
+   {
+      const RToken& nextToken = cursor.nextToken();
+      RSourceItem::Type type =
+            nextToken.contentEquals(L"function") ?
+            RSourceItem::Function :
+            RSourceItem::Variable;
+      
+      const RToken& prevToken = cursor.previousToken();
+      bool isExpectedType =
+            prevToken.isType(RToken::ID) ||
+            prevToken.isType(RToken::STRING);
+      
+      if (isExpectedType)
+      {
+         if (cursor.offset() >= 2)
+         {
+            const RToken& prevPrevToken = cursor.previousToken(2);
+            if (isBinaryOp(prevPrevToken))
+               return;
+         }
+         
+         addSourceItem(type,
+                       prevToken,
+                       status,
+                       pIndex);
+      }
+   }
+}
+
+std::vector<Indexer> makeIndexers()
+{
+   std::vector<Indexer> indexers;
+   
+   indexers.push_back(libraryCallIndexer);
+   indexers.push_back(s4MethodIndexer);
+   indexers.push_back(variableAssignmentIndexer);
+   
+   return indexers;
+}
 
 }  // anonymous namespace
 
-RSourceIndex::RSourceIndex(const std::string& context,
-                           const std::string& code)
+RSourceIndex::RSourceIndex(const std::string& context, const std::string& code)
    : context_(context)
 {
-   // convert code to wide
+   static std::vector<Indexer> indexers = makeIndexers();
+   
+   // clear any (source-local) inferred packages
+   inferredPkgNames_.clear();
+
+   // tokenize and create token cursor
    std::wstring wCode = string_utils::utf8ToWide(code, context);
-
-   // determine where the linebreaks are and initialize an iterator
-   // used for scanning them
-   std::vector<std::size_t> newlineLocs;
-   std::size_t nextNL = 0;
-   while ( (nextNL = wCode.find(L'\n', nextNL)) != std::string::npos )
-      newlineLocs.push_back(nextNL++);
-   std::vector<std::size_t>::const_iterator newlineIter = newlineLocs.begin();
-   std::vector<std::size_t>::const_iterator endNewlines = newlineLocs.end();
-
-   // tokenize
    RTokens rTokens(wCode, RTokens::StripWhitespace | RTokens::StripComments);
-
-   // scan for function, method, and class definitions (track indent level)
-   int braceLevel = 0;
-   std::wstring function(L"function");
-   std::wstring set(L"set");
-   std::wstring setGeneric(L"setGeneric");
-   std::wstring setGroupGeneric(L"setGroupGeneric");
-   std::wstring setMethod(L"setMethod");
-   std::wstring setClass(L"setClass");
-   std::wstring setClassUnion(L"setClassUnion");
-   std::wstring setRefClass(L"setRefClass");
-   std::wstring eqOp(L"=");
-   std::wstring assignOp(L"<-");
-   std::wstring parentAssignOp(L"<<-");
-   for (std::size_t i=0; i<rTokens.size(); i++)
+   if (rTokens.empty())
+      return;
+   
+   RTokenCursor cursor(rTokens);
+   
+   // run over tokens and apply indexers
+   IndexStatus status;
+   
+   do
    {
-      // initial name, qualifer, and type are nil
-      RSourceItem::Type type = RSourceItem::None;
-      std::wstring name;
-      std::size_t tokenOffset = -1;
-      bool isSetMethod = false;
-      std::vector<RS4MethodParam> signature;
-
-      // alias the token
-      const RToken& token = rTokens.at(i);
-
-      // see if this is a begin or end brace and update the level
-      if (token.type() == RToken::LBRACE)
+      status.update(cursor);
+      BOOST_FOREACH(const Indexer& indexer, indexers)
       {
-         braceLevel++;
-         continue;
+         indexer(cursor, status, this);
       }
-
-      else if (token.type() == RToken::RBRACE)
-      {
-         braceLevel--;
-         continue;
-      }
-      // bail for non-identifiers
-      else if (token.type() != RToken::ID)
-      {
-         continue;
-      }
-
-      // is this a potential method or class definition?
-      if (token.contentStartsWith(set))
-      {
-         RSourceItem::Type setType = RSourceItem::None;
-
-         if (token.contentEquals(setMethod))
-         {
-            isSetMethod = true;
-            setType = RSourceItem::Method;
-         }
-         else if (token.contentEquals(setGeneric) ||
-                  token.contentEquals(setGroupGeneric))
-         {
-            setType = RSourceItem::Method;
-         }
-         else if (token.contentEquals(setClass) ||
-                  token.contentEquals(setClassUnion) ||
-                  token.contentEquals(setRefClass))
-         {
-            setType = RSourceItem::Class;
-         }
-         else
-         {
-            continue;
-         }
-
-         // make sure there are at least 4 more tokens
-         if ( (i + 3) >= rTokens.size())
-            continue;
-
-         // check for the rest of the token sequene for a valid call to set*
-         if ( (rTokens.at(i+1).type() != RToken::LPAREN) ||
-              (rTokens.at(i+2).type() != RToken::STRING) ||
-              (rTokens.at(i+3).type() != RToken::COMMA))
-            continue;
-
-         // found a class or method definition (will find location below)
-         type = setType;
-         name = removeQuoteDelims(rTokens.at(i+2).content());
-         tokenOffset = token.offset();
-
-         // if this was a setMethod then try to lookahead for the signature
-         if (isSetMethod)
-         {
-            parseSignature(rTokens.begin() + (i+4),
-                           rTokens.end(),
-                           &signature);
-         }
-      }
-
-      // is this a function?
-      else if (token.contentEquals(function))
-      {
-         // if there is no room for an operator and identifier prior
-         // to the function then bail
-         if (i < 2)
-            continue;
-
-         // check for an assignment operator
-         const RToken& opToken = rTokens.at(i-1);
-         if ( opToken.type() != RToken::OPER)
-            continue;
-         if (!opToken.isOperator(eqOp) &&
-             !opToken.isOperator(assignOp) &&
-             !opToken.isOperator(parentAssignOp))
-            continue;
-
-         // check for an identifier
-         const RToken& idToken = rTokens.at(i-2);
-         if ( idToken.type() != RToken::ID )
-            continue;
-
-         // if there is another previous token make sure it isn't a
-         // comma or an open paren
-         if ( i > 2 )
-         {
-            const RToken& prevToken = rTokens.at(i-3);
-            if (prevToken.type() == RToken::LPAREN ||
-                prevToken.type() == RToken::COMMA)
-               continue;
-         }
-
-         // if we got this far then this is a function definition
-         type = RSourceItem::Function;
-         name = idToken.content();
-         tokenOffset = idToken.offset();
-      }
-      else
-      {
-         continue;
-      }
-
-      // compute the line by starting at the current line index and
-      // finding the first newline which is after the idToken offset
-      newlineIter = std::upper_bound(newlineIter,
-                                     endNewlines,
-                                     tokenOffset);
-      std::size_t line = newlineIter - newlineLocs.begin() + 1;
-
-      // compute column by comparing the offset to the PREVIOUS newline
-      // (guard against no previous newline)
-      std::size_t column;
-      if (line > 1)
-         column = tokenOffset - *(newlineIter - 1);
-      else
-         column = tokenOffset;
-
-      // add to index
-      items_.push_back(RSourceItem(type,
-                                   string_utils::wideToUtf8(name),
-                                   signature,
-                                   braceLevel,
-                                   line,
-                                   column));
-   }
+   } while (cursor.moveToNextToken());
+   
 }
 
 } // namespace r_util
 } // namespace core 
+} // namespace rstudio
 
 

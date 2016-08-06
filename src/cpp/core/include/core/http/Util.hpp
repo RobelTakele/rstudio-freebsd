@@ -23,13 +23,16 @@
 #include <boost/lexical_cast.hpp>
 #include <boost/date_time/posix_time/posix_time.hpp>
 
+namespace rstudio {
 namespace core {
    
 class Error;
+class FilePath;
 
 namespace http {
       
 class Request;
+class Response;
 
 typedef std::pair<std::string,std::string> Field;
 typedef std::vector<Field> Fields;
@@ -150,9 +153,18 @@ std::string httpDate(const boost::posix_time::ptime& datetime =
 std::string pathAfterPrefix(const Request& request,
                             const std::string& pathPrefix);
 
+core::FilePath requestedFile(const std::string& wwwLocalPath,
+                             const std::string& relativePath);
+
+void fileRequestHandler(const std::string& wwwLocalPath,
+                        const std::string& baseUri,
+                        const core::http::Request& request,
+                        core::http::Response* pResponse);
+
 } // namespace util
 
 } // namespace http
 } // namespace core 
+} // namespace rstudio
 
 #endif // CORE_HTTP_UTIL_HPP

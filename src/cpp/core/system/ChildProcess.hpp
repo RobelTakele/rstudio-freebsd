@@ -21,6 +21,7 @@
 #include <core/Error.hpp>
 #include <core/Log.hpp>
 
+namespace rstudio {
 namespace core {
 
 class ErrorLocation;
@@ -130,6 +131,10 @@ public:
          }
       }
 
+      // bail if we aren't waiting for results
+      if (pResult == NULL)
+         return Success();
+
       // read standard out if we didn't have a previous problem
       if (!error)
          error = readStdOut(&(pResult->stdOut));
@@ -232,5 +237,6 @@ private:
 
 } // namespace system
 } // namespace core
+} // namespace rstudio
 
 #endif // CORE_SYSTEM_CHILD_PROCESS_HPP

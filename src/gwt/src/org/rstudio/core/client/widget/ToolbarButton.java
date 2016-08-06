@@ -173,7 +173,10 @@ public class ToolbarButton extends FocusWidget
                public void onPopupMenu(final ToolbarPopupMenu menu)
                {
                   if (menuShowing[0])
+                  {
+                     removeStyleName(styles_.toolbarButtonPushed());
                      menu.hide();
+                  }
                   else
                   {
                      if (rightAlign)
@@ -241,8 +244,10 @@ public class ToolbarButton extends FocusWidget
       setElement(binder.createAndBindUi(this));
 
       this.setStylePrimaryName(styles_.toolbarButton());
+      this.addStyleName(styles_.handCursor());
 
       setText(text);
+      setInfoText(null);
       if (leftImage != null && 
           leftImage.getImageResource() != null)
       {
@@ -390,6 +395,19 @@ public class ToolbarButton extends FocusWidget
       }
    }
    
+   public void setInfoText(String infoText)
+   {
+      if (!StringUtil.isNullOrEmpty(infoText))
+      {
+         infoLabel_.setInnerText(infoText);
+         infoLabel_.getStyle().setDisplay(Display.BLOCK);
+      }
+      else
+      {
+         infoLabel_.getStyle().setDisplay(Display.NONE);
+      }
+   }
+   
    public String getText()
    {
       return StringUtil.notNull(label_.getInnerText());
@@ -412,6 +430,8 @@ public class ToolbarButton extends FocusWidget
    TableCellElement rightImageCell_;
    @UiField
    DivElement label_;
+   @UiField
+   DivElement infoLabel_;
    private Image leftImageWidget_;
    private Image rightImageWidget_;
 }

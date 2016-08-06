@@ -14,8 +14,10 @@
 
 #import "Utils.hpp"
 
-using namespace core;
+using namespace rstudio;
+using namespace rstudio::core;
 
+namespace rstudio {
 namespace desktop {
 namespace utils {
       
@@ -88,6 +90,14 @@ void initializeLang()
    const char* clang = [lang cStringUsingEncoding:NSASCIIStringEncoding];
    core::system::setenv("LANG", clang);
    core::system::setenv("LC_CTYPE", clang);
+}
+   
+void initializeSystemPrefs()
+{
+   NSUserDefaults* defaults = [NSUserDefaults standardUserDefaults];
+   [defaults setBool:YES forKey: @"WebKitWebGLEnabled"];
+   [defaults setBool:YES forKey: @"WebKitDeveloperExtras"];
+   [defaults setBool:YES forKey: @"WebKitJavaScriptCanAccessClipboard"];
 }
  
 // PORT: from DesktopUtils.cpp
@@ -281,4 +291,5 @@ void cleanDuplicateEnvVars()
    
 } // namespace utils
 } // namespace desktop
+} // namespace rstudio
 

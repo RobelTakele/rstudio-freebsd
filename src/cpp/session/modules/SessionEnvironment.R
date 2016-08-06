@@ -1,7 +1,7 @@
 #
 # SessionEnvironment.R
 #
-# Copyright (C) 2009-12 by RStudio, Inc.
+# Copyright (C) 2009-16 by RStudio, Inc.
 #
 # Unless you have received this program directly from RStudio pursuant
 # to the terms of a commercial license agreement with RStudio, then
@@ -15,7 +15,10 @@
 
 .rs.addFunction("valueFromStr", function(val)
 {
-   capture.output(try({ str(val) }, silent = TRUE));
+   .rs.withTimeLimit(1, fail = "<truncated>", {
+      capture.output(try(str(val), silent = TRUE))
+   })
+   
 })
 
 .rs.addFunction("valueAsString", function(val)
@@ -44,10 +47,11 @@
             return (paste(.rs.getSingleClass(val), " (empty)"))
          if (length(val) == 1)
          {
-            if (nchar(val) < 1024)
-                return (deparse(val))
+            quotedVal <- deparse(val)
+            if (nchar(quotedVal) < 1024)
+                return (quotedVal)
             else
-                return (paste(substr(val, 1, 1024), " ..."))
+                return (paste(substr(quotedVal, 1, 1024), " ..."))
          }
          else if (length(val) > 1)
             return (.rs.valueFromStr(val))
@@ -56,8 +60,12 @@
       }
       else if (.rs.isFunction(val))
          return (.rs.getSignature(val))
-      else if (is(val, "Date"))
-         return (format(val))
+      else if (is(val, "Date") || is(val, "POSIXct") || is(val, "POSIXlt")) {
+         if (length(val) == 1)
+           return (format(val))
+         else
+           return (.rs.valueFromStr(val))
+      }
       else
          return ("NO_VALUE")
    },
@@ -74,11 +82,34 @@
 {
    tryCatch(
    {
-      # only return the first 100 lines of detail (generally columns)--any more
+      # for Oracle R frames, show the query if it exists
+      if (is(val, "ore.frame")) 
+      {
+        query <- attr(val, "dataQry", exact = TRUE) 
+
+        # no query, show empty
+        if (is.null(query))
+          return("NO_VALUE") 
+
+        # query, display it
+        attributes(query) <- NULL
+        return(paste("   Query:", query))
+      }
+
+      # only return the first 150 lines of detail (generally columns)--any more
       # won't be very presentable in the environment pane. the first line
       # generally contains descriptive text, so don't return that.
       output <- .rs.valueFromStr(val)
-      return (output[min(length(output), 2):min(length(output),100)])
+      lines <- length(output)
+      if (lines > 150) {
+        output <- c(output[2:150], 
+                    paste("  [... ", lines - 150, " lines omitted]", 
+                          sep = ""))
+      } 
+      else if (lines > 1) {
+        output <- output[-1]
+      }
+      return(output)
    },
    error = function(e) { })
 
@@ -129,26 +160,10 @@
    if (!is.null(srcref))
    {
       fileattr <- attr(srcref, "srcfile")
-      fileattr$filename
+      enc2utf8(fileattr$filename)
    }
    else
       ""
-})
-
-.rs.addFunction("sourceCodeFromFunction", function(fun)
-{
-   if (is.null(attr(fun, "srcref")))
-   {
-      # The function does not have source refs, so deparse it to get a 
-      # formatted representation. 
-      paste(deparse(fun), collapse="\n")
-   }
-   else
-   {
-      # The function has source refs; use them to get exactly the code that
-      # was used to create the function.
-      paste(capture.output(attr(fun, "srcref")), collapse="\n")
-   }
 })
 
 # Given a function and some content inside that function, returns a vector
@@ -169,7 +184,7 @@
       (is.null(call) && is.null(calltext)) )
      return(c(0L, 0L, 0L, 0L, 0L, 0L))
 
-  lines <- deparse(fun)
+  lines <- .rs.deparseFunction(fun, FALSE, FALSE)
 
   # Remember the indentation level on each line (added by deparse), and remove
   # it along with any other leading or trailing whitespace. 
@@ -198,8 +213,13 @@
      calltext <- unlist(strsplit(calltext, "\n", fixed = TRUE))
   }
 
+  # Remove leading/trailing whitespace on each line, and collapse the lines
   calltext <- sub("\\s+$", "", sub("^\\s+", "", calltext))
   calltext <- paste(calltext, collapse=" ")
+
+  # Any call text supplied is presumed UTF-8 unless we know otherwise
+  if (Encoding(calltext) == "unknown")
+     Encoding(calltext) <- "UTF-8"
 
   # NULL is output by R when it doesn't have an expression to output; don't
   # try to match it to code
@@ -207,7 +227,7 @@
      return(c(0L, 0L, 0L, 0L, 0L, 0L))
 
   pos <- gregexpr(calltext, singleline, fixed = TRUE)[[1]]
-  if (length(pos) > 1) 
+  if (length(pos) > 1)
   {
      # There is more than one instance of the call text in the function; try 
      # to pick the first match past the preferred line.
@@ -226,7 +246,6 @@
   {
      endpos <- pos + attr(pos, "match.length")
   }
-
 
   # Return an empty source ref if we couldn't find a match
   if (length(pos) == 0 || pos < 0)
@@ -288,7 +307,11 @@
       }
       else if (is(obj, "ore.frame"))
       {
-         return(paste(ncol(obj),"columns"))
+        sqlTable <- attr(obj, "sqlTable", exact = TRUE)
+        if (is.null(sqlTable))
+          return("Oracle R frame") 
+        else
+          return(paste("Oracle R frame:", sqlTable))
       }
       else if (is(obj, "externalptr"))
       {
@@ -299,7 +322,7 @@
          return(paste(dim(obj)[1],
                       "obs. of",
                       dim(obj)[2],
-                      "variables",
+                      ifelse(dim(obj)[2] == 1, "variable", "variables"),
                       sep=" "))
       }
       else if (is.environment(obj))
@@ -317,7 +340,9 @@
       else if (is.matrix(obj)
               || is.numeric(obj)
               || is.factor(obj)
-              || is.raw(obj))
+              || is.raw(obj) 
+              || is.character(obj)
+              || is.logical(obj))
       {
          return(.rs.valueFromStr(obj))
       }
@@ -354,7 +379,7 @@
          }
          # otherwise it's a function, write it to a file for editing
          else {
-            functionSrc <- .rs.deparseFunction(name, TRUE)
+            functionSrc <- .rs.deparseFunction(name, TRUE, FALSE)
             targetFile <- scratchFile
             writeLines(functionSrc, targetFile)
          }
@@ -393,10 +418,23 @@
 .rs.addFunction("describeObject", function(env, objName)
 {
    obj <- get(objName, env)
-   val <- "(unknown)"
-   desc <- ""
-   size <- object.size(obj)
-   len <- length(obj)
+   # objects containing null external pointers can crash when
+   # evaluated--display generically (see case 4092)
+   hasNullPtr <- .rs.hasNullExternalPointer(obj)
+   if (hasNullPtr) 
+   {
+      val <- "<Object with null pointer>"
+      desc <- "An R object containing a null external pointer"
+      size <- 0
+      len <- 0
+   }
+   else 
+   {
+      val <- "(unknown)"
+      desc <- ""
+      size <- object.size(obj)
+      len <- length(obj)
+   }
    class <- .rs.getSingleClass(obj)
    contents <- list()
    contents_deferred <- FALSE
@@ -405,14 +443,14 @@
    {
       val <- deparse(obj)
    }
-   else
+   else if (!hasNullPtr)
    {
       # for large objects (> half MB), don't try to get the value, just show
       # the size. Some functions (e.g. str()) can cause the object to be
       # copied, which is slow for large objects.
       if (size > 524288)
       {
-         len <- if (len > 1) 
+         len_desc <- if (len > 1) 
                    paste(len, " elements, ", sep="")
                 else 
                    ""
@@ -424,7 +462,7 @@
          }
          else
          {
-            val <- paste("Large ", class, " (", len, 
+            val <- paste("Large ", class, " (", len_desc, 
                          capture.output(print(size, units="auto")), ")", sep="")
          }
          contents_deferred <- TRUE
@@ -436,8 +474,10 @@
 
          # expandable object--supply contents 
          if (class == "data.table" ||
+             class == "ore.frame" ||
              class == "cast_df" ||
              class == "xts" ||
+             class == "DataFrame" ||
              is.list(obj) || 
              is.data.frame(obj) ||
              isS4(obj))
@@ -453,7 +493,7 @@
       value = .rs.scalar(val),
       description = .rs.scalar(desc),
       size = .rs.scalar(size),
-      length = .rs.scalar(length(obj)),
+      length = .rs.scalar(len),
       contents = contents,
       contents_deferred = .rs.scalar(contents_deferred))
 })
@@ -497,14 +537,30 @@
 
 .rs.addFunction("environmentName", function(env)
 {
+   # global environment 
+   if (identical(env, globalenv()))
+     return(".GlobalEnv")
+
+   # base environment
+   if (identical(env, baseenv()))
+     return("package:base")
+
    # look for the environment's given name; if it doesn't have a name, check
    # the callstack to see if it matches the environment in one of the call 
    # frames.
    result <- environmentName(env)
+   
    if (nchar(result) == 0)
       .rs.environmentCallFrameName(env)$name
    else
-      result
+   {
+      # resolve namespaces
+      if ((result %in% loadedNamespaces()) && 
+          identical(asNamespace(result), env))
+         paste("namespace:", result, sep="")
+      else
+         result
+   }
 })
 
 .rs.addFunction("environmentList", function(startEnv)
@@ -573,4 +629,33 @@
 {
    .rs.valueContents(get(objName, env));
 })
+
+# attempt to determine whether the given object contains a null external
+# pointer
+.rs.addFunction("hasNullExternalPointer", function(obj)
+{
+   if (isS4(obj)) 
+   {
+      # this is an S4 object; recursively check its slots for null pointers
+      any(sapply(slotNames(obj), function(name) {
+         hasNullPtr <- FALSE
+         # it's possible to cheat the S4 object system and destroy the contents
+         # of a slot via attr<- assignments; in this case slotNames will
+         # contain slots that don't exist, and trying to access those slots 
+         # throws an error.
+         tryCatch({
+           hasNullPtr <- .rs.hasNullExternalPointer(slot(obj, name))
+           }, 
+           error = function(err) {})
+         hasNullPtr
+      }))
+   } 
+   else
+   {
+      # check the object itself for a null pointer
+      inherits(obj, "externalptr") && capture.output(print(obj)) == "<pointer: 0x0>"
+   }
+})
+
+
 

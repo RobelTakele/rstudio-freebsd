@@ -15,8 +15,9 @@
 
 #include <server/ServerOptions.hpp>
 
-using namespace core ;
+using namespace rstudio::core ;
 
+namespace rstudio {
 namespace server {
 
 void Options::addOverlayOptions(
@@ -38,4 +39,10 @@ void Options::resolveOverlayOptions()
 {
 }
 
+std::string Options::gwtPrefix() const
+{
+   return std::string();
+}
+
 } // namespace server
+} // namespace rstudio

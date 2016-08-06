@@ -20,10 +20,13 @@
 
 #include <core/json/Json.hpp>
 
+namespace rstudio {
 namespace core {
    class FilePath;
 }
+}
 
+namespace rstudio {
 namespace session {
    
 namespace client_events {
@@ -113,12 +116,52 @@ extern const int kRmdRenderCompleted;
 extern const int kRmdTemplateDiscovered;
 extern const int kRmdTemplateDiscoveryCompleted;
 extern const int kRmdShinyDocStarted;
-extern const int kRmdShinyAppsDeploymentOutput;
-extern const int kRmdShinyAppsDeploymentCompleted;
+extern const int kRmdRSConnectDeploymentOutput;
+extern const int kRmdRSConnectDeploymentCompleted;
+extern const int kRmdRSConnectDeploymentFailed;
 extern const int kUserPrompt;
 extern const int kInstallRtools;
 extern const int kInstallShiny;
 extern const int kSuspendAndRestart;
+extern const int kDataViewChanged;
+extern const int kViewFunction;
+extern const int kMarkersChanged;
+extern const int kEnableRStudioConnect;
+extern const int kUpdateGutterMarkers;
+extern const int kSnippetsChanged;
+extern const int kJumpToFunction;
+extern const int kCollabEditStarted;
+extern const int kSessionCountChanged;
+extern const int kCollabEditEnded;
+extern const int kProjectUsersChanged;
+extern const int kRVersionsChanged;
+extern const int kShinyGadgetDialog;
+extern const int kRmdParamsReady;
+extern const int kRegisterUserCommand;
+extern const int kSendToConsole;
+extern const int kUserFollowStarted;
+extern const int kUserFollowEnded;
+extern const int kProjectAccessRevoked;
+extern const int kCollabEditSaved;
+extern const int kAddinRegistryUpdated;
+extern const int kChunkOutput;
+extern const int kChunkOutputFinished;
+extern const int kRprofStarted;
+extern const int kRprofStopped;
+extern const int kRprofCreated;
+extern const int kEditorCommand;
+extern const int kPreviewRmd;
+extern const int kWebsiteFileSaved;
+extern const int kChunkPlotRefreshed;
+extern const int kChunkPlotRefreshFinished;
+extern const int kReloadWithLastChanceSave;
+extern const int kConnectionUpdated;
+extern const int kEnableConnections;
+extern const int kConnectionListChanged;
+extern const int kActiveConnectionsChanged;
+extern const int kConnectionOpened;
+extern const int kNotebookRangeExecuted;
+extern const int kChunkExecStateChanged;
 }
    
 class ClientEvent
@@ -181,6 +224,7 @@ ClientEvent showErrorMessageEvent(const std::string& title,
                                   const std::string& message);
    
 } // namespace session
+} // namespace rstudio
 
 #endif // SESSION_SESSION_CLIENT_EVENT_HPP
 

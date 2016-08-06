@@ -45,7 +45,7 @@
   <tr>
     <td>Clear console</td>
     <td>Ctrl+L</td>
-    <td>Command+L</td>
+    <td>Ctrl+L</td>
   </tr>
   <tr>
     <td>Move cursor to beginning of line</td>
@@ -126,8 +126,8 @@
    </tr>
   <tr>
     <td>Preview HTML (Markdown and HTML)</td>
-    <td>Ctrl+Shift+Y</td>
-    <td>Command+Shift+Y</td>
+    <td>Ctrl+Shift+K</td>
+    <td>Command+Shift+K</td>
   </tr>
   <tr>
     <td>Knit Document (knitr)</td>
@@ -141,8 +141,8 @@
   </tr>
   <tr>
     <td>Compile PDF (TeX and Sweave)</td>
-    <td>Ctrl+Shift+I</td>
-    <td>Command+Shift+I</td>
+    <td>Ctrl+Shift+K</td>
+    <td>Command+Shift+K</td>
   </tr>
   <tr>
     <td>Insert chunk (Sweave and Knitr)</td>
@@ -158,6 +158,11 @@
     <td>Run current line/selection</td>
     <td>Ctrl+Enter</td>
     <td>Command+Enter</td>
+  </tr>
+  <tr>
+    <td>Run current line/selection (retain cursor position)</td>
+    <td>Alt+Enter</td>
+    <td>Option+Enter</td>
   </tr>
   <tr>
     <td>Re-run previous region</td>
@@ -251,28 +256,28 @@
   </tr>
   <tr>
     <td>Switch to tab</td>
-    <td>Ctrl+Alt+Down</td>
-    <td>Ctrl+Option+Down</td>
+    <td>Ctrl+Shift+.</td>
+    <td>Ctrl+Shift+.</td>
   </tr>
   <tr>
     <td>Previous tab</td>
-    <td>Win: Ctrl+Alt+Left, Linux: Ctrl+PageUp</td>
-    <td>Ctrl+Option+Left</td>
+    <td>Ctrl+F11</td>
+    <td>Ctrl+F11</td>
   </tr>
   <tr>
     <td>Next tab</td>
-    <td>Win: Ctrl+Alt+Right, Linux: Ctrl+PageDown</td>
-    <td>Ctrl+Option+Right</td>
+    <td>Ctrl+F12</td>
+    <td>Ctrl+F12</td>
   </tr>
   <tr>
     <td>First tab</td>
-    <td>Ctrl+Shift+Alt+Left</td>
-    <td>Ctrl+Shift+Option+Left</td>
+    <td>Ctrl+Shift+F11</td>
+    <td>Ctrl+Shift+F11</td>
   </tr>
   <tr>
     <td>Last tab</td>
-    <td>Ctrl+Shift+Alt+Right</td>
-    <td>Ctrl+Shift+Option+Right</td>
+    <td>Ctrl+Shift+F12</td>
+    <td>Ctrl+Shift+F12</td>
   </tr>
   <tr>
      <td>Navigate back</td>
@@ -310,6 +315,16 @@
      <td>Command+Shift+/</td>
    </tr>
   <tr>
+    <td>Reformat Selection</td>
+    <td>Ctrl+Shift+A</td>
+    <td>Command+Shift+A</td>
+  </tr>
+  <tr>
+    <td>Show Diagnostics</td>
+    <td>Ctrl+Shift+Alt+P</td>
+    <td>Command+Shift+Alt+P</td>
+  </tr>
+  <tr>
     <td>Transpose Letters</td>
     <td></td>
     <td>Ctrl+T</td>
@@ -328,6 +343,36 @@
     <td>Jump to Matching Brace/Paren</td>
     <td>Ctrl+P</td>
     <td>Ctrl+P</td>
+  </tr>
+  <tr>
+    <td>Expand to Matching Brace/Paren</td>
+    <td>Ctrl+Shift+E</td>
+    <td>Ctrl+Shift+E</td>
+  </tr>
+  <tr>
+    <td>Select to Matching Brace/Paren</td>
+    <td>Ctrl+Shift+Alt+E</td>
+    <td>Ctrl+Shift+Alt+E</td>
+  </tr>
+  <tr>
+    <td>Add Cursor Above Current Cursor</td>
+    <td>Ctrl+Alt+Up</td>
+    <td>Ctrl+Alt+Up</td>
+  </tr>
+  <tr>
+    <td>Add Cursor Below Current Cursor</td>
+    <td>Ctrl+Alt+Down</td>
+    <td>Ctrl+Alt+Down</td>
+  </tr>
+  <tr>
+    <td>Move Active Cursor Up</td>
+    <td>Ctrl+Alt+Shift+Up</td>
+    <td>Ctrl+Alt+Shift+Up</td>
+  </tr>
+  <tr>
+    <td>Move Active Cursor Down</td>
+    <td>Ctrl+Alt+Shift+Down</td>
+    <td>Ctrl+Alt+Shift+Down</td>
   </tr>
   <tr>
     <td>Find and Replace</td>
@@ -506,6 +551,11 @@
     <td>F2</td>
     <td>F2</td>
   </tr>
+  <tr>
+    <td>Find usages for symbol at cursor (C++)</td>
+    <td>Ctrl+Alt+U</td>
+    <td>Cmd+Option+U</td>
+  </tr>
   <tr><td><br/></td></tr>
   <tr><td colspan="3"><h3>Completions (Console and Source)</h3></td></tr><tr><th>Description</th><th>Windows &amp; Linux</th><th>Mac</th></tr>
   <tr>
@@ -635,7 +685,17 @@
    <td>Execute Next Line</td>
    <td>F10</td>
    <td>F10</td>
-  </tr>   
+  </tr> 
+  <tr>
+   <td>Step Into Function</td>
+   <td>Shift+F4</td>
+   <td>Shift+F4</td>
+  </tr> 
+  <tr>
+   <td>Finish Function/Loop</td>
+   <td>Shift+F6</td>
+   <td>Shift+F6</td>
+  </tr>     
   <tr>
    <td>Continue</td>
    <td>Shift+F5</td>
@@ -651,13 +711,13 @@
   <tr><td colspan="3"><h3>Plots</h3></td></tr><tr><th>Description</th><th>Windows &amp; Linux</th><th>Mac</th></tr>
   <tr>
     <td>Previous plot</td>
-    <td>Ctrl+Shift+PageUp</td>
-    <td>Command+Shift+PageUp</td>
+    <td>Ctrl+Alt+F11</td>
+    <td>Command+Option+F11</td>
   </tr>
   <tr>
     <td>Next plot</td>
-    <td>Ctrl+Shift+PageDown</td>
-    <td>Command+Shift+PageDown</td>
+    <td>Ctrl+Alt+F12</td>
+    <td>Command+Option+F12</td>
   </tr>
   <tr><td><br/></td></tr>
   <tr><td colspan="3"><h3>Git/SVN</h3></td></tr><tr><th>Description</th><th>Windows &amp; Linux</th><th>Mac</th></tr>

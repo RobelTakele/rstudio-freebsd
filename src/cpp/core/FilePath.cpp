@@ -26,6 +26,7 @@
 
 #include <boost/algorithm/string/predicate.hpp>
 
+#include <boost/bind.hpp>
 #include <boost/filesystem.hpp>
 #include <boost/iostreams/stream.hpp>
 #include <boost/iostreams/device/file_descriptor.hpp>
@@ -39,6 +40,7 @@
 
 typedef boost::filesystem::path path_t;
 
+namespace rstudio {
 namespace core {
 
 namespace {
@@ -122,6 +124,22 @@ void logError(path_t path,
               const boost::filesystem::filesystem_error& e,
               const ErrorLocation& errorLocation);
 void addErrorProperties(path_t path, Error* pError) ;
+
+bool copySingleItem(const FilePath& from, const FilePath& to, 
+                    const FilePath& path)
+{
+   std::string relativePath = path.relativePath(from);
+   FilePath target = to.complete(relativePath);
+
+   Error error = path.isDirectory() ?
+                     target.ensureDirectory() :
+                     path.copy(target);
+   if (error)
+      LOG_ERROR(error);
+
+   return true;
+}
+
 }
 
 struct FilePath::Impl
@@ -304,7 +322,8 @@ bool FilePath::exists() const
     }
     catch(const boost::filesystem::filesystem_error& e)
     {
-       logError(pImpl_->path, e, ERROR_LOCATION) ;
+       if (e.code() != boost::system::errc::permission_denied)
+         logError(pImpl_->path, e, ERROR_LOCATION) ;
        return false ;
     }
 }
@@ -326,7 +345,7 @@ uintmax_t FilePath::size() const
 {
    try
    {
-      if (!exists())
+      if (!exists() || !boost::filesystem::is_regular_file(pImpl_->path))
          return 0;
       else
          return boost::filesystem::file_size(pImpl_->path) ;
@@ -403,12 +422,16 @@ MimeType s_mimeTypes[] =
    { "md",       "text/x-markdown" },
    { "mdtxt",    "text/x-markdown" },
    { "markdown", "text/x-markdown" },
+   { "yaml",     "text/x-yaml" },
+   { "yml",      "text/x-yaml" },
 
    // programming language types
    { "f",        "text/x-fortran" },
    { "py",       "text/x-python" },
    { "sh",       "text/x-shell" },
    { "sql",      "text/x-sql" },
+   { "stan",     "text/x-stan" },
+   { "clj",      "text/x-clojure" },
 
    // other types we are likely to serve
    { "xml",   "text/xml" },
@@ -419,6 +442,7 @@ MimeType s_mimeTypes[] =
    { "bz2",   "application/x-bzip2" },
    { "gz",    "application/x-gzip" },
    { "tar",   "application/x-tar" },
+   { "json",  "application/json" },
 
    // yet more types...
 
@@ -432,6 +456,8 @@ MimeType s_mimeTypes[] =
    { "out",   "text/plain" },
    { "csl",   "text/x-csl" },
    { "R",     "text/x-r-source"},
+   { "S",     "text/x-r-source"},
+   { "q",     "text/x-r-source"},
    { "Rd",    "text/x-r-doc"},
    { "Rnw",   "text/x-r-sweave"},
    { "Rmd",   "text/x-r-markdown"},
@@ -443,6 +469,8 @@ MimeType s_mimeTypes[] =
    { "gitignore", "text/plain"},
    { "Rbuildignore", "text/plain"},
    { "Rprofile", "text/x-r-source"},
+   { "Renviron", "text/x-shell" },
+   { "rprofvis",   "text/x-r-profile" },
 
    { "tif",   "image/tiff" },
    { "tiff",  "image/tiff" },
@@ -523,6 +551,22 @@ bool FilePath::hasTextMimeType() const
    std::string mimeType = mimeContentType("application/octet-stream");
    return boost::algorithm::starts_with(mimeType, "text/") ||
           boost::algorithm::ends_with(mimeType, "+xml");
+}
+
+void FilePath::setLastWriteTime(std::time_t time) const
+{
+   try
+   {
+      if (!exists())
+         return;
+      else
+         boost::filesystem::last_write_time(pImpl_->path, time);
+   }
+   catch(const boost::filesystem::filesystem_error& e)
+   {
+      logError(pImpl_->path, e, ERROR_LOCATION) ;
+      return;
+   }
 }
 
 std::time_t FilePath::lastWriteTime() const
@@ -753,6 +797,34 @@ Error FilePath::createDirectory(const std::string& name) const
       error.addProperty("target-dir", name) ;
       return error ;
    }
+}
+
+Error FilePath::copyDirectoryRecursive(const FilePath& target) const
+{
+   Error error = target.ensureDirectory();
+   if (error)
+      return error;
+
+   return childrenRecursive(boost::bind(copySingleItem, *this, target, _2));
+}
+
+Error FilePath::ensureFile() const
+{
+   // nothing to do if the file already exists
+   if (exists())
+      return Success();
+
+   // create output stream to ensure file creation
+   boost::shared_ptr<std::ostream> pStream;
+   Error error = open_w(&pStream);
+   if (error)
+      return error;
+
+   // release file handle
+   pStream->flush();
+   pStream.reset(); 
+
+   return Success();
 }
 
 Error FilePath::resetDirectory() const
@@ -997,7 +1069,7 @@ Error FilePath::open_w(boost::shared_ptr<std::ostream>* pStream, bool truncate) 
    #ifdef _WIN32
       using namespace boost::iostreams;
       HANDLE hFile = ::CreateFileW(pImpl_->path.wstring().c_str(),
-                                   GENERIC_WRITE,
+                                   truncate ? GENERIC_WRITE : FILE_APPEND_DATA,
                                    0, // exclusive access
                                    NULL,
                                    truncate ? CREATE_ALWAYS : OPEN_ALWAYS,
@@ -1169,3 +1241,4 @@ void addErrorProperties(path_t path, Error* pError)
 }
 
 } // namespace core
+} // namespace rstudio

@@ -28,6 +28,8 @@
 #include <r/RErrorCategory.hpp>
 #include <r/RUtil.hpp>
 
+#include <r/session/RSessionUtils.hpp>
+
 #include "RGraphicsUtils.hpp"
 #include "RGraphicsPlotManager.hpp"
 #include "RGraphicsHandler.hpp"
@@ -49,8 +51,9 @@
 #endif
 
 
-using namespace core ;
+using namespace rstudio::core ;
 
+namespace rstudio {
 namespace r {
 namespace session {
 namespace graphics {
@@ -70,6 +73,7 @@ boost::function<bool(double*,double*)> s_locatorFunction;
 // global size attributes (used to initialize new devices)
 int s_width = 0;
 int s_height = 0;   
+double s_devicePixelRatio = 1.0;
    
 // provide GraphicsDeviceEvents for plot manager
 GraphicsDeviceEvents s_graphicsDeviceEvents;   
@@ -387,7 +391,7 @@ void resyncDisplayList()
    pDev->deviceSpecific = pDC;
 
    // re-create with the correct size (don't set a file path)
-   if (!handler::initialize(s_width, s_height, pDC))
+   if (!handler::initialize(s_width, s_height, s_devicePixelRatio, pDC))
    {
       // if this fails we are dead so close the device
       close();
@@ -400,8 +404,7 @@ void resyncDisplayList()
    // replay the display list onto the resized surface
    {
       SuppressDeviceEventsScope scope(plotManager());
-      Error error = r::exec::executeSafely(
-                              boost::bind(GEplayDisplayList,s_pGEDevDesc));
+      Error error = r::exec::RFunction(".rs.GEplayDisplayList").call();
       if (error)
       {
          std::string errMsg;
@@ -429,7 +432,20 @@ SEXP createGD()
    // error if there is already an RStudio device
    if (s_pGEDevDesc != NULL)
    {
-      Rf_warning("Only one RStudio graphics device is permitted");
+      if (!r::session::utils::isServerMode())
+      {
+         Error error = r::exec::executeString(".rs.newDesktopGraphicsDevice()");
+         if (error)
+         {
+            std::string msg = error.summary();
+            r::isCodeExecutionError(error, &msg);
+            Rf_warning(("Error creating graphics device: " + msg).c_str());
+         }
+      }
+      else
+      {
+         Rf_warning("Only one RStudio graphics device is permitted");
+      }
       return R_NilValue;
    }
 
@@ -484,7 +500,7 @@ SEXP createGD()
 
       // allocate and initialize context
       DeviceContext* pDC = handler::allocate(pDev);
-      if (!handler::initialize(s_width, s_height, pDC))
+      if (!handler::initialize(s_width, s_height, s_devicePixelRatio, pDC))
       {
          handler::destroy(pDC);
 
@@ -634,7 +650,7 @@ Error restoreSnapshot(const core::FilePath& snapshotFile)
 void copyToActiveDevice()
 {
    int rsDeviceNumber = GEdeviceNumber(s_pGEDevDesc);
-   GEcopyDisplayList(rsDeviceNumber);
+   r::exec::RFunction(".rs.GEcopyDisplayList", rsDeviceNumber).call();
 }
    
 std::string imageFileExtension()
@@ -654,8 +670,14 @@ void onBeforeExecute()
 
 } // anonymous namespace
     
+void playDisplayList()
+{
+   GEplayDisplayList(s_pGEDevDesc);
+}
+
 const int kDefaultWidth = 500;   
 const int kDefaultHeight = 500; 
+const double kDefaultDevicePixelRatio = 1.0;
    
 Error initialize(
             const FilePath& graphicsPath,
@@ -690,7 +712,7 @@ Error initialize(
       return error;
    
    // set size
-   setSize(kDefaultWidth, kDefaultHeight);
+   setSize(kDefaultWidth, kDefaultHeight, kDefaultDevicePixelRatio);
 
    // check for an incompatible graphics version before fully initializing.
    std::string message;
@@ -726,14 +748,15 @@ Error initialize(
 }
 
 
-void setSize(int width, int height)
+void setSize(int width, int height, double devicePixelRatio)
 {
    // only set if the values have changed (prevents unnecessary plot 
    // invalidations from occuring)
-   if ( width != s_width || height != s_height )
+   if ( width != s_width || height != s_height || devicePixelRatio != s_devicePixelRatio)
    {
       s_width = width;
       s_height = height;
+      s_devicePixelRatio = devicePixelRatio;
       
       // if there is a device active sync its size
       if (s_pGEDevDesc != NULL)
@@ -749,6 +772,11 @@ int getWidth()
 int getHeight()
 {
    return s_height;
+}
+
+double devicePixelRatio()
+{
+   return s_devicePixelRatio;
 }
    
 void close()
@@ -772,6 +800,7 @@ void installCairoHandler() {}
 } // namespace graphics
 } // namespace session
 } // namespace r
+} // namespace rstudio
 
 
 

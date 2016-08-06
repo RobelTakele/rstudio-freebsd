@@ -34,6 +34,7 @@
 #include "RGraphicsTypes.hpp"
 #include "RGraphicsPlot.hpp"
 
+namespace rstudio {
 namespace r {
 namespace session {
 namespace graphics {
@@ -77,7 +78,14 @@ public:
    virtual core::Error savePlotAsImage(const core::FilePath& filePath,
                                        const std::string& format,
                                        int widthPx,
-                                       int heightPx);
+                                       int heightPx,
+                                       bool useDevicePixelRatio = false);
+
+   virtual core::Error savePlotAsImage(const core::FilePath& filePath,
+                                       const std::string& format,
+                                       int widthPx,
+                                       int heightPx,
+                                       double devicePixelRatio);
 
    virtual core::Error savePlotAsPdf(const core::FilePath& filePath,
                                      double widthInches,
@@ -152,7 +160,8 @@ private:
    core::Error savePlotAsBitmapFile(const core::FilePath& targetPath,
                                     const std::string& bitmapFileType,
                                     int width,
-                                    int height);
+                                    int height,
+                                    double pixelRatio);
 
    core::Error savePlotAsSvg(const core::FilePath& targetPath,
                              int width,
@@ -211,6 +220,7 @@ private:
 } // namespace graphics
 } // namespace session
 } // namespace r
+} // namespace rstudio
 
 #endif // R_SESSION_GRAPHICS_PLOT_MANAGER_HPP 
 

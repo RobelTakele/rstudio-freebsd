@@ -33,6 +33,10 @@
    height: 300px;
 }
 
+.contents table {
+   outline: none;
+}
+
 .contents td {
    cursor: default;
    white-space: nowrap;
@@ -95,23 +99,33 @@
 .breadcrumb-filepane, .breadcrumb-filepane table, .breadcrumb-filepane td {
    height: 20px;
 }
-.breadcrumb table.path a {
+.breadcrumb table.path a,
+.breadcrumb table.path span
+{
    float: left;
    text-decoration: none;
-   color: #0945bf;
    margin: 0;
    padding: 3px 6px 0 11px;
    height: 18px;
    background: DIRSEPARATOR center left no-repeat;
 }
 
-.breadcrumb table.path a.home {
-   background: none;
+.breadcrumb table.path a
+{
+   color: #0945bf;
+}
+
+.breadcrumb table.path .home {
    padding-left: 28px;
    background: HOME 0 1px no-repeat;
 }
 
-.breadcrumb table.path a.last {
+.project {
+   margin-bottom: 2px;
+   margin-right: 4px;
+}
+
+.breadcrumb table.path .last {
    padding-right: 8px;
 }
 
@@ -124,10 +138,8 @@
 }
 
 .goUp {
-   cursor: pointer;
    margin: 0 3px 0 12px;
 }
 
 .browse {
-   cursor: pointer;
 }

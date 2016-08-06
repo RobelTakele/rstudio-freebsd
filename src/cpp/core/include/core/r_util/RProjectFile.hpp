@@ -21,6 +21,7 @@
 
 #include <core/r_util/RVersionInfo.hpp>
 
+namespace rstudio {
 namespace core {
 
 class Error;
@@ -36,9 +37,12 @@ enum YesNoAskValue
    AskValue = 3
 };
 
+extern const int kLineEndingsUseDefault;
+
 extern const char * const kBuildTypeNone;
 extern const char * const kBuildTypePackage;
 extern const char * const kBuildTypeMakefile;
+extern const char * const kBuildTypeWebsite;
 extern const char * const kBuildTypeCustom;
 
 std::ostream& operator << (std::ostream& stream, const YesNoAskValue& val);
@@ -65,6 +69,7 @@ struct RProjectConfig
         numSpacesForTab(2),
         autoAppendNewline(false),
         stripTrailingWhitespace(false),
+        lineEndings(kLineEndingsUseDefault),
         encoding(),
         defaultSweaveEngine(),
         defaultLatexProgram(),
@@ -78,6 +83,7 @@ struct RProjectConfig
         packageRoxygenize(),
         packageUseDevtools(false),
         makefilePath(),
+        websitePath(),
         customScriptPath(),
         tutorialPath()
    {
@@ -93,6 +99,7 @@ struct RProjectConfig
    int numSpacesForTab;
    bool autoAppendNewline;
    bool stripTrailingWhitespace;
+   int lineEndings;
    std::string encoding;
    std::string defaultSweaveEngine;
    std::string defaultLatexProgram;
@@ -106,6 +113,7 @@ struct RProjectConfig
    std::string packageRoxygenize;
    bool packageUseDevtools;
    std::string makefilePath;
+   std::string websitePath;
    std::string customScriptPath;
    std::string tutorialPath;
 };
@@ -134,6 +142,7 @@ bool updateSetPackageInstallArgsDefault(RProjectConfig* pConfig);
 
 } // namespace r_util
 } // namespace core 
+} // namespace rstudio
 
 
 #endif // CORE_R_UTIL_R_PROJECT_FILE_HPP

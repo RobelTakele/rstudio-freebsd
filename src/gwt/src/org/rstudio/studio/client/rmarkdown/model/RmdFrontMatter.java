@@ -42,7 +42,37 @@ public class RmdFrontMatter extends JavaScriptObject
    }-*/;
 
    public final native void addDate() /*-{
-      this.date = (new Date()).toLocaleDateString();
+      // We use JavaScript to create a date string so the document picks up the
+      // system locale's mechanism for formatting dates.
+      //
+      // IE 11 adds unprintable Unicode characters to the date string that we
+      // need to remove for R Markdown. See case 4300 for details, including a
+      // link to the issue reported against IE in early 2014 (unresolved as of
+      // 3/2015)
+      var date = (new Date()).toLocaleDateString().replace(/\u200e/g, "");
+      
+      // Remove periods as they interfere with rendering to PDF.
+      // see: https://github.com/rstudio/rmarkdown/issues/145#issuecomment-47415718
+      date = date.replace(/\./g, " ");
+      date = date.replace(/\s+/g, " ");
+      
+      this.date = date;
+   }-*/;
+   
+   public final native void addResourceFile(String file) /*-{
+      if (typeof this.resource_files === "undefined")
+         this.resource_files = [];
+      else if (typeof this.resource_files === "string")
+         this.resource_files = [ this.resource_files ];
+      this.resource_files.push(file);
+   }-*/;
+   
+   public final native JsArrayString getResourceFiles() /*-{
+      if (typeof this.resource_files === "undefined")
+         return [];
+      else if (typeof this.resource_files === "string")
+         return [ this.resource_files ];
+      return this.resource_files;
    }-*/;
    
    public final native JsArrayString getFormatList() /*-{
@@ -76,14 +106,28 @@ public class RmdFrontMatter extends JavaScriptObject
      if (typeof this.output === "undefined")
         this.output = {};
         
+     // default format options
      if (Object.getOwnPropertyNames(options).length === 0)
      {
-        if (typeof this.output === "undefined" ||
-            typeof this.output === "string" ||
-            Object.getOwnPropertyNames(this.output).length === 0)
-           this.output = format;
-        else
-           this.output[format] = "default"
+        if (typeof this.output === "string")
+        {
+           // already have a default output format -- convert to list
+           var prevFormat = this.output;
+           this.output = {};
+           this.output[prevFormat] = "default";
+        }
+        if (typeof this.output === "object") 
+        {
+           if (Object.getOwnPropertyNames(this.output).length === 0)
+           {
+              // no existing output format, use this one with defaults
+              this.output = format;
+           }
+           else
+           {
+              this.output[format] = "default";
+           }
+        }
      }
      else
      {

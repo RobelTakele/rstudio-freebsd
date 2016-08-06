@@ -41,7 +41,6 @@ public class ChooseMirrorDialog<T extends JavaScriptObject> extends ModalDialog<
    public interface Source<T extends JavaScriptObject> 
                     extends ServerDataSource<JsArray<T>>
    {
-      String getType();
       String getLabel(T mirror);
       String getURL(T mirror);
    }
@@ -50,7 +49,7 @@ public class ChooseMirrorDialog<T extends JavaScriptObject> extends ModalDialog<
                              Source<T> mirrorSource,
                              OperationWithInput<T> inputOperation)
    {
-      super("Choose " + mirrorSource.getType() + " Mirror", inputOperation);
+      super("Retrieving list of CRAN mirrors...", inputOperation);
       globalDisplay_ = globalDisplay;
       mirrorSource_ = mirrorSource;
       enableOkButton(false);
@@ -102,10 +101,12 @@ public class ChooseMirrorDialog<T extends JavaScriptObject> extends ModalDialog<
          public void onResponseReceived(JsArray<T> mirrors)
          {   
             // keep internal list of mirrors 
+            boolean haveInsecureMirror = false;
             mirrors_ = new ArrayList<T>(mirrors.length());
             
             // create list box and select default item
-            listBox_ = new ListBox(false);
+            listBox_ = new ListBox();
+            listBox_.setMultipleSelect(false);
             listBox_.setVisibleItemCount(18); // all
             listBox_.setWidth("100%");
             if (mirrors.length() > 0)
@@ -113,9 +114,14 @@ public class ChooseMirrorDialog<T extends JavaScriptObject> extends ModalDialog<
                for(int i=0; i<mirrors.length(); i++)
                {
                   T mirror = mirrors.get(i);
+                  if (mirrorSource_.getLabel(mirror).startsWith("0-Cloud"))
+                     continue;
                   mirrors_.add(mirror);
                   String item = mirrorSource_.getLabel(mirror);
                   String value = mirrorSource_.getURL(mirror);
+                  if (!value.startsWith("https"))
+                     haveInsecureMirror = true;
+
                   listBox_.addItem(item, value);
                }
                
@@ -126,6 +132,10 @@ public class ChooseMirrorDialog<T extends JavaScriptObject> extends ModalDialog<
             // set it into the panel
             panel.setWidget(listBox_);
             
+            // set caption
+            String protocolQualifer = !haveInsecureMirror ? " HTTPS" : "";
+            setText("Choose" + protocolQualifer + " CRAN Mirror");
+          
             // update ok button on changed
             listBox_.addDoubleClickHandler(new DoubleClickHandler() {
                @Override

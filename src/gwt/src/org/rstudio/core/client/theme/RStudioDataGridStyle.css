@@ -3,11 +3,19 @@
 
 @def selectionBorderWidth 1px;
 
+.dataGridHeader:active, .dataGridHeader:focus {
+	outline: 0;
+}
 
 .dataGridWidget {
    font-size: 9pt;
    background-color: white;
    outline: none;
+}
+
+.dataGridWidget > div {
+	/* Override GWT styling set on element */
+	min-height: 16px !important;
 }
 
 .dataGridFirstColumn {
@@ -74,7 +82,7 @@
 }
 
 .dataGridSortableHeader {
-  cursor: pointer;
+  cursor: default;
 }
 
 .dataGridSortableHeader:hover {
@@ -121,14 +129,10 @@
 }
 
 .dataGridKeyboardSelectedRowCell {
-   border-top: 1px dotted gray !important;
-   border-bottom: 1px dotted gray !important;
 }
 .dataGridKeyboardSelectedRowCell:first-child {
-   border-left: 1px dotted gray;
 }
 .dataGridKeyboardSelectedRowCell:first-child + td + td {
-   border-right: 1px dotted gray;
 }
 
 .dataGridSelectedRow {
@@ -157,8 +161,3 @@
 .dataGridKeyboardSelectedCell {
   border: selectionBorderWidth solid transparent;
 }
-
-.dataGridLoading {
-  margin: 30px;
-}
-

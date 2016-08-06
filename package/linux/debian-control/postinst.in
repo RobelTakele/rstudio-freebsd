@@ -30,23 +30,36 @@ sudo mkdir -p /var/lib/rstudio-server/conf
 sudo mkdir -p /var/lib/rstudio-server/body
 sudo mkdir -p /var/lib/rstudio-server/proxy
 
-# write installed indicator then force suspend active sessions
-# (so that the new client is never paired against the old server)
-sudo sh -c "echo `date +%s` > /var/lib/rstudio-server/installed"
+# suspend all sessions
 sudo rstudio-server force-suspend-all
 
-# check lsb release
+# check lsb release and init system
 LSB_RELEASE=`lsb_release --id --short`
+INIT_SYSTEM=`cat /proc/1/comm 2>/dev/null`
 
-# add apparmor profile
-if test $LSB_RELEASE = "Ubuntu" && test -d /etc/apparmor.d/
+# add apparmor profile (but don't for systemd as this borks up process management)
+if test $LSB_RELEASE = "Ubuntu" && test -d /etc/apparmor.d/ && ! test $INIT_SYSTEM = "systemd"
 then
    sudo cp ${CMAKE_INSTALL_PREFIX}/extras/apparmor/rstudio-server /etc/apparmor.d/
    sudo apparmor_parser -r /etc/apparmor.d/rstudio-server 2>/dev/null
+elif test -e /etc/apparmor.d/rstudio-server
+then
+   sudo rm -f /etc/apparmor.d/rstudio-server
+   sudo invoke-rc.d apparmor reload 2>/dev/null
 fi
 
-# add upstart profile or init.d script and start the server
-if test $LSB_RELEASE = "Ubuntu" && test -d /etc/init/
+# add systemd, upstart, or init.d script and start the server
+if test "$INIT_SYSTEM" = "systemd"
+then
+   sudo systemctl stop rstudio-server.service 2>/dev/null
+   sudo systemctl disable rstudio-server.service 2>/dev/null
+   sudo cp ${CMAKE_INSTALL_PREFIX}/extras/systemd/rstudio-server.service /etc/systemd/system/rstudio-server.service
+   sudo systemctl daemon-reload
+   sudo systemctl enable rstudio-server.service
+   sudo systemctl start rstudio-server.service
+   sleep 1
+   sudo systemctl --no-pager status rstudio-server.service
+elif test $LSB_RELEASE = "Ubuntu" && test -d /etc/init/
 then
    sudo cp ${CMAKE_INSTALL_PREFIX}/extras/upstart/rstudio-server.conf /etc/init/
    sudo initctl reload-configuration

@@ -18,18 +18,21 @@
 #include <core/Log.hpp>
 #include <core/Error.hpp>
 #include <core/FilePath.hpp>
+#include <core/FileSerializer.hpp>
 #include <core/system/System.hpp>
 
 #include <session/SessionOptions.hpp>
 #include <session/SessionModuleContext.hpp>
 
-using namespace core ;
+using namespace rstudio::core ;
 
+namespace rstudio {
 namespace session {  
 
 namespace {
 const char * const kActiveClientId = "active-client-id";
 const char * const kAbend = "abend";
+const char * const kVirtualSessionId = "virtual-session-id";
 }
    
 PersistentState& persistentState()
@@ -47,16 +50,24 @@ Error PersistentState::initialize()
    // the session without reloading the client page
    desktopClientId_ = "33e600bb-c1b1-46bf-b562-ab5cba070b0e";
 
+   // scoped/project settings
    FilePath scratchPath = module_context::scopedScratchPath();
    FilePath statePath = scratchPath.complete("persistent-state");
-   return settings_.initialize(statePath);
+   Error error = settings_.initialize(statePath);
+   if (error)
+      return error;
+
+   // session settings
+   scratchPath = module_context::sessionScratchPath();
+   statePath = scratchPath.complete("session-persistent-state");
+   return sessionSettings_.initialize(statePath);
 }
 
 std::string PersistentState::activeClientId()
 {
    if (serverMode_)
    {
-      std::string activeClientId = settings_.get(kActiveClientId);
+      std::string activeClientId = sessionSettings_.get(kActiveClientId);
       if (!activeClientId.empty())
          return activeClientId;
       else
@@ -73,7 +84,7 @@ std::string PersistentState::newActiveClientId()
    if (serverMode_)
    {
       std::string newId = core::system::generateUuid();
-      settings_.set(kActiveClientId, newId);
+      sessionSettings_.set(kActiveClientId, newId);
       return newId;
    }
    else
@@ -82,13 +93,28 @@ std::string PersistentState::newActiveClientId()
    }
 }
 
+std::string PersistentState::virtualSessionId()
+{
+   std::string sessionId = sessionSettings_.get(kVirtualSessionId);
+   if (!sessionId.empty())
+      return sessionId;
+   return newVirtualSessionId();
+}
+
+std::string PersistentState::newVirtualSessionId()
+{
+   std::string sessionId = core::system::generateShortenedUuid();
+   sessionSettings_.set(kVirtualSessionId, sessionId); 
+   return sessionId;
+}
+
 // abend tracking only applies to server mode
 
 bool PersistentState::hadAbend() 
 { 
    if (serverMode_)
    {
-      return settings_.getInt(kAbend, false);
+      return sessionSettings_.getInt(kAbend, false);
    }
    else
    {
@@ -100,7 +126,7 @@ void PersistentState::setAbend(bool abend)
 { 
    if (serverMode_)
    {
-      settings_.set(kAbend, abend);
+      sessionSettings_.set(kAbend, abend);
    }
 }
 
@@ -126,3 +152,4 @@ void PersistentState::setStoredHash(const std::string& hashName,
 }
 
 } // namespace session
+} // namespace rstudio

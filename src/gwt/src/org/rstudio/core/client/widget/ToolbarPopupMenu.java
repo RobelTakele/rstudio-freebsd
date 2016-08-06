@@ -14,6 +14,8 @@
  */
 package org.rstudio.core.client.widget;
 
+import java.util.List;
+
 import com.google.gwt.core.client.Scheduler;
 import com.google.gwt.core.client.Scheduler.ScheduledCommand;
 import com.google.gwt.dom.client.Document;
@@ -106,6 +108,16 @@ public class ToolbarPopupMenu extends ThemedPopupPanel
       menuBar_.addSeparator();
    }
    
+   public void addSeparator(String label)
+   {
+      menuBar_.addSeparator(new LabelledMenuSeparator(label));
+   }
+   
+   public void addSeparator(int minPx)
+   {
+      menuBar_.addSeparator(new MinWidthMenuSeparator(minPx));
+   }
+   
    public int getItemCount()
    {
       return menuBar_.getItemCount() ;
@@ -174,6 +186,22 @@ public class ToolbarPopupMenu extends ThemedPopupPanel
                         e.cancel();
                         moveSelectionUp();
                         break;
+                     case KeyCodes.KEY_PAGEDOWN:
+                        e.cancel();
+                        moveSelectionFwd(5);
+                        break;
+                     case KeyCodes.KEY_PAGEUP:
+                        e.cancel();
+                        moveSelectionBwd(5);
+                        break;
+                     case KeyCodes.KEY_HOME:
+                        e.cancel();
+                        selectFirst();
+                        break;
+                     case KeyCodes.KEY_END:
+                        e.cancel();
+                        selectLast();
+                        break;
                      case KeyCodes.KEY_ENTER:
                         e.cancel();
                         final MenuItem menuItem = getSelectedItem();
@@ -201,6 +229,54 @@ public class ToolbarPopupMenu extends ThemedPopupPanel
       public int getItemCount()
       {
          return getItems().size() ;
+      }
+      
+      public int getSelectedIndex()
+      {
+         MenuItem selectedMenuItem = getSelectedItem();
+         List<MenuItem> menuItems = getItems();
+         for (int i = 0; i<menuItems.size(); i++)
+         {
+            if (menuItems.get(i).equals(selectedMenuItem))
+               return i;
+         }
+         return -1;
+      }
+      
+      private void moveSelectionFwd(int numElements)
+      {
+         selectItem(getSelectedIndex() + numElements);
+      }
+      
+      private void moveSelectionBwd(int numElements)
+      {
+         selectItem(getSelectedIndex() - numElements);
+      }
+      
+      private void selectFirst()
+      {
+         selectItem(0);
+      }
+      
+      private void selectLast()
+      {
+         selectItem(getItemCount());
+      }
+      
+      private void selectItem(int index)
+      {
+         int count = getItemCount();
+         
+         if (count == 0) return;
+         
+         if (index < 0)
+            index = 0;
+         
+         if (index >= count - 1)
+            index = count - 1;
+         
+         List<MenuItem> items = getItems();
+         selectItem(items.get(index));
       }
 
       private HandlerRegistration nativePreviewReg_;

@@ -15,7 +15,6 @@
 package org.rstudio.core.client.prefs;
 
 
-import com.google.gwt.dom.client.Style.Display;
 import com.google.gwt.dom.client.Style.Unit;
 import com.google.gwt.event.dom.client.ClickEvent;
 import com.google.gwt.event.dom.client.ClickHandler;
@@ -127,7 +126,9 @@ public abstract class PreferencesDialogBase<T> extends ModalDialogBase
    public void initialize(T prefs)
    {
       for (PreferencesDialogPaneBase<T> pane : panes_)
+      {
          pane.initialize(prefs);
+      }
    }
    
    public void activatePane(int index)
@@ -135,11 +136,21 @@ public abstract class PreferencesDialogBase<T> extends ModalDialogBase
       sectionChooser_.select(index);
    }
    
+   public void activatePane(Class<?> clazz)
+   {
+      for (int i = 0; i < panes_.length; i++)
+      {
+         if (panes_[i].getClass().equals(clazz))
+         {
+            activatePane(i);
+            break;
+         }
+      }
+   }
+   
    private void setPaneVisibility(PreferencesDialogPaneBase<T> pane, boolean visible)
    {
-      pane.getElement().getStyle().setDisplay(visible
-                                              ? Display.BLOCK
-                                              : Display.NONE);
+      pane.setPaneVisible(visible);
    }
 
    @Override
@@ -151,6 +162,18 @@ public abstract class PreferencesDialogBase<T> extends ModalDialogBase
    protected void hidePane(int index)
    {
       sectionChooser_.hideSection(index);
+   }
+   
+   protected void hidePane(Class<?> clazz)
+   {
+      for (int i = 0; i < panes_.length; i++)
+      {
+         if (panes_[i].getClass().equals(clazz))
+         {
+            hidePane(i);
+            break;
+         }
+      }
    }
    
    protected void attemptSaveChanges()

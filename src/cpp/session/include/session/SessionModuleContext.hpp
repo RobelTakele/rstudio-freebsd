@@ -23,17 +23,21 @@
 #include <boost/signals.hpp>
 #include <boost/shared_ptr.hpp>
 
+#include <core/HtmlUtils.hpp>
 #include <core/system/System.hpp>
 #include <core/system/ShellUtils.hpp>
 #include <core/system/FileChangeEvent.hpp>
 #include <core/http/UriHandler.hpp>
 #include <core/json/JsonRpc.hpp>
+#include <core/r_util/RToolsInfo.hpp>
+#include <core/r_util/RActiveSessions.hpp>
 #include <core/Thread.hpp>
 
 #include <session/SessionOptions.hpp>
 #include <session/SessionClientEvent.hpp>
 #include <session/SessionSourceDatabase.hpp>
 
+namespace rstudio {
 namespace core {
    class Error;
    class Success;
@@ -48,14 +52,21 @@ namespace core {
       class ShellCommand;
    }
 }
+}
 
+namespace rstudio {
 namespace r {
 namespace session {
    struct RSuspendOptions;
 }
 }
+}
 
+namespace rstudio {
 namespace session {   
+
+class DistributedEvent;
+
 namespace module_context {
 
 enum PackageCompatStatus
@@ -75,6 +86,8 @@ std::string createFileUrl(const core::FilePath& path);
 core::FilePath resolveAliasedPath(const std::string& aliasedPath);
 core::FilePath userScratchPath();
 core::FilePath scopedScratchPath();
+core::FilePath sharedScratchPath();
+core::FilePath sessionScratchPath();
 core::FilePath oldScopedScratchPath();
 bool isVisibleUserFile(const core::FilePath& filePath);
 
@@ -83,6 +96,14 @@ core::FilePath safeCurrentPath();
 core::json::Object createFileSystemItem(const core::FileInfo& fileInfo);
 core::json::Object createFileSystemItem(const core::FilePath& filePath);
    
+// r session info
+std::string rVersion();
+std::string rHomeDir();
+
+// active sessions
+core::r_util::ActiveSession& activeSession();
+core::r_util::ActiveSessions& activeSessions();
+
 // get a temp file
 core::FilePath tempFile(const std::string& prefix, 
                         const std::string& extension);
@@ -105,12 +126,26 @@ core::shell_utils::ShellCommand rCmd(const core::FilePath& rBinDir);
 // get the R local help port
 std::string rLocalHelpPort();
 
+// get current libpaths
+std::vector<core::FilePath> getLibPaths();
+
+// is the packages pane disabled
+bool disablePackages();
+
 // check if a package is installed
 bool isPackageInstalled(const std::string& packageName);
 
 // check if a package is installed with a specific version
 bool isPackageVersionInstalled(const std::string& packageName,
                                const std::string& version);
+
+// check if the required versions of various packages are installed
+bool isMinimumDevtoolsInstalled();
+bool isMinimumRoxygenInstalled();
+
+std::string packageVersion(const std::string& packageName);
+
+bool hasMinimumRVersion(const std::string& version);
 
 // check if a package is installed with a specific version and RStudio protocol
 // version (used to allow packages to disable compatibility with older RStudio
@@ -127,6 +162,9 @@ core::Error installEmbeddedPackage(const std::string& name);
 
 // find the package name for a source file
 std::string packageNameForSourceFile(const core::FilePath& sourceFilePath);
+
+// is this R or C++ source file part of another (unmonitored) package?
+bool isUnmonitoredPackageSourceFile(const core::FilePath& filePath);
 
 // register a handler for rBrowseUrl
 typedef boost::function<bool(const std::string&)> RBrowseUrlHandler;
@@ -169,8 +207,13 @@ core::Error registerPostbackHandler(
                               const PostbackHandlerFunction& handlerFunction,
                               std::string* pShellCommand); 
                         
-// register an rpc method
+// register an async rpc method
 core::Error registerAsyncRpcMethod(
+                              const std::string& name,
+                              const core::json::JsonRpcAsyncFunction& function);
+
+// register an idle-only async rpc method
+core::Error registerIdleOnlyAsyncRpcMethod(
                               const std::string& name,
                               const core::json::JsonRpcAsyncFunction& function);
 
@@ -271,12 +314,16 @@ struct firstNonEmpty
 // session events
 struct Events : boost::noncopyable
 {
+   boost::signal<void (core::json::Object*)> onSessionInfo;
    boost::signal<void ()>                    onClientInit;
    boost::signal<void ()>                    onBeforeExecute;
    boost::signal<void(const std::string&)>   onConsolePrompt;
    boost::signal<void(const std::string&)>   onConsoleInput;
+   boost::signal<void(const std::string&, const std::string&)>  
+                                             onActiveConsoleChanged;
    boost::signal<void (ConsoleOutputType, const std::string&)>
                                              onConsoleOutput;
+   boost::signal<void()>                     onUserInterrupt;
    boost::signal<void (ChangeSource)>        onDetectChanges;
    boost::signal<void (core::FilePath)>      onSourceEditorFileSaved;
    boost::signal<void(bool)>                 onDeferredInit;
@@ -286,6 +333,10 @@ struct Events : boost::noncopyable
    boost::signal<void ()>                    onQuit;
    boost::signal<void (const std::string&)>  onPackageLoaded;
    boost::signal<void ()>                    onPackageLibraryMutated;
+   boost::signal<void ()>                    onPreferencesSaved;
+   boost::signal<void (const DistributedEvent&)>
+                                             onDistributedEvent;
+   boost::signal<void (core::FilePath)>      onPermissionsChanged;
 
    // signal for detecting extended type of documents
    boost::signal<std::string(boost::shared_ptr<source_database::SourceDocument>),
@@ -339,6 +390,8 @@ void scheduleDelayedWork(const boost::posix_time::time_duration& period,
                          const boost::function<void()> &execute,
                          bool idleOnly = true);
 
+
+core::string_utils::LineEnding lineEndings(const core::FilePath& filePath);
 
 core::Error readAndDecodeFile(const core::FilePath& filePath,
                               const std::string& encoding,
@@ -414,6 +467,11 @@ std::string libPathsString();
 bool canBuildCpp();
 bool installRBuildTools(const std::string& action);
 bool haveRcppAttributes();
+bool isRtoolsCompatible(const core::r_util::RToolsInfo& rTools);
+bool addRtoolsToPathIfNecessary(std::string* pPath,
+                                std::string* pWarningMessage);
+bool addRtoolsToPathIfNecessary(core::system::Options* pEnvironment,
+                                std::string* pWarningMessage);
 
 #ifdef __APPLE__
 bool isOSXMavericks();
@@ -497,6 +555,16 @@ core::json::Object compileOutputAsJson(const CompileOutput& compileOutput);
 std::string previousRpubsUploadId(const core::FilePath& filePath);
 
 std::string CRANReposURL();
+
+std::string rstudioCRANReposURL();
+
+std::string downloadFileMethod(const std::string& defaultMethod = "");
+
+std::string CRANDownloadOptions();
+
+bool haveSecureDownloadFileMethod();
+
+void reconcileSecureDownloadConfiguration();
 
 struct UserPrompt
 {
@@ -687,8 +755,90 @@ core::json::Object plotExportFormat(const std::string& name,
 core::Error createSelfContainedHtml(const core::FilePath& sourceFilePath,
                                     const core::FilePath& targetFilePath);
 
+bool isUserFile(const core::FilePath& filePath);
+
+
+struct SourceMarker
+{
+   enum Type {
+      Error = 0, Warning = 1, Box = 2, Info = 3, Style = 4, Usage = 5
+   };
+
+   SourceMarker(Type type,
+                const core::FilePath& path,
+                int line,
+                int column,
+                const core::html_utils::HTML& message,
+                bool showErrorList)
+      : type(type), path(path), line(line), column(column), message(message),
+        showErrorList(showErrorList)
+   {
+   }
+
+   Type type;
+   core::FilePath path;
+   int line;
+   int column;
+   core::html_utils::HTML message;
+   bool showErrorList;
+};
+
+SourceMarker::Type sourceMarkerTypeFromString(const std::string& type);
+
+core::json::Array sourceMarkersAsJson(const std::vector<SourceMarker>& markers);
+
+struct SourceMarkerSet
+{  
+   SourceMarkerSet() {}
+
+   SourceMarkerSet(const std::string& name,
+                   const std::vector<SourceMarker>& markers)
+      : name(name),
+        markers(markers)
+   {
+   }
+
+   SourceMarkerSet(const std::string& name,
+                   const core::FilePath& basePath,
+                   const std::vector<SourceMarker>& markers)
+      : name(name),
+        basePath(basePath),
+        markers(markers)
+   {
+   }
+
+   bool empty() const { return name.empty(); }
+
+   std::string name;
+   core::FilePath basePath;
+   std::vector<SourceMarker> markers;
+};
+
+enum MarkerAutoSelect
+{
+   MarkerAutoSelectNone = 0,
+   MarkerAutoSelectFirst = 1,
+   MarkerAutoSelectFirstError = 2
+};
+
+void showSourceMarkers(const SourceMarkerSet& markerSet,
+                       MarkerAutoSelect autoSelect);
+
+
+bool isLoadBalanced();
+
+bool usingMingwGcc49();
+
+bool isWebsiteProject();
+bool isBookdownWebsite();
+std::string websiteOutputDir();
+
+core::FilePath extractOutputFileCreated(const core::FilePath& inputFile,
+                                        const std::string& output);
+
 } // namespace module_context
 } // namespace session
+} // namespace rstudio
 
 #endif // SESSION_MODULE_CONTEXT_HPP
 

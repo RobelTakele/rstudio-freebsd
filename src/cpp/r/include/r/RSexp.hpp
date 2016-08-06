@@ -20,14 +20,18 @@
 #include <vector>
 #include <deque>
 #include <map>
+#include <set>
 
+#include <boost/function.hpp>
 #include <boost/shared_ptr.hpp>
 #include <boost/any.hpp>
 #include <boost/utility.hpp>
 #include <boost/date_time/posix_time/posix_time.hpp>
 
 #include <core/Error.hpp>
+#include <core/Log.hpp>
 #include <core/json/Json.hpp>
+#include <core/r_util/RFunctionInformation.hpp>
 
 #include <r/RErrorCategory.hpp>
 #include <r/RInternal.hpp>
@@ -37,18 +41,24 @@
 // See comment in RInternal.hpp for more info on this
 
 
+namespace rstudio {
 namespace r {
 namespace sexp {
    
+class ListBuilder;
 class Protect;
    
 // environments and namespaces
+SEXP asEnvironment(std::string name);
+std::vector<std::string> getLoadedNamespaces();
 SEXP findNamespace(const std::string& name);
+SEXP asNamespace(const std::string& name);
    
 // variables within an environment
 typedef std::pair<std::string,SEXP> Variable ;
 void listEnvironment(SEXP env, 
                      bool includeAll,
+                     bool includeLastDotValue,
                      Protect* pProtect,
                      std::vector<Variable>* pVariables);
       
@@ -64,15 +74,20 @@ std::string classOf(SEXP objectSEXP);
 int length(SEXP object);
    
 SEXP getNames(SEXP sexp);
+bool setNames(SEXP sexp, const std::vector<std::string>& names);
+
 core::Error getNames(SEXP sexp, std::vector<std::string>* pNames);  
 bool isActiveBinding(const std::string&, const SEXP);
+
+// function introspection
+SEXP functionBody(SEXP functionSEXP);
 
 // type checking
 bool isString(SEXP object);
 bool isLanguage(SEXP object);
+bool isList(SEXP object);
 bool isMatrix(SEXP object);
 bool isDataFrame(SEXP object);   
-     
 bool isNull(SEXP object);
 
 // type coercions
@@ -82,6 +97,9 @@ std::string safeAsString(SEXP object,
 int asInteger(SEXP object);
 double asReal(SEXP object);
 bool asLogical(SEXP object);
+
+bool fillVectorString(SEXP object, std::vector<std::string>* pVector);
+bool fillSetString(SEXP object, std::set<std::string>* pSet);
 
 SEXP getAttrib(SEXP object, SEXP attrib);
 SEXP getAttrib(SEXP object, const std::string& attrib);
@@ -99,10 +117,13 @@ core::Error extract(SEXP valueSEXP, int* pInt);
 core::Error extract(SEXP valueSEXP, bool* pBool);
 core::Error extract(SEXP valueSEXP, double* pDouble);
 core::Error extract(SEXP valueSEXP, std::vector<int>* pVector);   
-core::Error extract(SEXP valueSEXP, std::string* pString);
+core::Error extract(SEXP valueSEXP, std::string* pString, bool asUtf8 = false);
 core::Error extract(SEXP valueSEXP, std::vector<std::string>* pVector);
+core::Error extract(SEXP valueSEXP, std::set<std::string>* pSet);
+core::Error extract(SEXP valueSEXP, std::map< std::string, std::set<std::string> >* pMap);
       
 // create SEXP from c++ type
+SEXP create(SEXP valueSEXP, Protect* pProtect);
 SEXP create(const core::json::Value& value, Protect* pProtect);
 SEXP create(const char* value, Protect* pProtect);
 SEXP create(const std::string& value, Protect* pProtect);
@@ -115,12 +136,22 @@ SEXP create(const std::vector<double>& value, Protect*pProtect);
 SEXP create(const std::vector<bool>& value, Protect*pProtect);
 SEXP create(const std::vector<boost::posix_time::ptime>& value,
             Protect* pProtect);
+SEXP create(const std::map<std::string, std::vector<std::string> >& value,
+            Protect* pProtect);
 
 SEXP create(const std::vector<std::pair<std::string,std::string> >& value, 
             Protect* pProtect);
+SEXP create(const std::set<std::string>& value, Protect* pProtect);
 SEXP create(const core::json::Array& value, Protect* pProtect);
 SEXP create(const core::json::Object& value, Protect* pProtect);
+SEXP create(const ListBuilder& builder, Protect* pProtect);
+SEXP create(const std::map<std::string, std::string>& value, Protect* pProtect);
 
+// Create a raw vector (binary data)
+SEXP createRawVector(const std::string& data, Protect* pProtect);
+
+// Create a named list
+SEXP createList(const std::vector<std::string>& names, Protect* pProtect);
 
 inline int indexOfElementNamed(SEXP listSEXP, const std::string& name)
 {
@@ -272,8 +303,133 @@ private:
    SEXP sexp_;
 };
 
+class SEXPPreserver : boost::noncopyable
+{
+public:
+   SEXPPreserver() {}
+   ~SEXPPreserver();
+   SEXP add(SEXP dataSEXP);
+   
+private:
+   std::vector<SEXP> preservedSEXPs_;
+};
+
+class ListBuilder : boost::noncopyable
+{
+public:
+   explicit ListBuilder(Protect* pProtect)
+      : pProtect_(pProtect) {}
+   
+   template <typename T>
+   void add(const std::string& name, const T& object)
+   {
+      objects_.push_back(create(object, pProtect_));
+      names_.push_back(name);
+   }
+   
+   template <typename T>
+   void add(const T& object)
+   {
+      objects_.push_back(create(object, pProtect_));
+      names_.push_back(std::string());
+   }
+   
+   const std::vector<SEXP>& objects() const
+   {
+      return objects_;
+   }
+   
+   const std::vector<std::string>& names() const
+   {
+      return names_;
+   }
+
+private:
+   std::vector<SEXP> objects_;
+   std::vector<std::string> names_;
+   Protect* pProtect_;
+};
+
+void printValue(SEXP object);
+bool inherits(SEXP object, const char* S3Class);
+bool maybePerformsNSE(SEXP functionSEXP);
+
+SEXP objects(SEXP environment, 
+             bool allNames,
+             Protect* pProtect);
+
+core::Error objects(SEXP environment,
+                    bool allNames,
+                    std::vector<std::string>* pNames);
+
+core::Error getNamespaceExports(SEXP ns,
+                                std::vector<std::string>* pNames);
+
+const std::set<std::string>& nsePrimitives();
+
+// NOTE: Primarily to be used with boost::bind, to add functions that are then
+// called on each node within the call. Functions can return true to signal the
+// recursion should end.
+class CallRecurser : boost::noncopyable
+{
+public:
+   typedef boost::function<bool(SEXP)> Operation;
+   
+private:
+   typedef std::vector<Operation> Operations;
+   
+public:
+   
+   explicit CallRecurser(SEXP callSEXP)
+      : callSEXP_(callSEXP)
+   {}
+
+   void add(const Operation& operation)
+   {
+      operations_.push_back(operation);
+   }
+   
+   void run()
+   {
+      runImpl(callSEXP_, operations_, operations_.size());
+   }
+   
+private:
+   
+   static void runImpl(
+         SEXP nodeSEXP,
+         Operations operations,
+         std::size_t n)
+   {
+      for (std::size_t i = 0; i < n; ++i)
+         if (operations[i](nodeSEXP))
+            return;
+      
+      if (TYPEOF(nodeSEXP) == LANGSXP)
+      {
+         while (nodeSEXP != R_NilValue)
+         {
+            runImpl(CAR(nodeSEXP), operations, n);
+            nodeSEXP = CDR(nodeSEXP);
+         }
+      }
+   }
+      
+   SEXP callSEXP_;
+   Operations operations_;
+};
+
+core::Error extractFunctionInfo(
+      SEXP functionSEXP,
+      core::r_util::FunctionInformation* pInfo,
+      bool extractDefaultArguments,
+      bool recordSymbolUsage);
+
+std::string environmentName(SEXP envSEXP);
+
 } // namespace sexp
 } // namespace r
+} // namespace rstudio
    
 
 #endif // R_R_SEXP_HPP 

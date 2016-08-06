@@ -26,6 +26,7 @@
 
 #include <boost/current_function.hpp>
 
+namespace rstudio {
 namespace core {
 
 class FilePath;
@@ -126,6 +127,9 @@ Error systemError(int value, const ErrorLocation& location) ;
 Error systemError(int value,
                   const std::string& description,
                   const ErrorLocation& location) ;
+Error systemError(int value,
+                  const Error& cause,
+                  const ErrorLocation& location) ;
 
 Error fileExistsError(const ErrorLocation& location);
 Error fileNotFoundError(const ErrorLocation& location);
@@ -171,8 +175,9 @@ private:
 std::ostream& operator<<(std::ostream& os, const ErrorLocation& location);
    
 } // namespace core 
+} // namespace rstudio
 
-#define ERROR_LOCATION core::ErrorLocation( \
+#define ERROR_LOCATION rstudio::core::ErrorLocation( \
       BOOST_CURRENT_FUNCTION,__FILE__,__LINE__)
 
 #define CATCH_UNEXPECTED_EXCEPTION \

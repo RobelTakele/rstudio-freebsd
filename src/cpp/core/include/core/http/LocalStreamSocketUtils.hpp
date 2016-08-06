@@ -25,6 +25,7 @@
 
 #include <core/http/SocketAcceptorService.hpp>
 
+namespace rstudio {
 namespace core {
 namespace http {  
 
@@ -62,12 +63,20 @@ inline Error initLocalStreamAcceptor(
    boost::system::error_code ec;
    acceptor.open(endpoint.protocol(), ec) ;
    if (ec)
-      return Error(ec, ERROR_LOCATION) ;
+   {
+      Error error(ec, ERROR_LOCATION) ;
+      error.addProperty("stream", localStreamPath);
+      return error;
+   }
    
    // bind
    acceptor.bind(endpoint, ec) ;
    if (ec)
-      return Error(ec, ERROR_LOCATION) ;
+   {
+      Error error(ec, ERROR_LOCATION) ;
+      error.addProperty("stream", localStreamPath);
+      return error;
+   }
    
    // chmod on the stream file
    Error error = changeFileMode(localStreamPath, fileMode);
@@ -84,5 +93,6 @@ inline Error initLocalStreamAcceptor(
 
 } // namespace http
 } // namespace core
+} // namespace rstudio
 
 #endif // CORE_HTTP_LOCAL_STREAM_SOCKET_UTILS_HPP

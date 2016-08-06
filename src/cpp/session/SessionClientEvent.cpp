@@ -24,8 +24,9 @@
 #include <core/FileSerializer.hpp>
 #include <core/system/System.hpp>
 
-using namespace core ;
+using namespace rstudio::core ;
 
+namespace rstudio {
 namespace session {
 
 namespace client_events {
@@ -114,12 +115,52 @@ const int kRmdRenderCompleted = 90;
 const int kRmdTemplateDiscovered = 91;
 const int kRmdTemplateDiscoveryCompleted = 92;
 const int kRmdShinyDocStarted = 93;
-const int kRmdShinyAppsDeploymentOutput = 94;
-const int kRmdShinyAppsDeploymentCompleted = 95;
+const int kRmdRSConnectDeploymentOutput = 94;
+const int kRmdRSConnectDeploymentCompleted = 95;
 const int kUserPrompt = 96;
 const int kInstallRtools = 97;
 const int kInstallShiny = 98;
 const int kSuspendAndRestart = 99;
+const int kDataViewChanged = 100;
+const int kViewFunction = 101;
+const int kMarkersChanged = 102;
+const int kEnableRStudioConnect = 103;
+const int kUpdateGutterMarkers = 104;
+const int kSnippetsChanged = 105;
+const int kJumpToFunction = 106;
+const int kCollabEditStarted = 107;
+const int kSessionCountChanged = 108;
+const int kCollabEditEnded = 109;
+const int kProjectUsersChanged = 110;
+const int kRVersionsChanged = 111;
+const int kShinyGadgetDialog = 112;
+const int kRmdParamsReady = 113;
+const int kRegisterUserCommand = 114;
+const int kRmdRSConnectDeploymentFailed = 115;
+const int kSendToConsole = 119;
+const int kUserFollowStarted = 120;
+const int kUserFollowEnded = 121;
+const int kProjectAccessRevoked = 122;
+const int kCollabEditSaved = 123;
+const int kAddinRegistryUpdated = 124;
+const int kChunkOutput = 125;
+const int kChunkOutputFinished = 126;
+const int kRprofStarted = 127;
+const int kRprofStopped = 128;
+const int kRprofCreated = 129;
+const int kEditorCommand = 131;
+const int kPreviewRmd = 132;
+const int kWebsiteFileSaved = 133;
+const int kChunkPlotRefreshed = 134;
+const int kChunkPlotRefreshFinished = 135;
+const int kReloadWithLastChanceSave = 136;
+const int kConnectionUpdated = 139;
+const int kEnableConnections = 140;
+const int kConnectionListChanged = 141;
+const int kActiveConnectionsChanged = 142;
+const int kConnectionOpened = 143;
+const int kNotebookRangeExecuted = 144;
+const int kChunkExecStateChanged = 145;
 }
 
 void ClientEvent::init(int type, const json::Value& data)
@@ -309,10 +350,12 @@ std::string ClientEvent::typeName() const
          return "rmd_template_discovery_completed";
       case client_events::kRmdShinyDocStarted:
          return "rmd_shiny_doc_started";
-      case client_events::kRmdShinyAppsDeploymentOutput:
-         return "shiny_apps_deployment_output";
-      case client_events::kRmdShinyAppsDeploymentCompleted:
-         return "shiny_apps_deployment_completed";
+      case client_events::kRmdRSConnectDeploymentOutput:
+         return "rsconnect_deployment_output";
+      case client_events::kRmdRSConnectDeploymentCompleted:
+         return "rsconnect_deployment_completed";
+      case client_events::kRmdRSConnectDeploymentFailed:
+         return "rsconnect_deployment_failed";
       case client_events::kUserPrompt:
          return "user_prompt";
       case client_events::kInstallRtools:
@@ -321,6 +364,84 @@ std::string ClientEvent::typeName() const
          return "install_shiny";
       case client_events::kSuspendAndRestart:
          return "suspend_and_restart";
+      case client_events::kDataViewChanged:
+         return "data_view_changed";
+      case client_events::kViewFunction:
+         return "view_function";
+      case client_events::kMarkersChanged:
+         return "markers_changed";
+      case client_events::kEnableRStudioConnect:
+         return "enable_rstudio_connect";
+      case client_events::kUpdateGutterMarkers:
+         return "update_gutter_markers";
+      case client_events::kSnippetsChanged:
+         return "snippets_changed";
+      case client_events::kJumpToFunction:
+         return "jump_to_function";
+      case client_events::kCollabEditStarted:
+         return "collab_edit_started";
+      case client_events::kSessionCountChanged:
+         return "session_count_changed";
+      case client_events::kCollabEditEnded:
+         return "collab_edit_ended";
+      case client_events::kProjectUsersChanged:
+         return "project_users_changed";
+      case client_events::kRVersionsChanged:
+         return "r_versions_changed";
+      case client_events::kShinyGadgetDialog:
+         return "shiny_gadget_dialog";
+      case client_events::kRmdParamsReady:
+         return "rmd_params_ready";
+      case client_events::kRegisterUserCommand:
+         return "register_user_command";
+      case client_events::kSendToConsole:
+         return "send_to_console";
+      case client_events::kUserFollowStarted:
+         return "user_follow_started";
+      case client_events::kUserFollowEnded:
+         return "user_follow_ended";
+      case client_events::kProjectAccessRevoked:
+         return "project_access_revoked";
+      case client_events::kCollabEditSaved:
+         return "collab_edit_saved";
+      case client_events::kAddinRegistryUpdated:
+         return "addin_registry_updated";
+      case client_events::kChunkOutput:
+         return "chunk_output";
+      case client_events::kChunkOutputFinished:
+         return "chunk_output_finished";
+      case client_events::kRprofStarted:
+         return "rprof_started";
+      case client_events::kRprofStopped:
+         return "rprof_stopped";
+      case client_events::kRprofCreated:
+         return "rprof_created";
+      case client_events::kEditorCommand:
+         return "editor_command";
+      case client_events::kPreviewRmd:
+         return "preview_rmd";
+      case client_events::kWebsiteFileSaved:
+         return "website_file_saved";
+      case client_events::kChunkPlotRefreshed:
+         return "chunk_plot_refreshed";
+      case client_events::kChunkPlotRefreshFinished:
+         return "chunk_plot_refresh_finished";
+      case client_events::kReloadWithLastChanceSave:
+         return "reload_with_last_chance_save";
+      case client_events::kConnectionUpdated:
+         return "connection_updated";
+      case client_events::kEnableConnections:
+         return "enable_connections";
+      case client_events::kConnectionListChanged:
+         return "connection_list_changed";
+      case client_events::kActiveConnectionsChanged:
+         return "active_connections_changed";
+      case client_events::kConnectionOpened:
+         return "connection_opened";
+      case client_events::kNotebookRangeExecuted:
+         return "notebook_range_executed";
+      case client_events::kChunkExecStateChanged:
+         return "chunk_exec_state_changed";
       default:
          LOG_WARNING_MESSAGE("unexpected event type: " + 
                              safe_convert::numberToString(type_));
@@ -361,3 +482,4 @@ ClientEvent showErrorMessageEvent(const std::string& title,
    
    
 } // namespace session
+} // namespace rstudio

@@ -20,10 +20,15 @@ import com.google.inject.Singleton;
 import org.rstudio.core.client.Debug;
 import org.rstudio.core.client.js.JsObject;
 import org.rstudio.core.client.js.JsUtil;
+import org.rstudio.studio.client.RStudioGinjector;
 import org.rstudio.studio.client.application.events.EventBus;
+import org.rstudio.studio.client.common.satellite.Satellite;
+import org.rstudio.studio.client.common.satellite.SatelliteManager;
 import org.rstudio.studio.client.notebook.CompileNotebookPrefs;
 import org.rstudio.studio.client.notebookv2.CompileNotebookv2Prefs;
-import org.rstudio.studio.client.server.VoidServerRequestCallback;
+import org.rstudio.studio.client.server.ServerError;
+import org.rstudio.studio.client.server.ServerRequestCallback;
+import org.rstudio.studio.client.server.Void;
 import org.rstudio.studio.client.workbench.exportplot.model.ExportPlotOptions;
 import org.rstudio.studio.client.workbench.model.Session;
 import org.rstudio.studio.client.workbench.prefs.events.UiPrefsChangedEvent;
@@ -36,13 +41,16 @@ public class UIPrefs extends UIPrefsAccessor implements UiPrefsChangedHandler
    @Inject
    public UIPrefs(Session session, 
                   EventBus eventBus,
-                  PrefsServerOperations server)
+                  PrefsServerOperations server,
+                  SatelliteManager satelliteManager)
    {
-      super(session.getSessionInfo().getUiPrefs(),
+      super(session.getSessionInfo(),
+            session.getSessionInfo().getUiPrefs(),
             session.getSessionInfo().getProjectUIPrefs());
       
       session_ = session;
       server_ = server;
+      satelliteManager_ = satelliteManager;
       
       eventBus.addHandler(UiPrefsChangedEvent.TYPE, this);
    }
@@ -51,7 +59,33 @@ public class UIPrefs extends UIPrefsAccessor implements UiPrefsChangedHandler
    {
       server_.setUiPrefs(
          session_.getSessionInfo().getUiPrefs(),
-         new VoidServerRequestCallback());
+         new ServerRequestCallback<Void>() 
+         {
+            @Override
+            public void onResponseReceived(Void v)
+            {
+               UiPrefsChangedEvent event = new UiPrefsChangedEvent(
+                     UiPrefsChangedEvent.Data.create(
+                              UiPrefsChangedEvent.GLOBAL_TYPE,
+                              session_.getSessionInfo().getUiPrefs()));
+
+               if (Satellite.isCurrentWindowSatellite())
+               {
+                  RStudioGinjector.INSTANCE.getEventBus()
+                     .fireEventToMainWindow(event);
+               }
+               else
+               {
+                  // let satellites know prefs have changed
+                  satelliteManager_.dispatchCrossWindowEvent(event);
+               }
+            }
+            @Override
+            public void onError(ServerError error)
+            {
+               Debug.logError(error);
+            }
+         });
    }
    
    @Override
@@ -61,6 +95,7 @@ public class UIPrefs extends UIPrefsAccessor implements UiPrefsChangedHandler
       {
          // get prefs accessor
          UIPrefsAccessor newUiPrefs = new UIPrefsAccessor(
+                                                   session_.getSessionInfo(),
                                                    e.getUIPrefs(), 
                                                    JsObject.createJsObject());
          
@@ -112,13 +147,108 @@ public class UIPrefs extends UIPrefsAccessor implements UiPrefsChangedHandler
          showIndentGuides().setGlobalValue(
                               newUiPrefs.showIndentGuides().getGlobalValue());
          
+         // document outline width
+         preferredDocumentOutlineWidth().setGlobalValue(
+                              newUiPrefs.preferredDocumentOutlineWidth().getGlobalValue());
+         
+         // show document outline by default for Rmd
+         showDocumentOutlineRmd().setGlobalValue(
+                              newUiPrefs.showDocumentOutlineRmd().getGlobalValue());
+         
          // use vim mode
          useVimMode().setGlobalValue(
                               newUiPrefs.useVimMode().getGlobalValue());
          
+         // emacs keybindings
+         enableEmacsKeybindings().setGlobalValue(
+                              newUiPrefs.enableEmacsKeybindings().getGlobalValue());
+         
+         continueCommentsOnNewline().setGlobalValue(
+                              newUiPrefs.continueCommentsOnNewline().getGlobalValue());
+         
          // insert matching
          insertMatching().setGlobalValue(
                                  newUiPrefs.insertMatching().getGlobalValue());
+              
+         codeComplete().setGlobalValue(
+                                 newUiPrefs.codeComplete().getGlobalValue());
+         
+         codeCompleteOther().setGlobalValue(
+               newUiPrefs.codeCompleteOther().getGlobalValue());
+         
+         alwaysCompleteInConsole().setGlobalValue(
+                                 newUiPrefs.alwaysCompleteInConsole().getGlobalValue());
+         
+         alwaysCompleteDelayMs().setGlobalValue(
+                                 newUiPrefs.alwaysCompleteDelayMs().getGlobalValue());
+         
+         alwaysCompleteCharacters().setGlobalValue(
+                                 newUiPrefs.alwaysCompleteCharacters().getGlobalValue());
+         
+         insertParensAfterFunctionCompletion().setGlobalValue(
+                                 newUiPrefs.insertParensAfterFunctionCompletion().getGlobalValue());
+         
+         allowTabMultilineCompletion().setGlobalValue(
+                                 newUiPrefs.allowTabMultilineCompletion().getGlobalValue());
+         
+         showFunctionTooltipOnIdle().setGlobalValue(
+                                 newUiPrefs.showFunctionTooltipOnIdle().getGlobalValue());
+         
+         surroundSelection().setGlobalValue(
+                                 newUiPrefs.surroundSelection().getGlobalValue());
+         
+         enableSnippets().setGlobalValue(
+                                 newUiPrefs.enableSnippets().getGlobalValue());
+         
+         insertSpacesAroundEquals().setGlobalValue(
+                                 newUiPrefs.insertSpacesAroundEquals().getGlobalValue());
+         
+         showSignatureTooltips().setGlobalValue(
+                                 newUiPrefs.showSignatureTooltips().getGlobalValue());
+         
+         
+         /* Diagnostics */
+         
+         // R Diagnostics
+         
+         showDiagnosticsR().setGlobalValue(
+               newUiPrefs.showDiagnosticsR().getGlobalValue());
+         
+         diagnosticsInRFunctionCalls().setGlobalValue(
+               newUiPrefs.diagnosticsInRFunctionCalls().getGlobalValue());
+         
+         checkArgumentsToRFunctionCalls().setGlobalValue(
+               newUiPrefs.checkArgumentsToRFunctionCalls().getGlobalValue());
+         
+         warnIfNoSuchVariableInScope().setGlobalValue(
+               newUiPrefs.warnIfNoSuchVariableInScope().getGlobalValue());
+         
+         warnIfVariableDefinedButNotUsed().setGlobalValue(
+               newUiPrefs.warnIfVariableDefinedButNotUsed().getGlobalValue());
+         
+         enableStyleDiagnostics().setGlobalValue(
+               newUiPrefs.enableStyleDiagnostics().getGlobalValue());
+         
+         // Other diagnostics
+         
+         showDiagnosticsCpp().setGlobalValue(
+               newUiPrefs.showDiagnosticsCpp().getGlobalValue());
+         
+         showDiagnosticsOther().setGlobalValue(
+               newUiPrefs.showDiagnosticsOther().getGlobalValue());
+         
+         // Background Linting
+         
+         diagnosticsOnSave().setGlobalValue(
+               newUiPrefs.diagnosticsOnSave().getGlobalValue());
+         
+         enableBackgroundDiagnostics().setGlobalValue(
+               newUiPrefs.enableBackgroundDiagnostics().getGlobalValue());
+         
+         backgroundDiagnosticsDelayMs().setGlobalValue(
+               newUiPrefs.backgroundDiagnosticsDelayMs().getGlobalValue());
+         
+         /* End Diagnostics UI Prefs */
          
          autoAppendNewline().setGlobalValue(
                                  newUiPrefs.autoAppendNewline().getGlobalValue());
@@ -134,9 +264,33 @@ public class UIPrefs extends UIPrefsAccessor implements UiPrefsChangedHandler
          focusConsoleAfterExec().setGlobalValue(
                          newUiPrefs.focusConsoleAfterExec().getGlobalValue());
          
+         // fold style
+         foldStyle().setGlobalValue(
+               newUiPrefs.foldStyle().getGlobalValue());
+         
+         // save before sourcing
+         saveBeforeSourcing().setGlobalValue(
+                         newUiPrefs.saveBeforeSourcing().getGlobalValue());
+         
          // syntax color console
          syntaxColorConsole().setGlobalValue(
                              newUiPrefs.syntaxColorConsole().getGlobalValue());
+         
+         // enable scroll past end of document
+         scrollPastEndOfDocument().setGlobalValue(
+                             newUiPrefs.scrollPastEndOfDocument().getGlobalValue());
+         
+         // highlight R function calls
+         highlightRFunctionCalls().setGlobalValue(
+                             newUiPrefs.highlightRFunctionCalls().getGlobalValue());
+         
+         // truncate long lines in console history
+         truncateLongLinesInConsoleHistory().setGlobalValue(
+                             newUiPrefs.truncateLongLinesInConsoleHistory().getGlobalValue());
+         
+         // chunk toolbar
+         showInlineToolbarForRCodeChunks().setGlobalValue(
+               newUiPrefs.showInlineToolbarForRCodeChunks().getGlobalValue());
          
          // save all before build
          saveAllBeforeBuild().setGlobalValue(
@@ -289,11 +443,24 @@ public class UIPrefs extends UIPrefsAccessor implements UiPrefsChangedHandler
          // preferred R Markdown template
          rmdPreferredTemplatePath().setGlobalValue(
                newUiPrefs.rmdPreferredTemplatePath().getGlobalValue());
+
+         // whether to show publish UI 
+         showPublishUi().setGlobalValue(
+               newUiPrefs.showPublishUi().getGlobalValue());
+         
+         // how to view R Markdown documents
+         rmdViewerType().setGlobalValue(
+               newUiPrefs.rmdViewerType().getGlobalValue());
+         
+         // show improved data import dialog
+         useDataImport().setGlobalValue(
+               newUiPrefs.useDataImport().getGlobalValue());
       }
       else if (e.getType().equals(UiPrefsChangedEvent.PROJECT_TYPE))
       {
          // get prefs accessor
          UIPrefsAccessor newUiPrefs = new UIPrefsAccessor(
+                                                   session_.getSessionInfo(),
                                                    JsObject.createJsObject(),
                                                    e.getUIPrefs());
          
@@ -339,4 +506,5 @@ public class UIPrefs extends UIPrefsAccessor implements UiPrefsChangedHandler
    
    private final Session session_;
    private final PrefsServerOperations server_;
+   private final SatelliteManager satelliteManager_;
 }

@@ -23,14 +23,15 @@
 
 #include <core/r_util/RToolsInfo.hpp>
 
+#include <r/RExec.hpp>
+
 #include <session/SessionModuleContext.hpp>
 #include <session/SessionConsoleProcess.hpp>
 #include <session/SessionUserSettings.hpp>
 
-#include "SessionBuildEnvironment.hpp"
+using namespace rstudio::core ;
 
-using namespace core ;
-
+namespace rstudio {
 namespace session {  
 namespace modules {
 namespace build {
@@ -60,26 +61,28 @@ void onDownloadCompleted(const core::system::ProcessResult& result,
 Error installRtools()
 {
    // determine the correct version of rtools
+   bool gcc49 = module_context::usingMingwGcc49();
    std::string version, url;
    FilePath installPath("C:\\Rtools");
    std::vector<r_util::RToolsInfo> availableRtools;
-   availableRtools.push_back(r_util::RToolsInfo("3.2", installPath));
-   availableRtools.push_back(r_util::RToolsInfo("3.1", installPath));
-   availableRtools.push_back(r_util::RToolsInfo("3.0", installPath));
-   availableRtools.push_back(r_util::RToolsInfo("2.15", installPath));
-   availableRtools.push_back(r_util::RToolsInfo("2.14", installPath));
-   availableRtools.push_back(r_util::RToolsInfo("2.13", installPath));
-   availableRtools.push_back(r_util::RToolsInfo("2.12", installPath));
-   availableRtools.push_back(r_util::RToolsInfo("2.11", installPath));
+   availableRtools.push_back(r_util::RToolsInfo("3.3", installPath, gcc49));
+   availableRtools.push_back(r_util::RToolsInfo("3.2", installPath, gcc49));
+   availableRtools.push_back(r_util::RToolsInfo("3.1", installPath, gcc49));
+   availableRtools.push_back(r_util::RToolsInfo("3.0", installPath, gcc49));
+   availableRtools.push_back(r_util::RToolsInfo("2.15", installPath, gcc49));
+   availableRtools.push_back(r_util::RToolsInfo("2.14", installPath, gcc49));
+   availableRtools.push_back(r_util::RToolsInfo("2.13", installPath, gcc49));
+   availableRtools.push_back(r_util::RToolsInfo("2.12", installPath, gcc49));
+   availableRtools.push_back(r_util::RToolsInfo("2.11", installPath, gcc49));
    BOOST_FOREACH(const r_util::RToolsInfo& rTools, availableRtools)
    {
-      if (isRtoolsCompatible(rTools))
+      if (module_context::isRtoolsCompatible(rTools))
       {
          version = rTools.name();
 
          std::string repos = userSettings().cranMirror().url;
          if (repos.empty())
-            repos = "http://cran.rstudio.com/";
+            repos = module_context::rstudioCRANReposURL();
          url = rTools.url(repos);
          break;
       }
@@ -110,24 +113,22 @@ Error installRtools()
    boost::format fmt("utils::download.file('%1%', '%2%', mode = 'wb')");
    std::string cmd = boost::str(fmt % url % dest);
 
-   // build args
-   std::vector<std::string> args;
-   args.push_back("--slave");
-   args.push_back("--no-save");
-   args.push_back("--no-restore");
-   args.push_back("-e");
-   args.push_back(cmd);
+   // execute it
+   error = r::exec::executeString(cmd);
+   if (error)
+   {
+      std::string errMsg;
+      if (r::isCodeExecutionError(error, &errMsg))
+         module_context::consoleWriteError(errMsg + "\n");
+      return error;
+   }
 
-   // create and execute the process
-   core::system::ProcessOptions options;
-   options.redirectStdErrToStdOut = true;
-   options.terminateChildren = true;
-   module_context::processSupervisor().runProgram(
-            string_utils::utf8ToSystem(rProgramPath.absolutePath()),
-            args,
-            "",
-            options,
-            boost::bind(onDownloadCompleted, _1, version, installerPath));
+   // fire the event
+   json::Object data;
+   data["version"] = version;
+   data["installer_path"] = installerPath.absolutePath();
+   ClientEvent event(client_events::kInstallRtools, data);
+   module_context::enqueClientEvent(event);
 
    return Success();
 }
@@ -136,3 +137,4 @@ Error installRtools()
 } // namespace build
 } // namespace modules
 } // namespace session
+} // namespace rstudio

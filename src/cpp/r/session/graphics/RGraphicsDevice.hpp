@@ -18,18 +18,22 @@
 
 #include <boost/function.hpp>
 
+namespace rstudio {
 namespace core {
    class Error;
    class FilePath;
 }
+}
 
+namespace rstudio {
 namespace r {
 namespace session {
 namespace graphics {
 namespace device {
    
 extern const int kDefaultWidth;
-extern const int kDefaultHeight;    
+extern const int kDefaultHeight;
+extern const double kDefaultDevicePixelRatio;
    
 // initialize
 core::Error initialize(
@@ -37,9 +41,16 @@ core::Error initialize(
           const boost::function<bool(double*,double*)>& locatorFunction);
    
 // device size
-void setSize(int width, int height);
+void setSize(int width, int height, double devicePixelRatio);
 int getWidth();
 int getHeight();
+double devicePixelRatio();
+
+// NOTE: should not be called directly!
+// use RFunction(".rs.GEplayDisplayList") instead to ensure
+// appropriate R calling handlers are active (that function will
+// then call through to this)
+void playDisplayList();
 
 // reset
 void close();
@@ -49,6 +60,7 @@ void close();
 } // namespace graphics
 } // namespace session
 } // namespace r
+} // namespace rstudio
 
 
 #endif // R_SESSION_GRAPHICS_DEVICE_HPP 

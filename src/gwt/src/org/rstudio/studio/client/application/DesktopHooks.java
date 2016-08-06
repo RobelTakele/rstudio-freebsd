@@ -15,9 +15,13 @@
 package org.rstudio.studio.client.application;
 
 import com.google.gwt.core.client.GWT;
+import com.google.gwt.user.client.Command;
+import com.google.gwt.user.client.Timer;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 
+import org.rstudio.core.client.SerializedCommand;
+import org.rstudio.core.client.SerializedCommandQueue;
 import org.rstudio.core.client.command.AppCommand;
 import org.rstudio.core.client.files.FileSystemItem;
 import org.rstudio.core.client.js.BaseExpression;
@@ -27,6 +31,7 @@ import org.rstudio.studio.client.application.events.SaveActionChangedEvent;
 import org.rstudio.studio.client.application.events.SaveActionChangedHandler;
 import org.rstudio.studio.client.application.events.SuicideEvent;
 import org.rstudio.studio.client.application.model.SaveAction;
+import org.rstudio.studio.client.application.ui.impl.DesktopApplicationHeader;
 import org.rstudio.studio.client.common.GlobalDisplay;
 import org.rstudio.studio.client.common.filetypes.FileTypeRegistry;
 import org.rstudio.studio.client.server.Server;
@@ -34,6 +39,7 @@ import org.rstudio.studio.client.workbench.WorkbenchContext;
 import org.rstudio.studio.client.workbench.commands.Commands;
 import org.rstudio.studio.client.workbench.model.Session;
 import org.rstudio.studio.client.workbench.prefs.model.UIPrefs;
+import org.rstudio.studio.client.workbench.views.console.events.SendToConsoleEvent;
 import org.rstudio.studio.client.workbench.views.source.SourceShim;
 
 /**
@@ -149,6 +155,36 @@ public class DesktopHooks
       fileTypeRegistry_.openFile(file, false);
    }
    
+   void evaluateRCmd(final String cmd)
+   {
+      // inject a 100ms delay between execution of commands to prevent
+      // issues with commands being delivered out of order by cocoa
+      // networking to the server (it appears as if when you put e.g. 10
+      // requests in flight simultaneously it's not guarnateed that they
+      // will be received in the order they were sent).
+      commandQueue_.addCommand(new SerializedCommand() {
+         @Override
+         public void onExecute(final Command continuation)
+         {
+            // execute the code
+            events_.fireEvent(new SendToConsoleEvent(cmd, true));
+            
+            // wait 100ms to execute the next command in the queue
+            new Timer() {
+
+               @Override
+               public void run()
+               {
+                  continuation.execute();  
+               }
+            }.schedule(100);;
+         }
+      });
+      
+      // make sure the queue is running
+      commandQueue_.run();  
+   }
+   
    void quitR()
    {
       commands_.quitSession().execute();
@@ -173,6 +209,11 @@ public class DesktopHooks
    {
       return session_.getSessionInfo().getSumatraPdfExePath();
    }
+   
+   boolean isSelectionEmpty()
+   {
+      return DesktopApplicationHeader.isSelectionEmpty();
+   }
 
    private final Commands commands_;
    private final EventBus events_;
@@ -183,6 +224,8 @@ public class DesktopHooks
    private final FileTypeRegistry fileTypeRegistry_;
    private final WorkbenchContext workbenchContext_;
    private final SourceShim sourceShim_;
+   private final SerializedCommandQueue commandQueue_ = 
+                                         new SerializedCommandQueue();
    
    private SaveAction saveAction_ = SaveAction.saveAsk();
 }

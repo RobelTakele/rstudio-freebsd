@@ -14,17 +14,32 @@
  */
 package org.rstudio.studio.client.workbench.views.source.editors.text;
 
+import org.rstudio.studio.client.RStudioGinjector;
 import org.rstudio.studio.client.common.SimpleRequestCallback;
 import org.rstudio.studio.client.common.filetypes.TextFileType;
 import org.rstudio.studio.client.server.ServerError;
 import org.rstudio.studio.client.server.ServerRequestCallback;
-import org.rstudio.studio.client.workbench.views.buildtools.model.BuildServerOperations;
+import org.rstudio.studio.client.server.Void;
 import org.rstudio.studio.client.workbench.views.source.editors.EditingTarget;
+import org.rstudio.studio.client.workbench.views.source.editors.text.cpp.CppCompletionContext;
+import org.rstudio.studio.client.workbench.views.source.editors.text.cpp.CppCompletionOperation;
+import org.rstudio.studio.client.workbench.views.source.editors.text.cpp.CppCompletionServerRequestCallback;
 import org.rstudio.studio.client.workbench.views.source.model.CppCapabilities;
+import org.rstudio.studio.client.workbench.views.source.model.CppServerOperations;
+
+import com.google.inject.Inject;
 
 public class TextEditingTargetCppHelper
 {
-   public TextEditingTargetCppHelper(BuildServerOperations server)
+   public TextEditingTargetCppHelper(CppCompletionContext completionContext,
+                                     DocDisplay docDisplay)
+   {
+      completionContext_ = completionContext;
+      RStudioGinjector.INSTANCE.injectMembers(this);
+   }
+   
+   @Inject
+   void initialize(CppServerOperations server)
    {
       server_ = server;
    }
@@ -88,10 +103,27 @@ public class TextEditingTargetCppHelper
          }
       });
    }
-      
+   
   
-   private BuildServerOperations server_;
-  
+   public void findUsages()
+   {
+      completionContext_.cppCompletionOperation(new CppCompletionOperation() {
+         @Override
+         public void execute(String docPath, int line, int column)
+         {
+            server_.findCppUsages(
+                  docPath, 
+                  line, 
+                  column, 
+                  new CppCompletionServerRequestCallback<Void>(
+                                          "Finding usages..."));
+         }
+         
+      });
+   }
+ 
+   private CppServerOperations server_;
+   private final CppCompletionContext completionContext_;
    
    // cache the value statically -- once we get an affirmative response
    // we never check again

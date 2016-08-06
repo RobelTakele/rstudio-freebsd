@@ -20,15 +20,58 @@
 #include <core/Error.hpp>
 #include <core/FilePath.hpp>
 
+namespace rstudio {
 namespace core {
 namespace string_utils {
 
 enum LineEnding {
-   LineEndingWindows,
-   LineEndingPosix,
-   LineEndingNative,
-   LineEndingPassthrough
+   LineEndingWindows = 0,
+   LineEndingPosix = 1,
+   LineEndingNative = 2,
+   LineEndingPassthrough = 3
 };
+
+class Contains
+{
+public:
+   Contains(const std::string& needle)
+      : needle_(needle)
+   {
+   }
+   
+   bool operator()(const std::string& haystack)
+   {
+      return haystack.find(needle_) != std::string::npos;
+   }
+   
+private:
+   std::string needle_;
+};
+
+bool isSubsequence(std::string const& self,
+                   std::string const& other);
+
+bool isSubsequence(std::string const& self,
+                   std::string const& other,
+                   bool caseInsensitive);
+
+bool isSubsequence(std::string const& self,
+                   std::string const& other,
+                   std::string::size_type other_n,
+                   bool caseInsensitive);
+
+bool isSubsequence(std::string const& self,
+                   std::string const& other,
+                   std::string::size_type other_n);
+
+std::vector<int> subsequenceIndices(std::string const& sequence,
+                                    std::string const& query);
+
+bool subsequenceIndices(std::string const& sequence,
+                        std::string const& query,
+                        std::vector<int> *pIndices);
+
+std::string getExtension(std::string const& str);
 
 std::string utf8ToSystem(const std::string& str,
                          bool escapeInvalidChars=false);
@@ -41,8 +84,11 @@ std::string htmlEscape(const std::string& str, bool isAttributeValue = false);
 std::string jsLiteralEscape(const std::string& str);
 std::string jsonLiteralEscape(const std::string& str);
 std::string jsonLiteralUnescape(const std::string& str);
+std::string singleQuotedStrEscape(const std::string& str);
 
 void convertLineEndings(std::string* str, LineEnding type);
+
+bool detectLineEndings(const FilePath& filePath, LineEnding* pType);
 
 std::string filterControlChars(const std::string& str);
 
@@ -173,9 +219,71 @@ inline bool stringNotEmpty(const std::string& str)
 void trimLeadingLines(int maxLines, std::string* pLines);
 
 void stripQuotes(std::string* pStr);
+std::string strippedOfQuotes(const std::string& str);
+
+std::string strippedOfBackQuotes(const std::string& string);
+
+std::size_t countNewlines(const std::wstring& string);
+std::size_t countNewlines(const std::string& string);
+
+std::size_t countNewlines(std::string::iterator begin,
+                          std::string::iterator end);
+
+std::size_t countNewlines(std::wstring::iterator begin,
+                          std::wstring::iterator end);
+
+std::wstring::const_iterator countNewlines(std::wstring::const_iterator begin,
+                                           std::wstring::const_iterator end,
+                                           std::size_t* pCount);
+
+bool isPrefixOf(const std::string& self, const std::string& prefix);
+
+template <typename StringType>
+inline StringType substring(const StringType& string,
+                            std::size_t startPos)
+{
+   return string.substr(startPos);
+}
+
+template <typename StringType>
+inline StringType substring(const StringType& string,
+                            std::size_t startPos,
+                            std::size_t endPos)
+{
+   return string.substr(startPos, endPos - startPos);
+}
+
+namespace detail {
+
+template <typename StringType>
+inline StringType trimWhitespace(const StringType& string,
+                                 const StringType& whitespace)
+{
+   std::size_t start = string.find_first_not_of(whitespace);
+   if (start == StringType::npos)
+      return StringType();
+   
+   std::size_t end = string.find_last_not_of(whitespace);
+   return substring(string, start, end + 1);
+}
+
+} // namespace detail
+
+inline std::string trimWhitespace(const std::string& string)
+{
+   return detail::trimWhitespace(string, std::string(" \t\n\r\f\v"));
+}
+
+inline std::wstring trimWhitespace(const std::wstring& string)
+{
+   return detail::trimWhitespace(string, std::wstring(L" \t\n\r\f\v"));
+}
+
+std::string makeRandomByteString(std::size_t n);
 
 } // namespace string_utils
 } // namespace core 
+} // namespace rstudio
 
 #endif // CORE_STRING_UTILS_HPP
 

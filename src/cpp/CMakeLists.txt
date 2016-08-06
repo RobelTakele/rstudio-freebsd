@@ -29,6 +29,9 @@ include("${CMAKE_CURRENT_SOURCE_DIR}/../../CMakeGlobals.txt")
 # global directives
 add_definitions(-DBOOST_ENABLE_ASSERT_HANDLER)
 
+# test directory
+set(TESTS_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/tests/cpp" CACHE STRING "Test includes")
+
 # UNIX specific global directivies
 if(UNIX)
    # cmake modules
@@ -37,6 +40,14 @@ if(UNIX)
 
    # compiler flags
    add_definitions(-Wall -pthread)
+
+   if(CMAKE_BUILD_TYPE MATCHES Debug)
+      add_definitions(-g -O2)
+   endif()
+
+   if(APPLE)
+      add_definitions(-Wno-unknown-warning-option -Wsign-compare -Wno-unused-local-typedefs)
+   endif()
 
    # workaround boost bug (https://svn.boost.org/trac/boost/ticket/4568)
    # by disabling kqueue support. note that this bug was fixed in boost 1.45
@@ -83,7 +94,7 @@ else()
    if(RSTUDIO_SESSION_WIN64)
 
       # increase stack size to 20MB, avoid mingw auto-importing warning,
-      set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,--stack=0x01400000,--enable-auto-import")
+      set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,--stack=0x01400000,--enable-auto-import,--allow-multiple-definition")
 
       add_definitions(-D_WIN64
                       -D_WIN64_WINNT=0x0501
@@ -94,11 +105,12 @@ else()
 
       # increase stack size to 20MB, avoid mingw auto-importing warning,
       # and ensure that we are large address aware
-      set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,--stack=0x01400000,--enable-auto-import,--large-address-aware")
+      set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,--stack=0x01400000,--enable-auto-import,--large-address-aware,--allow-multiple-definition")
 
       add_definitions(-D_WIN32_WINNT=0x0501
                       -D_WIN32_IE=0x600
-                      -DWIN32_LEAN_AND_MEAN)
+                      -DWIN32_LEAN_AND_MEAN
+                      -DBOOST_USE_WINDOWS_H)
    endif()
 
 endif()
@@ -147,19 +159,24 @@ if(UNIX)
 # WIN32 BOOST
 else()
      # hard-code to our own prebuilt boost libs
+     set(Boost_COMPILER "-mgw49")
      if(RSTUDIO_SESSION_WIN64)
-        set(BOOST_ROOT "${RSTUDIO_WINDOWS_DEPENDENCIES_DIR}/boost-1.50-win/boost64")
+        set(BOOST_ARCH "64")
      else()
-        set(BOOST_ROOT "${RSTUDIO_WINDOWS_DEPENDENCIES_DIR}/boost-1.50-win/boost32")
+        set(BOOST_ARCH "32")
      endif()
+     set(BOOST_ROOT "${RSTUDIO_WINDOWS_DEPENDENCIES_DIR}/boost-1.50-win-rtools33-gcc493/boost${BOOST_ARCH}")
      set(BOOST_INCLUDEDIR "${BOOST_ROOT}/include/boost-1_50")
-     find_package(Boost ${BOOST_VERSION} REQUIRED COMPONENTS ${BOOST_LIBS})
+     find_package(Boost ${BOOST_VERSION} REQUIRED)
+     set(BOOST_LIBRARYDIR "${BOOST_ROOT}/lib")
+     foreach(BOOST_LIB ${BOOST_LIBS})
+        list(APPEND Boost_LIBRARIES "${BOOST_LIBRARYDIR}/libboost_${BOOST_LIB}${Boost_COMPILER}-mt-1_50.a")
+     endforeach()
 endif()
 
 
 # add boost as system include directory
 include_directories(SYSTEM ${Boost_INCLUDE_DIRS})
-
 
 # automatically build addins found in the addins subdirectory
 # (if another path wasn't already specified)
@@ -221,6 +238,9 @@ else()
       # initialize subdirectories
       file(MAKE_DIRECTORY conf)
 
+      # test runner script
+      configure_file(rstudio-tests.in ${CMAKE_CURRENT_BINARY_DIR}/rstudio-tests)
+
       # add desktop subprojects if we aren't building in server only mode
       if(RSTUDIO_DESKTOP)
          add_subdirectory(diagnostics)
@@ -230,6 +250,7 @@ else()
             add_subdirectory(desktop-mac)
          endif()
          configure_file(rdesktop-dev.in ${CMAKE_CURRENT_BINARY_DIR}/rdesktop-dev)
+         configure_file(rstudio-dev.in ${CMAKE_CURRENT_BINARY_DIR}/rstudio-dev)
          configure_file(conf/rdesktop-dev.conf ${CMAKE_CURRENT_BINARY_DIR}/conf/rdesktop-dev.conf)
       endif()
 

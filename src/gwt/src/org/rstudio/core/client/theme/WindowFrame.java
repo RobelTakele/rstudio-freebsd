@@ -15,11 +15,16 @@
 package org.rstudio.core.client.theme;
 
 import com.google.gwt.dom.client.Style;
+import com.google.gwt.dom.client.Style.Float;
 import com.google.gwt.dom.client.Style.Unit;
 import com.google.gwt.event.dom.client.ClickEvent;
 import com.google.gwt.event.dom.client.ClickHandler;
 import com.google.gwt.event.shared.HandlerRegistration;
 import com.google.gwt.user.client.ui.*;
+import com.google.inject.Inject;
+
+import java.util.HashMap;
+
 import org.rstudio.core.client.events.*;
 import org.rstudio.core.client.layout.RequiresVisibilityChanged;
 import org.rstudio.core.client.layout.WindowState;
@@ -27,6 +32,8 @@ import org.rstudio.core.client.theme.res.ThemeResources;
 import org.rstudio.core.client.theme.res.ThemeStyles;
 import org.rstudio.core.client.widget.BeforeShowCallback;
 import org.rstudio.core.client.widget.CanFocus;
+import org.rstudio.studio.client.RStudioGinjector;
+import org.rstudio.studio.client.application.events.EventBus;
 
 public class WindowFrame extends Composite
    implements HasWindowStateChangeHandlers,
@@ -40,8 +47,11 @@ public class WindowFrame extends Composite
       this();
       setMainWidget(mainWidget);
    }
+   
    public WindowFrame()
    {
+      RStudioGinjector.INSTANCE.injectMembers(this);
+      
       final ThemeStyles styles = ThemeResources.INSTANCE.themeStyles();
 
       border_ = new ShadowBorder();
@@ -52,6 +62,7 @@ public class WindowFrame extends Composite
 
       HTML maximize = new HTML();
       maximize.setStylePrimaryName(styles.maximize());
+      maximize.addStyleName(ThemeStyles.INSTANCE.handCursor());
       maximize.addClickHandler(new ClickHandler()
       {
          public void onClick(ClickEvent event)
@@ -62,6 +73,7 @@ public class WindowFrame extends Composite
 
       HTML minimize = new HTML();
       minimize.setStylePrimaryName(styles.minimize());
+      minimize.addStyleName(ThemeStyles.INSTANCE.handCursor());
       minimize.addClickHandler(new ClickHandler()
       {
          public void onClick(ClickEvent event)
@@ -94,8 +106,17 @@ public class WindowFrame extends Composite
       frame_.setWidgetRightWidth(minimize,
                                  ShadowBorder.RIGHT_SHADOW_WIDTH + 25, Style.Unit.PX,
                                  14, Style.Unit.PX);
-
+      
+      buttonsArea_ = new FlowPanel();
+      frame_.add(buttonsArea_);
+      
       initWidget(frame_);
+   }
+   
+   @Inject
+   private void initialize(EventBus events)
+   {
+      events_ = events;
    }
 
    @Override
@@ -275,23 +296,28 @@ public class WindowFrame extends Composite
       }
    }
 
-   public void setContextButton(Widget button, int width, int height)
+   public void setContextButton(Widget button, int width, int height, int position)
    {
-      if (contextButton_ != null)
+      if (contextButtons_.containsKey(position) && contextButtons_.get(position) != null)
       {
-         contextButton_.removeFromParent();
-         contextButton_ = null;
+         contextButtons_.get(position).removeFromParent();
+         contextButtons_.put(position, null);
       }
 
       if (button != null)
       {
-         contextButton_ = button;
-         frame_.add(button);
-         frame_.setWidgetRightWidth(button, 48, Unit.PX, width, Unit.PX);
-         frame_.setWidgetTopHeight(button, 3, Unit.PX, height, Unit.PX);
+         contextButtons_.put(position, button);
+         button.getElement().getStyle().setFloat(Float.RIGHT);
+         
+         buttonsArea_.add(button);
+         frame_.setWidgetRightWidth(buttonsArea_, 48, Unit.PX, width * contextButtons_.size(), Unit.PX);
+         frame_.setWidgetTopHeight(buttonsArea_, 3, Unit.PX, height, Unit.PX);
          // Without z-index, the header widget will obscure the context button
          // if the former is set after the latter.
-         frame_.getWidgetContainerElement(button).getStyle().setZIndex(10);
+         frame_.getWidgetContainerElement(buttonsArea_).getStyle().setZIndex(10);
+         
+         button.getElement().setAttribute("display", "inline-block");
+         button.getElement().setAttribute("float", "right");
       }
    }
 
@@ -319,6 +345,8 @@ public class WindowFrame extends Composite
    {
       if (!isVisible())
          fireEvent(new WindowStateChangeEvent(WindowState.NORMAL));
+      
+      events_.fireEvent(new WindowEnsureVisibleEvent(this));
    }
    
    @Override
@@ -346,9 +374,13 @@ public class WindowFrame extends Composite
    private Widget main_;
    private Widget header_;
    private Widget fill_;
-   private Widget contextButton_;
+   private HashMap<Integer, Widget> contextButtons_ = new HashMap<Integer, Widget>();
    private HandlerRegistration ensureVisibleRegistration_;
    private HandlerRegistration ensureHeightRegistration_;
    private Widget previousHeader_;
+   private FlowPanel buttonsArea_;
+   
+   // Injected ----
+   private EventBus events_;
    
 }

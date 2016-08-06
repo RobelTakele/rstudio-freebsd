@@ -39,6 +39,12 @@ public class ScrollableToolbarPopupMenu extends ToolbarPopupMenu
       });
       return menuBar;
    }
+   
+   public HandlerRegistration addSelectionHandler(SelectionHandler<MenuItem> handler)
+   {
+      return ((ScrollableToolbarMenuBar)menuBar_).addSelectionHandler(handler);
+   }
+
 
    public void ensureSelectedIsVisible()
    {
@@ -49,6 +55,11 @@ public class ScrollableToolbarPopupMenu extends ToolbarPopupMenu
                                     0);
       }
    }
+   
+   public int getSelectedIndex()
+   {
+      return menuBar_.getSelectedIndex();
+   }
 
    @Override
    protected Widget wrapMenuBar(ToolbarMenuBar menuBar)
@@ -57,14 +68,19 @@ public class ScrollableToolbarPopupMenu extends ToolbarPopupMenu
       scrollPanel_.addStyleName(ThemeStyles.INSTANCE.scrollableMenuBar());
       scrollPanel_.getElement().getStyle().setOverflowY(Overflow.AUTO);
       scrollPanel_.getElement().getStyle().setOverflowX(Overflow.HIDDEN);
-      scrollPanel_.getElement().getStyle().setProperty("maxHeight", 
-                                                       getMaxHeight() + "px");
+      setMaxHeight(getMaxHeight());
       return scrollPanel_;
    }
    
    protected int getMaxHeight()
    {
       return 300;
+   }
+   
+   protected void setMaxHeight(int maxHeight)
+   {
+      scrollPanel_.getElement().getStyle().setProperty("maxHeight", 
+            maxHeight + "px");
    }
 
    protected class ScrollableToolbarMenuBar extends ToolbarMenuBar

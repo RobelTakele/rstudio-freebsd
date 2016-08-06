@@ -18,6 +18,7 @@
 
 #include <monitor/MonitorClient.hpp>
 
+namespace rstudio {
 namespace monitor {
 
 class SyncClient : public Client
@@ -38,6 +39,8 @@ public:
    void sendMultiMetrics(const std::vector<metrics::MultiMetric>& metrics);
 
    void logEvent(const Event& event);
+
+   void logConsoleAction(const audit::ConsoleAction& action);
 };
 
 class AsyncClient : public Client
@@ -61,6 +64,8 @@ public:
 
    void logEvent(const Event& event);
 
+   void logConsoleAction(const audit::ConsoleAction& action);
+
 protected:
    boost::asio::io_service& ioService() { return ioService_; }
 
@@ -69,5 +74,6 @@ private:
 };
 
 } // namespace monitor
+} // namespace rstudio
 
 #endif // MONITOR_MONITOR_CLIENT_IMPL_HPP

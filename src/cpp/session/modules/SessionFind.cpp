@@ -33,8 +33,9 @@
 #include <session/SessionUserSettings.hpp>
 #include <session/projects/SessionProjects.hpp>
 
-using namespace core;
+using namespace rstudio::core;
 
+namespace rstudio {
 namespace session {
 namespace modules {   
 namespace find {
@@ -269,29 +270,32 @@ private:
 
       std::string::iterator inputPos = pContent->begin();
 
+      std::size_t nUtf8CharactersProcessed = 0;
       smatch match;
       while (regex_search(std::string(inputPos, pContent->end()), match,
                           regex("\x1B\\[(\\d\\d)?m(\x1B\\[K)?")))
       {
-         std::string match1 = match[1];
-
-         decodedLine.append(decode(
-               std::string(inputPos, inputPos + match.position())));
-
+         // decode the current match, and append it
+         std::string decoded = decode(std::string(inputPos, inputPos + match.position()));
+         decodedLine.append(decoded);
          inputPos += match.position() + match.length();
-
-         size_t charSize;
-         Error error = string_utils::utf8Distance(decodedLine.begin(),
-                                                  decodedLine.end(),
+         
+         // count the number of UTF-8 characters processed
+         std::size_t charSize;
+         Error error = string_utils::utf8Distance(decoded.begin(),
+                                                  decoded.end(),
                                                   &charSize);
          if (error)
-            charSize = decodedLine.size();
+            charSize = decoded.size();
+         nUtf8CharactersProcessed += charSize;
 
-         if (match1 == "01")
-            pMatchOn->push_back(static_cast<int>(charSize));
+         // update the match state
+         if (match[1] == "01")
+            pMatchOn->push_back(static_cast<int>(nUtf8CharactersProcessed));
          else
-            pMatchOff->push_back(static_cast<int>(charSize));
+            pMatchOff->push_back(static_cast<int>(nUtf8CharactersProcessed));
       }
+      
       if (inputPos != pContent->end())
          decodedLine.append(decode(std::string(inputPos, pContent->end())));
 
@@ -315,6 +319,10 @@ private:
       int recordsToProcess = MAX_COUNT + 1 - findResults().resultCount();
       if (recordsToProcess < 0)
          recordsToProcess = 0;
+
+      std::string websiteOutputDir = module_context::websiteOutputDir();
+      if (!websiteOutputDir.empty())
+         websiteOutputDir = "/" + websiteOutputDir + "/";
 
       stdOutBuf_.append(data);
       size_t nextLineStart = 0;
@@ -340,6 +348,12 @@ private:
             if (file.find("/packrat/lib/") != std::string::npos)
                continue;
             if (file.find("/packrat/src/") != std::string::npos)
+               continue;
+            if (file.find("/.Rhistory") != std::string::npos)
+               continue;
+
+            if (!websiteOutputDir.empty() &&
+                file.find(websiteOutputDir) != std::string::npos)
                continue;
 
             int lineNum = safe_convert::stringTo<int>(std::string(match[2]), -1);
@@ -589,3 +603,4 @@ core::Error initialize()
 } // namespace find
 } // namespace modules
 } // namespace session
+} // namespace rstudio

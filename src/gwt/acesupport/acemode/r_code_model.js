@@ -13,10 +13,12 @@
  *
  */
 
-define("mode/r_code_model", function(require, exports, module) {
+define("mode/r_code_model", ["require", "exports", "module"], function(require, exports, module) {
 
 var Range = require("ace/range").Range;
 var TokenIterator = require("ace/token_iterator").TokenIterator;
+var RTokenCursor = require("mode/token_cursor").RTokenCursor;
+var Utils = require("mode/utils");
 
 var $verticallyAlignFunctionArgs = false;
 
@@ -27,168 +29,61 @@ function comparePoints(pos1, pos2)
    return pos1.column - pos2.column;
 }
 
-var ScopeManager = require("mode/r_scope_tree").ScopeManager;
+function isOneOf(object, array)
+{
+   for (var i = 0; i < array.length; i++)
+      if (object === array[i])
+         return true;
+   return false;
+}
 
-var RCodeModel = function(doc, tokenizer, statePattern, codeBeginPattern) {
-   this.$doc = doc;
+var ScopeManager = require("mode/r_scope_tree").ScopeManager;
+var ScopeNode = require("mode/r_scope_tree").ScopeNode;
+
+var RCodeModel = function(session, tokenizer,
+                          statePattern, codeBeginPattern, codeEndPattern) {
+
+   this.$session = session;
+   this.$doc = session.getDocument();
    this.$tokenizer = tokenizer;
-   this.$tokens = new Array(doc.getLength());
-   this.$endStates = new Array(doc.getLength());
+   this.$tokens = new Array(this.$doc.getLength());
+   this.$endStates = new Array(this.$doc.getLength());
    this.$statePattern = statePattern;
    this.$codeBeginPattern = codeBeginPattern;
-   this.$scopes = new ScopeManager();
+   this.$codeEndPattern = codeEndPattern;
+   this.$scopes = new ScopeManager(ScopeNode);
+
+   var $firstChange = true;
+   var onChangeMode = function(data, session)
+   {
+      if ($firstChange)
+      {
+         $firstChange = false;
+         return;
+      }
+
+      this.$doc.off('change', onDocChange);
+      this.$session.off('changeMode', onChangeMode);
+   }.bind(this);
+
+   var onDocChange = function(evt)
+   {
+      this.$onDocChange(evt);
+   }.bind(this);
+
+   this.$session.on('changeMode', onChangeMode);
+   this.$doc.on('change', onDocChange);
 
    var that = this;
-   this.$doc.on('change', function(evt) {
-      that.$onDocChange.apply(that, [evt]);
-   });
-
-   this.$TokenCursor = function(row, offset)
-   {
-      this.$row = row || 0;
-      this.$offset = offset || 0;
-   };
-   (function() {
-      this.moveToStartOfRow = function(row)
-      {
-         this.$row = row;
-         this.$offset = 0;
-      };
-
-      this.moveToPreviousToken = function()
-      {
-         while (this.$offset == 0 && this.$row > 0)
-         {
-            this.$row--;
-            this.$offset = that.$tokens[this.$row].length;
-         }
-
-         if (this.$offset == 0)
-            return false;
-
-         this.$offset--;
-
-         return true;
-      };
-
-      this.moveToNextToken = function(maxRow)
-      {
-         if (this.$row > maxRow)
-            return;
-
-         this.$offset++;
-
-         while (this.$offset >= that.$tokens[this.$row].length && this.$row < maxRow)
-         {
-            this.$row++;
-            this.$offset = 0;
-         }
-
-         if (this.$offset >= that.$tokens[this.$row].length)
-            return false;
-
-         return true;
-      };
-
-      this.seekToNearestToken = function(position, maxRow)
-      {
-         if (position.row > maxRow)
-            return false;
-         this.$row = position.row;
-         var rowTokens = that.$tokens[this.$row] || [];
-         for (this.$offset = 0; this.$offset < rowTokens.length; this.$offset++)
-         {
-            var token = rowTokens[this.$offset];
-            if (token.column >= position.column)
-            {
-               return true;
-            }
-         }
-         return this.moveToNextToken(maxRow);
-      };
-
-      this.moveBackwardOverMatchingParens = function()
-      {
-         if (!this.moveToPreviousToken())
-            return false;
-         if (this.currentValue() !== ")")
-            return false;
-
-         var success = false;
-         var parenCount = 0;
-         while (this.moveToPreviousToken())
-         {
-            if (this.currentValue() === "(")
-            {
-               if (parenCount == 0)
-               {
-                  success = true;
-                  break;
-               }
-               parenCount--;
-            }
-            else if (this.currentValue() === ")")
-            {
-               parenCount++;
-            }
-         }
-         return success;
-      };
-
-      this.findToken = function(predicate, maxRow)
-      {
-         do
-         {
-            var t = this.currentToken();
-            if (t && predicate(t))
-               return t;
-         }
-         while (this.moveToNextToken(maxRow));
-         return null;
-      };
-
-      this.currentToken = function()
-      {
-         return (that.$tokens[this.$row] || [])[this.$offset];
-      };
-
-      this.currentValue = function()
-      {
-         return this.currentToken().value;
-      };
-
-      this.currentPosition = function()
-      {
-         var token = this.currentToken();
-         if (token === null)
-            return null;
-         else
-            return {row: this.$row, column: token.column};
-      };
-
-      this.cloneCursor = function()
-      {
-         var clone = new that.$TokenCursor();
-         clone.$row = this.$row;
-         clone.$offset = this.$offset;
-         return clone;
-      };
-
-      this.isFirstSignificantTokenOnLine = function()
-      {
-         return this.$offset == 0;
-      };
-
-      this.isLastSignificantTokenOnLine = function()
-      {
-         return this.$offset == (that.$tokens[this.$row] || []).length - 1;
-      };
-
-   }).call(this.$TokenCursor.prototype);
-
 };
 
 (function () {
+
+   var contains = Utils.contains;
+
+   this.getTokenCursor = function() {
+      return new RTokenCursor(this.$tokens, 0, 0, this);
+   };
 
    this.$complements = {
       '(': ')',
@@ -197,6 +92,27 @@ var RCodeModel = function(doc, tokenizer, statePattern, codeBeginPattern) {
       ']': '[',
       '{': '}',
       '}': '{'
+   };
+
+   var $normalizeWhitespace = function(text) {
+      text = text.trim();
+      text = text.replace(/[\n\s]+/g, " ");
+      return text;
+   };
+
+   var $truncate = function(text, width) {
+      
+      if (typeof width === "undefined")
+         width = 80;
+      
+      if (text.length > width)
+         text = text.substring(0, width) + "...";
+      
+      return text;
+   };
+
+   var $normalizeAndTruncate = function(text, width) {
+      return $truncate($normalizeWhitespace(text), width);
    };
 
    function pFunction(t)
@@ -214,42 +130,607 @@ var RCodeModel = function(doc, tokenizer, statePattern, codeBeginPattern) {
       return /\bidentifier\b/.test(t.type);
    }
 
+   // Find the associated function token from an open brace, e.g.
+   //
+   //   foo <- function(a, b, c) {
+   //          ^<<<<<<<<<<<<<<<<<^
    function findAssocFuncToken(tokenCursor)
    {
-      if (tokenCursor.currentValue() !== "{")
+      var clonedCursor = tokenCursor.cloneCursor();
+      if (clonedCursor.currentValue() !== "{")
          return false;
-      if (!tokenCursor.moveBackwardOverMatchingParens())
+      if (!clonedCursor.moveBackwardOverMatchingParens())
          return false;
-      if (!tokenCursor.moveToPreviousToken())
+      if (!clonedCursor.moveToPreviousToken())
          return false;
-      if (!pFunction(tokenCursor.currentToken()))
-         return false;
-      if (!tokenCursor.moveToPreviousToken())
-         return false;
-      if (!pAssign(tokenCursor.currentToken()))
-         return false;
-      if (!tokenCursor.moveToPreviousToken())
-         return false;
-      if (!pIdentifier(tokenCursor.currentToken()))
+      if (!pFunction(clonedCursor.currentToken()))
          return false;
 
+      tokenCursor.$row = clonedCursor.$row;
+      tokenCursor.$offset = clonedCursor.$offset;
+      return true;
+
+   }
+
+   // Determine whether the token cursor lies within the
+   // argument list for a control flow statement, e.g.
+   //
+   //    if (foo &&
+   //        (bar
+   //         ^
+   function isWithinControlFlowArgList(tokenCursor)
+   {
+      while (tokenCursor.findOpeningBracket("(") &&
+             tokenCursor.moveToPreviousToken())
+         if (isOneOf(
+            tokenCursor.currentValue(),
+            ["if", "for", "while"]))
+             return true;
+
+      return false;
+   }
+
+   // Move from the function token to the end of a function name.
+   // Note that it is legal to define functions in multi-line strings,
+   // hence the somewhat awkward name / interface.
+   //
+   //     "some function" <- function(a, b, c) {
+   //                   ^~~~~^
+   function moveFromFunctionTokenToEndOfFunctionName(tokenCursor)
+   {
+      var clonedCursor = tokenCursor.cloneCursor();
+      if (!pFunction(clonedCursor.currentToken()))
+         return false;
+      if (!clonedCursor.moveToPreviousToken())
+         return false;
+      if (!pAssign(clonedCursor.currentToken()))
+         return false;
+      if (!clonedCursor.moveToPreviousToken())
+         return false;
+
+      tokenCursor.$row = clonedCursor.$row;
+      tokenCursor.$offset = clonedCursor.$offset;
       return true;
    }
 
-   this.$buildScopeTreeUpToRow = function(maxrow)
+   this.getFunctionsInScope = function(pos) {
+      this.$buildScopeTreeUpToRow(pos.row);
+      return this.$scopes.getFunctionsInScope(pos);
+   };
+
+   this.getAllFunctionScopes = function(row) {
+      if (typeof row === "undefined")
+         row = this.$doc.getLength();
+      this.$buildScopeTreeUpToRow(row);
+      return this.$scopes.getAllFunctionScopes();
+   };
+
+   function pInfix(token)
    {
-      function maybeEvaluateLiteralString(value) {
-         // NOTE: We could evaluate escape sequences and whatnot here as well.
-         //       Hard to imagine who would abuse Rnw by putting escape
-         //       sequences in chunk labels, though.
-         var match = /^(['"])(.*)\1$/.exec(value);
-         if (!match)
-            return value;
-         else
-            return match[2];
+      return /\binfix\b/.test(token.type);
+   }
+
+   this.getDplyrJoinContextFromInfixChain = function(cursor)
+   {
+      var clone = cursor.cloneCursor();
+      
+      var token = "";
+      if (clone.hasType("identifier"))
+         token = clone.currentValue();
+      
+      // We're expecting to be within e.g.
+      //
+      //    mtcars %>% semi_join(foo, by = c("a" =
+      //                                           ^
+      // Here, we get:
+      // 1. The name of the 'right table' (foo), and
+      // 2. The cursor position (left or right of '=')
+      var cursorPos = "left";
+      if (clone.currentValue() === "=")
+         cursorPos = "right";
+
+      if (clone.hasType("identifier"))
+      {
+         if (!clone.moveToPreviousToken())
+            return null;
+         
+         if (clone.currentValue() === "=")
+            cursorPos = "right";
       }
 
+      // Move to the first opening paren
+      if (!clone.findOpeningBracket("(", true))
+         return null;
+
+      if (!clone.moveToPreviousToken())
+         return null;
+
+      // Look back until we find a 'join' verb
+      while (clone.findOpeningBracket("(", true))
+      {
+         if (!clone.moveToPreviousToken())
+            return null;
+
+         if (!/_join$/.test(clone.currentValue()))
+            continue;
+
+         // If we get here, it looks like a dplyr join in a magrittr chain
+         // get the data name and the join verb
+         var verb = clone.currentValue();
+
+         if (!clone.moveToNextToken())
+            return null;
+
+         if (!clone.moveToNextToken())
+            return null;
+
+         var rightData = clone.currentValue();
+
+         var leftData = "";
+         var data = this.moveToDataObjectFromInfixChain(clone);
+         if (data === false)
+            return null;
+         
+         leftData = clone.currentValue();
+         
+         return {
+            "token": token,
+            "leftData": leftData,
+            "rightData": rightData,
+            "verb": verb,
+            "cursorPos": cursorPos
+         };
+      }
+      return null;
+   };
+
+   // If the token cursor lies within an infix chain, try to retrieve:
+   // 1. The data object name, and
+   // 2. Any custom variable names (e.g. set through 'mutate', 'summarise')
+   this.getDataFromInfixChain = function(tokenCursor)
+   {
+      var data = this.moveToDataObjectFromInfixChain(tokenCursor);
+      
+      var additionalArgs = [];
+      var excludeArgs = [];
+      var name = "";
+      var excludeArgsFromObject = false;
+      if (data !== false)
+      {
+         if (data.excludeArgsFromObject)
+            excludeArgsFromObject = data.excludeArgsFromObject;
+         
+         name = tokenCursor.currentValue();
+         additionalArgs = data.additionalArgs;
+         excludeArgs = data.excludeArgs;
+      }
+
+      return {
+         "name": name,
+         "additionalArgs": additionalArgs,
+         "excludeArgs": excludeArgs,
+         "excludeArgsFromObject": excludeArgsFromObject
+      };
+      
+   };
+
+   var $dplyrMutaterVerbs = [
+      "mutate", "summarise", "summarize", "rename", "transmute",
+      "select", "rename_vars",
+      "inner_join", "left_join", "right_join", "semi_join", "anti_join",
+      "outer_join", "full_join"
+   ];
+
+   // Add arguments from a function call in a chain.
+   //
+   //     select(x, y = 1)
+   //     ^~~~~~~|~~|~~~~x
+   var addDplyrArguments = function(cursor, data, limit, fnName)
+   {
+      if (!cursor.moveToNextToken())
+         return false;
+
+      if (cursor.currentValue() !== "(")
+         return false;
+
+      if (!cursor.moveToNextToken())
+         return false;
+
+      if (cursor.currentValue() === ")")
+         return false;
+
+      if (cursor.hasType("identifier"))
+         data.additionalArgs.push(cursor.currentValue());
+      
+      if (fnName === "rename")
+      {
+         if (!cursor.moveToNextToken())
+            return false;
+         data.excludeArgs.push(cursor.currentValue());
+      }
+
+      if (fnName === "select")
+      {
+         data.excludeArgsFromObject = true;
+      }
+
+      do
+      {
+         if (cursor.currentValue() === ")")
+            break;
+         
+         if ((cursor.$row > limit.$row) ||
+             (cursor.$row === limit.$row && cursor.$offset >= limit.$offset))
+            break;
+         
+         if (cursor.fwdToMatchingToken())
+         {
+            if (!cursor.moveToNextToken())
+               break;
+            continue;
+         }
+
+         if (cursor.currentValue() === ",")
+         {
+            if (!cursor.moveToNextToken())
+               return false;
+
+            if (cursor.hasType("identifier"))
+               data.additionalArgs.push(cursor.currentValue());
+            
+            if (!cursor.moveToNextToken())
+               return false;
+
+            if (cursor.currentValue() === "=")
+            {
+               if (isOneOf(fnName, ["rename", "rename_vars"]))
+               {
+                  if (!cursor.moveToNextToken())
+                     return false;
+                  if (cursor.hasType("identifier"))
+                     data.excludeArgs.push(cursor.currentValue());
+               }
+
+            }
+            
+
+         }
+         
+      } while (cursor.moveToNextToken());
+
+      return true;
+      
+   };
+
+   var findChainScope = function(cursor)
+   {
+      var clone = cursor.cloneCursor();
+      while (clone.findOpeningBracket("(", false))
+      {
+         // Move off of the opening paren
+         if (!clone.moveToPreviousToken())
+            return false;
+
+         // Move off of identifier
+         if (!clone.moveToPreviousToken())
+            return false;
+
+         // Move over '::' qualifiers
+         if (clone.currentValue() === ":")
+         {
+            while (clone.currentValue() === ":")
+               if (!clone.moveToPreviousToken())
+                  return false;
+
+            // Move off of identifier
+            if (!clone.moveToPreviousToken())
+               return false;
+         }
+
+         // If it's an infix operator, we use this scope
+         // Ensure it's a '%%' operator (allow for other pipes)
+         if (pInfix(clone.currentToken()))
+         {
+            cursor.$row = clone.$row;
+            cursor.$offset = clone.$offset;
+            return true;
+         }
+
+         // keep trying!
+         
+      }
+
+      // give up
+      return false;
+      
+   };
+
+   // Attempt to move a token cursor from a function call within
+   // a chain back to the starting data object.
+   //
+   //     df %.% foo %>>% bar() %>% baz(foo,
+   //     ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^
+   this.moveToDataObjectFromInfixChain = function(tokenCursor)
+   {
+      // Find an opening paren associated with the nearest chain,
+      // Find the outermost opening paren
+      var clone = tokenCursor.cloneCursor();
+      if (!findChainScope(clone))
+         return false;
+
+      // Fill custom args
+      var data = {
+         additionalArgs: [],
+         excludeArgs: []
+      };
+      
+      // Repeat the walk -- keep walking as we can find '%%'
+      while (true)
+      {
+         if (clone.$row === 0 && clone.$offset === 0)
+         {
+            tokenCursor.$row = 0;
+            tokenCursor.$offset = 0;
+            return data;
+         }
+
+         // Move over parens to identifier if necessary
+         //
+         //    foo(bar, baz)
+         //    ^~~~~~~~~~~~^
+         clone.moveBackwardOverMatchingParens();
+
+         // Move off of '%>%' (or '(') onto identifier
+         if (!clone.moveToPreviousToken())
+            return false;
+
+         // If this identifier is a dplyr 'mutate'r, then parse
+         // those variables.
+         var value = clone.currentValue();
+         if (contains($dplyrMutaterVerbs, value))
+            addDplyrArguments(clone.cloneCursor(), data, tokenCursor, value);
+
+         // Move off of identifier, on to new infix operator.
+         // Note that we may already be at the start of the document,
+         // so check for that.
+         if (!clone.moveToPreviousToken())
+         {
+            if (clone.$row === 0 && clone.$offset === 0)
+            {
+               tokenCursor.$row = 0;
+               tokenCursor.$offset = 0;
+               return data;
+            }
+            return false;
+         }
+
+         // Move over '::' qualifiers
+         if (clone.currentValue() === ":")
+         {
+            while (clone.currentValue() === ":")
+               if (!clone.moveToPreviousToken())
+                  return false;
+
+            // Move off of identifier
+            if (!clone.moveToPreviousToken())
+               return false;
+         }
+
+         // We should be on an infix operator now. If we are, keep walking;
+         // if not, then the identifier we care about is the next token.
+         if (!pInfix(clone.currentToken()))
+            break;
+      }
+
+      if (!clone.moveToNextToken())
+         return false;
+
+      tokenCursor.$row = clone.$row;
+      tokenCursor.$offset = clone.$offset;
+      return data;
+   };
+
+   function addForInToken(tokenCursor, scopedVariables)
+   {
+      var clone = tokenCursor.cloneCursor();
+      if (clone.currentValue() !== "for")
+         return false;
+
+      if (!clone.moveToNextToken())
+         return false;
+
+      if (clone.currentValue() !== "(")
+         return false;
+
+      if (!clone.moveToNextToken())
+         return false;
+
+      var maybeForInVariable = clone.currentValue();
+      if (!clone.moveToNextToken())
+         return false;
+
+      if (clone.currentValue() !== "in")
+         return false;
+
+      scopedVariables[maybeForInVariable] = "variable";
+      return true;
+   }
+
+   // Moves out of an argument list for a function, e.g.
+   //
+   //     x <- function(a, b|
+   //          ^~~~~~~~~~~~~^
+   //
+   // The cursor will be placed on the associated 'function' token
+   // on success, and unmoved on failure.
+   var moveOutOfArgList = function(tokenCursor)
+   {
+      var clone = tokenCursor.cloneCursor();
+      if (!clone.findOpeningBracket("(", true))
+         return false;
+
+      if (!clone.moveToPreviousToken())
+         return false;
+      
+      if (clone.currentValue() !== "function")
+         return false;
+
+      tokenCursor.$row = clone.$row;
+      tokenCursor.$offset = clone.$offset;
+      return true;
+   };
+
+   this.getVariablesInScope = function(pos) {
+
+      var tokenCursor = this.getTokenCursor();
+      if (!tokenCursor.moveToPosition(pos))
+         return [];
+
+      // If we're in a function call, avoid grabbing the parameters and
+      // function name itself within the call. This is so that in e.g.
+      //
+      //     func <- foo(x = 1, y = 2, |
+      //
+      // we don't pick up 'func', 'x', and 'y' as potential completions
+      // since they will not be valid in all contexts
+      if (moveOutOfArgList(tokenCursor))
+         if (moveFromFunctionTokenToEndOfFunctionName(tokenCursor))
+            if (tokenCursor.findStartOfEvaluationContext())
+               {} // previous statements will move the cursor as necessary
+
+      var scopedVariables = {};
+      do
+      {
+         if (tokenCursor.bwdToMatchingToken())
+            continue;
+
+         // Handle 'for (x in bar)'
+         addForInToken(tokenCursor, scopedVariables);
+         
+         // Default -- assignment case
+         if (pAssign(tokenCursor.currentToken()))
+         {
+            // Check to see if this is a function (simple check)
+            var type = "variable";
+            var functionCursor = tokenCursor.cloneCursor();
+            if (functionCursor.moveToNextToken())
+            {
+               if (functionCursor.currentValue() === "function")
+               {
+                  type = "function";
+               }
+            }
+            
+            var clone = tokenCursor.cloneCursor();
+            if (!clone.moveToPreviousToken()) continue;
+            
+            if (pIdentifier(clone.currentToken()))
+            {
+               var arg = clone.currentValue();
+               scopedVariables[arg] = type;
+               continue;
+            }
+            
+         }
+      } while (tokenCursor.moveToPreviousToken());
+
+      var result = [];
+      for (var key in scopedVariables)
+         result.push({
+            "token": key,
+            "type": scopedVariables[key]
+         });
+      
+      result.sort();
+      return result;
+      
+   };
+
+   // Get function arguments, starting at the start of a function definition, e.g.
+   //
+   // x <- function(a = 1, b = 2, c = list(a = 1, b = 2), ...)
+   //      ?~~~~~~~?^~~~~~~^~~~~~~^~~~~~~~~~~~~~~~~~~~~~~~^~~|
+   function $getFunctionArgs(tokenCursor)
+   {
+      if (pFunction(tokenCursor.currentToken()))
+         if (!tokenCursor.moveToNextToken())
+            return [];
+
+      if (tokenCursor.currentValue() === "(")
+         if (!tokenCursor.moveToNextToken())
+            return [];
+
+      if (tokenCursor.currentValue() === ")")
+         return [];
+
+      var functionArgs = [];
+      if (pIdentifier(tokenCursor.currentToken()))
+         functionArgs.push(tokenCursor.currentValue());
+      
+      while (tokenCursor.moveToNextToken())
+      {
+         if (tokenCursor.fwdToMatchingToken())
+            continue;
+
+         if (tokenCursor.currentValue() === ")")
+            break;
+
+         // Yuck: '...' and ',' can get tokenized together as
+         // text. All we can really do is ask if a particular token is
+         // type 'text' and ends with a comma.
+         // Once we encounter such a token, we look ahead to find an
+         // identifier (it signifies an argument name)
+         if (tokenCursor.currentValue() === ",")
+         {
+            while (tokenCursor.currentValue() === ",")
+               if (!tokenCursor.moveToNextToken())
+                  break;
+            
+            if (pIdentifier(tokenCursor.currentToken()))
+               functionArgs.push(tokenCursor.currentValue());
+         }
+      }
+      return functionArgs;
+      
+   }
+
+   function $extractYamlTitle(session)
+   {
+      var row = 0;
+
+      // Protect against unclosed YAML blocks in large documents.
+      // It seems unlikely that a YAML block would span more than
+      // 100 lines...
+      var n = Math.min(session.getLength(), 100);
+
+      // Default title (in case a 'title:' field is not found)
+      var title = "Title";
+
+      while (row++ < n)
+      {
+         var line = session.getLine(row);
+         if (/^\s*[-]{3}\s*$/.test(line))
+            break;
+
+         var match = /^\s*title:\s+(.*?)\s*$/.exec(line);
+         if (match !== null)
+         {
+            title = match[1];
+            break;
+         }
+      }
+
+      return Utils.stripEnclosingQuotes(title.trim());
+
+   }
+
+   this.$buildScopeTreeUpToRow = function(maxRow)
+   {
       function getChunkLabel(reOptions, comment) {
+
+         if (typeof reOptions === "undefined")
+            return "";
+         
          var match = reOptions.exec(comment);
          if (!match)
             return null;
@@ -265,87 +746,360 @@ var RCodeModel = function(doc, tokenizer, statePattern, codeBeginPattern) {
 
          for (var i = 0; i < values.length; i++) {
             match = /^\s*label\s*=\s*(.*)$/.exec(values[i]);
-            if (match) {
-               return maybeEvaluateLiteralString(
-                                        match[1].replace(/(^\s+)|(\s+$)/g, ''));
-            }
+            if (match)
+               return Utils.stripEnclosingQuotes(match[1].trim());
          }
 
          return null;
       }
 
-      // It's possible that determining the scope at 'position' may require
-      // parsing beyond the position itself--for example if the position is
-      // on the identifier of a function whose open brace is a few tokens later.
-      // Seems like it would be rare indeed for this distance to be more than 30
-      // rows.
-      maxRow = Math.min(maxrow + 30, this.$doc.getLength() - 1);
-      this.$tokenizeUpToRow(maxRow);
+      var modeId = this.$session.getMode().$id;
 
-      //console.log("Seeking to " + this.$scopes.parsePos.row + "x"+ this.$scopes.parsePos.column);
-      var tokenCursor = new this.$TokenCursor();
-      if (!tokenCursor.seekToNearestToken(this.$scopes.parsePos, maxRow))
-         return;
+      // Nudge the maxRow ahead a bit -- some functions may request
+      // the tree to be built up to a particular row, but we want to
+      // build a bit further ahead in case some lookahead is required.
+      maxRow = Math.min(maxRow + 30, this.$doc.getLength() - 1);
+
+      // Check if the scope tree has already been built up to this row.
+      var scopeRow = this.$scopes.parsePos.row;
+      if (scopeRow >= maxRow)
+          return scopeRow;
+
+      // We explicitly use a TokenIterator rather than a TokenCursor here.
+      // We want to iterate over all token types here (including non-R code)
+      // and the R code model, by default, will only tokenize within R chunks within
+      // multi-mode documents.
+      //
+      // Create a TokenIterator and place it as the previous parse position (as stored
+      // by a previous scope-tree building request). This avoids re-building portions
+      // of the tree that have been already built.
+      var iterator = new TokenIterator(this.$session);
+
+      // Tokenize eagerly up to the desired row. Note that we have to tokenize
+      // in two places -- the internal Ace tokenizer (whose tokens are used by
+      // the token iterator here), and also the R code model's tokenizer (which
+      // maintains its own set of R tokens used for indentation). In a perfect
+      // world, we wouldn't maintain a separate set of tokens for our R code
+      // model, but ...
+      iterator.tokenizeUpToRow(maxRow);
+      this.$tokenizeUpToRow(maxRow);
+      
+
+      var row = this.$scopes.parsePos.row;
+      var column = this.$scopes.parsePos.column;
+      iterator.moveToPosition({row: row, column: column}, true);
+
+      var token = iterator.getCurrentToken();
+      
+      // If this failed, give up.
+      if (token == null)
+         return row;
+
+      // Grab local state that we'll use when building the scope tree.
+      var value = token.value;
+      var type = token.type;
+      var position = iterator.getCurrentTokenPosition();
 
       do
       {
-         this.$scopes.parsePos = tokenCursor.currentPosition();
-         this.$scopes.parsePos.column += tokenCursor.currentValue().length;
+         // Bail if we've stepped past the max row.
+         if (iterator.$row > maxRow)
+            break;
 
-         //console.log("                                 Token: " + tokenCursor.currentValue() + " [" + tokenCursor.currentPosition().row + "x" + tokenCursor.currentPosition().column + "]");
+         // Cache access to the current token + cursor.
+         value = token.value;
+         type = token.type;
+         position = iterator.getCurrentTokenPosition();
 
-         var tokenType = tokenCursor.currentToken().type;
-         if (/\bsectionhead\b/.test(tokenType))
-         {
-            var sectionHeadMatch = /^#+'?[-=#\s]*(.*?)\s*[-=#]+\s*$/.exec(
-                  tokenCursor.currentValue());
-
-            var label = "" + sectionHeadMatch[1];
-            if (label.length == 0)
-               label = "(Untitled)";
-            if (label.length > 50)
-               label = label.substring(0, 50) + "...";
-
-            this.$scopes.onSectionHead(label, tokenCursor.currentPosition());
+         // Skip roxygen comments.
+         var state = this.$session.getState(position.row);
+         if (state === "rd-start") {
+            iterator.moveToEndOfRow();
+            continue;
          }
-         else if (/\bcodebegin\b/.test(tokenType))
+
+         // Figure out if we're in R mode. This is a hack since
+         // unfortunately the code model is handling both R and
+         // non-R modes right now -- for example, '{' should only
+         // create a scope when encountered within a chunk.
+         var isInRMode = true;
+         if (this.$codeBeginPattern)
+            isInRMode = /^r-/.test(this.$session.getState(iterator.$row));
+
+         // Add Markdown headers.
+         //
+         // The markdown highlight rules are a bit strange in that
+         // 'types' are not really consistent. Likely due to the lack
+         // of general lookahead / lookbehind in the Ace tokenizer. We
+         // just manually check for each 'state'.
+         //
+         // Furthermore, the Ace tokenizer does not handle
+         // bold or italic headers, e.g. this header is tokenized as:
+         //
+         //    ## __Foo__
+         //    ^              markup.heading.2
+         //      ^            heading
+         //       ^^^^^^^     string.strong
+         //
+         // So make sure we manually scrape the header text out of the line.
+         if (Utils.startsWith(type, "markup.heading"))
          {
-            var chunkStartPos = tokenCursor.currentPosition();
-            var chunkPos = {row: chunkStartPos.row + 1, column: 0};
-            var chunkNum = this.$scopes.getTopLevelScopeCount()+1;
-            var chunkLabel = getChunkLabel(this.$codeBeginPattern,
-                                           tokenCursor.currentValue());
-            var scopeName = "Chunk " + chunkNum;
-            if (chunkLabel)
-               scopeName += ": " + chunkLabel;
-            this.$scopes.onChunkStart(chunkLabel,
-                                      scopeName,
-                                      chunkStartPos,
-                                      chunkPos);
-         }
-         else if (/\bcodeend\b/.test(tokenType))
-         {
-            var pos = tokenCursor.currentPosition();
-            // Close any open functions
-            while (this.$scopes.onScopeEnd(pos))
+            // Track both the 'start' and the 'end' of the label position.
+            // The scope 'begins' after the end of the label, although we want
+            // to include the label as part of the 'preamble'. Note that this is
+            // necessary for the scope tree to be able to properly incrementally
+            // tokenize; if the start position were set at the start of the label then
+            // this scope would get duplicated within the scope tree.
+            var label = "";
+            var labelStartPos = {row: position.row, column: 0};
+            var labelEndPos = {row: position.row + 1, column: 0};
+            var depth = 0;
+            
+            // Check if this is a single-line heading, e.g. '# foo'.
+            if (/^\s*#+\s*$/.test(value))
             {
+               depth = value.split("#").length - 1;
+               var line = this.$session.getLine(position.row);
+               label = line.replace(/^\s*[#]+\s*/, "");
             }
 
-            pos.column += tokenCursor.currentValue().length;
-            this.$scopes.onChunkEnd(pos);
+            // Check if this is a 2-line heading, e.g.
+            //
+            //    A title
+            //    -------
+            else if (/^[-=]{3,}\s*$/.test(value))
+            {
+               depth = value[0] === "=" ? 1 : 2;
+               label = this.$session.getLine(position.row - 1).trim();
+               labelStartPos.row--;
+
+               // If we have no title, bail (e.g. for horizontal rules)
+               if (label.length === 0)
+                  continue;
+            }
+
+            // Add to scope tree.
+            if (label.length === 0)
+               label = "(Untitled)";
+
+            // Trim off Markdown IDs from the label. Assume that
+            // anything following a '{' is a label.
+            var braceIdx = label.indexOf("{");
+            if (braceIdx !== -1)
+               label = label.substr(0, braceIdx).trim();
+
+            this.$scopes.onMarkdownHead(label, labelStartPos, labelEndPos, depth);
          }
-         else if (tokenCursor.currentValue() === "{")
+
+         // Add R-comment sections; e.g.
+         //
+         //    # Section ----
+         //
+         // Note that sections can only be closed implicitly by new
+         // sections following later in the document.
+         else if (isInRMode && /\bsectionhead\b/.test(type))
          {
+            // Extract the section name from the header. These
+            // have the form e.g.
+            // 
+            //    # Foo ----
+            //
+            // but note that the section name can be empty, and e.g.
+            // 
+            //    #####
+            //
+            // is accepted for folding purposes.
+            var label = "(Untitled)";
+            var matchStart = /[^#=-\s]/.exec(value);
+            if (matchStart) {
+               label = value.substr(matchStart.index);
+               label = label.replace(/\s*[#=-]+\s*$/, "");
+            }
+
+            this.$scopes.onSectionHead(label, position);
+         }
+
+         // Sweave
+         //
+         // Handle Sweave sections.
+         // TODO: Maybe handle '\begin{}' and '\end{}' pairs?
+         else if (!isInRMode &&
+                  modeId === "mode/sweave" &&
+                  type === "keyword" &&
+                  value.indexOf("\\") === 0 && (
+                     value === "\\chapter" ||
+                     value === "\\section" ||
+                     value === "\\subsection" ||
+                     value === "\\subsubsection"
+                  ))
+         {
+            // Infer the depth of the label.
+            var depth = 1;
+            if (value === "\\chapter")
+               depth = 2;
+            else if (value === "\\section")
+               depth = 3;
+            else if (value === "\\subsection")
+               depth = 4;
+            else if (value === "\\subsubsection")
+               depth = 5;
+
+            var line = this.$doc.getLine(position.row);
+
+            var reSection = /{([^}]*)}/;
+            var match = reSection.exec(line);
+
+            var label = "";
+            if (match != null)
+               label = match[1];
+
+            var labelStartPos = {row: position.row, column: 0};
+            var labelEndPos = {row: position.row, column: Infinity};
+
+            this.$scopes.onMarkdownHead(label, labelStartPos, labelEndPos, depth);
+         }
+
+         // Check specifically for YAML header boundaries ('---')
+         //
+         // TODO: We should encode the state we're transitioning into
+         // in the token type, so we don't have to 'guess' based on the
+         // value.
+         else if (/\bcodebegin\b/.test(type) && value === "---")
+         {
+            var title = $extractYamlTitle(this.$session);
+            this.$scopes.onSectionHead(title, position, {isYaml: true});
+         }
+
+         else if (/\bcodeend\b/.test(type) && value === "---")
+         {
+            position.column = Infinity;
+            this.$scopes.onSectionEnd(position);
+         }
+
+         // Check specifically for C++ chunks. We don't want these
+         // to create their own 'chunks' within R Markdown documents
+         // (as otherwise they screw with the R Notebook chunk scoping)
+         else if (modeId === "mode/rmarkdown" &&
+                  /\bcodebegin\b/.test(type) &&
+                  value.trim().indexOf("/***") === 0)
+         {
+            this.$scopes.onSectionHead("(R Code Chunk)", position);
+         }
+
+         else if (modeId === "mode/rmarkdown" &&
+                  /\bcodeend\b/.test(type) &&
+                  value.trim().indexOf("*/") === 0)
+         {
+            this.$scopes.onSectionEnd(position);
+         }
+
+         // Add chunks to the scope tree; e.g. (for R Markdown)
+         //
+         //    ```{r}
+         //
+         // The $codeBeginPattern determines what begins a chunk for
+         // multimode documents.
+         else if (/\bcodebegin\b/.test(type))
+         {
+            var chunkStartPos = position;
+            var chunkPos = {row: chunkStartPos.row + 1, column: 0};
+            var chunkNum = this.$scopes.getChunkCount() + 1;
+
+               var chunkLabel = getChunkLabel(this.$codeBeginPattern, value);
+               var scopeName = "Chunk " + chunkNum;
+               if (chunkLabel && value !== "YAML Header")
+                  scopeName += ": " + chunkLabel;
+               this.$scopes.onChunkStart(chunkLabel,
+                                         scopeName,
+                                         chunkStartPos,
+                                         chunkPos);
+         }
+
+         // End chunks on 'codeend' type tokens.
+         // TODO: Check $codeEndPattern?
+         else if (/\bcodeend\b/.test(type))
+         {
+            position.column += value.length;
+            this.$scopes.onChunkEnd(position);
+         }
+
+         // Open braces create scopes. A lot of logic is within to
+         // determine the 'type' of brace -- e.g. is it associated
+         // with a function definition, or just it's own code block?
+         // And so on.
+         else if (isInRMode && value === "{")
+         {
+            // Within here, since we know that we're dealing with R code, we
+            // can fall back to using the R token cursor.
+            var tokenCursor = this.getTokenCursor();
+            tokenCursor.moveToPosition(position, true);
             var localCursor = tokenCursor.cloneCursor();
+            
             var startPos;
             if (findAssocFuncToken(localCursor))
             {
+               var argsCursor = localCursor.cloneCursor();
+               argsCursor.moveToNextToken();
+
+               var functionName = null;
+               if (moveFromFunctionTokenToEndOfFunctionName(localCursor))
+               {
+                  var functionEndCursor = localCursor.cloneCursor();
+                  var functionStartCursor = localCursor.cloneCursor();
+                  if (functionStartCursor.findStartOfEvaluationContext())
+                  {
+                     var functionStartPos = functionStartCursor.currentPosition();
+                     var functionEndPos   = functionEndCursor.currentPosition();
+
+                     // Only include text on the same line. This avoids cases
+                     // where e.g. someone might write
+                     //
+                     //     env$|
+                     //
+                     //     # This is a function
+                     //     foo <- function(x) { ... }
+                     //
+                     // It's more likely that the user was just typing a new
+                     // statement above than adding on to that function definition;
+                     // we should be conservative in looking backwards over comments
+                     // when providing that scope.
+                     if (functionStartPos.row !== functionEndPos.row) {
+                        functionStartPos.row = functionEndPos.row;
+                        functionStartPos.column = 0;
+                        localCursor.$row = functionStartPos.row;
+                        localCursor.$offset = 0;
+                     } else {
+                        localCursor.moveToPosition(functionStartPos, true);
+                     }
+
+                     functionName = this.$doc.getTextRange(new Range(
+                        functionStartPos.row,
+                        functionStartPos.column,
+                        functionEndPos.row,
+                        functionEndPos.column + functionEndCursor.currentValue().length
+                     ));
+                  }
+               }
+               
                startPos = localCursor.currentPosition();
                if (localCursor.isFirstSignificantTokenOnLine())
                   startPos.column = 0;
-               this.$scopes.onFunctionScopeStart(localCursor.currentValue(),
+
+               // Obtain the function arguments by walking through the tokens
+               var functionArgs = $getFunctionArgs(argsCursor);
+               var functionArgsString = "(" + functionArgs.join(", ") + ")";
+
+               var functionLabel;
+               if (functionName == null)
+                  functionLabel = $normalizeWhitespace("<function>" + functionArgsString);
+               else
+                  functionLabel = $normalizeWhitespace(functionName + functionArgsString);
+
+               this.$scopes.onFunctionScopeStart(functionLabel,
                                                  startPos,
-                                                 tokenCursor.currentPosition());
+                                                 tokenCursor.currentPosition(),
+                                                 functionName,
+                                                 functionArgs);
             }
             else
             {
@@ -355,32 +1109,41 @@ var RCodeModel = function(doc, tokenizer, statePattern, codeBeginPattern) {
                this.$scopes.onScopeStart(startPos);
             }
          }
-         else if (tokenCursor.currentValue() === "}")
+
+         // A closing brace will close a scope.
+         else if (isInRMode && value === "}")
          {
-            var pos = tokenCursor.currentPosition();
-            if (tokenCursor.isLastSignificantTokenOnLine())
-            {
-               pos.column = this.$getLine(pos.row).length + 1;
-            }
-            else
-            {
-               pos.column++;
-            }
-            this.$scopes.onScopeEnd(pos);
+            // Ensure that the closing '}' is treated as part of the scope
+            position.column += 1;
+
+            this.$scopes.onScopeEnd(position);
          }
-      } while (tokenCursor.moveToNextToken(maxRow));
+
+      } while ((token = iterator.moveToNextToken()));
+
+      // Update the current parse position. We want to set this just
+      // after the current token; in practice, since the tokenization
+      // happens row-wise this means setting the parse position at the
+      // start of the next row.
+      var rowTokenizedUpTo = Math.max(maxRow, iterator.$row);
+      this.$scopes.parsePos = {
+         row: rowTokenizedUpTo, column: -1
+      };
+
+      return rowTokenizedUpTo;
    };
 
    this.$getFoldToken = function(session, foldStyle, row) {
       this.$tokenizeUpToRow(row);
 
       if (this.$statePattern && !this.$statePattern.test(this.$endStates[row]))
-         return "";
+          return "";
 
       var rowTokens = this.$tokens[row];
 
-      if (rowTokens.length == 1 && /\bsectionhead\b/.test(rowTokens[0].type))
-         return rowTokens[0];
+      for (var i = 0; i < rowTokens.length; i++)
+         if (/\bsectionhead\b/.test(rowTokens[i].type))
+            return rowTokens[i];
 
       var depth = 0;
       var unmatchedOpen = null;
@@ -494,23 +1257,66 @@ var RCodeModel = function(doc, tokenizer, statePattern, codeBeginPattern) {
          return;
       }
       else if (/\bsectionhead\b/.test(foldToken.type)) {
-         var match = /([-=#])\1+\s*$/.exec(foldToken.value);
-         if (!match)
-            return;  // this would be surprising
+         
+         // Find the position of the section 'tail'.
+         var line = session.getLine(row);
 
-         pos.column += match.index - 1; // Not actually sure why -1 is needed
-         var tokenIterator3 = new TokenIterator(session, row, 0);
-         var lastRow = row;
-         for (var tok3; tok3 = tokenIterator3.stepForward(); ) {
-            if (/\bsectionhead\b/.test(tok3.type)) {
-               break;
-            }
-            lastRow = tokenIterator3.getCurrentTokenRow();
+         // For unnamed sections, use the end of the line.
+         // Otherwise, consume the '----' tail of the section
+         // header as well.
+         var index;
+         if (/^\s*[#=-]+\s*$/.test(line)) {
+            index = line.length;
+         } else {
+            var match = /[#=-]+\s*$/.exec(line);
+            if (!match)
+               return;
+            index = match.index;
          }
 
-         return Range.fromPoints(
-               pos,
-               {row: lastRow, column: session.getLine(lastRow).length});
+         // Use this index as the column for our opening fold.
+         pos.column = index;
+
+         // Use a token iterator and find the next section head.
+         // We fold up to that section head.
+         var it = new TokenIterator(session, row + 1);
+
+         // This has the effect of ensuring that the next call to
+         // 'stepForward()' places the iterator on the first token
+         // on this row.
+         it.$tokenIndex = -1;
+
+         while (token = it.stepForward())
+         {
+            // Check to see if we've found something that can close
+            // our section head. If so, we're done.
+             if (token.value === "}" ||
+                /\bsectionhead\b/.test(token.type) ||
+                /\bcode(?:begin|end)/.test(token.type))
+             {
+                break;
+             }
+
+             // Walk over matching braces -- this allows us to
+             // e.g. skip function definitions (and hence, any
+             // sub-sections within those functions).
+             if (it.fwdToMatchingToken())
+                continue;
+         }
+
+         // If we discovered another section head, we fold up to
+         // the previous row; otherwise, we fold the whole document.
+         var row = it.getCurrentTokenRow();
+         if (token)
+            row--;
+
+         var startPos = pos;
+         var endPos = {
+            row: row,
+            column: session.getLine(row).length
+         };
+
+         return Range.fromPoints(startPos, endPos);
       }
 
       return;
@@ -519,10 +1325,11 @@ var RCodeModel = function(doc, tokenizer, statePattern, codeBeginPattern) {
    this.getCurrentScope = function(position, filter)
    {
       if (!filter)
-         filter = function(scope) { return true; }
+         filter = function(scope) { return true; };
 
       if (!position)
          return "";
+
       this.$buildScopeTreeUpToRow(position.row);
 
       var scopePath = this.$scopes.getActiveScopes(position);
@@ -554,7 +1361,7 @@ var RCodeModel = function(doc, tokenizer, statePattern, codeBeginPattern) {
    {
       if (this.$tokenizeUpToRow(pos.row))
       {
-         var tokenCursor = new this.$TokenCursor();
+         var tokenCursor = this.getTokenCursor();
          if (tokenCursor.seekToNearestToken(pos, pos.row)
                    && tokenCursor.currentValue() == "{"
                && tokenCursor.moveBackwardOverMatchingParens())
@@ -566,13 +1373,40 @@ var RCodeModel = function(doc, tokenizer, statePattern, codeBeginPattern) {
       return this.$getIndent(this.$getLine(pos.row));
    };
 
-   this.getNextLineIndent = function(lastRow, line, endState, tab, tabSize)
+   this.getIndentForRow = function(row)
    {
-      if (endState == "qstring" || endState == "qqstring")
+      return this.getNextLineIndent(
+         "start",
+         this.$getLine(row),
+         this.$session.getTabString(),
+         row
+      );
+   };
+
+   function isOperatorType(type)
+   {
+      return type === "keyword.operator" ||
+             type === "keyword.operator.infix";
+   }
+
+   // NOTE: 'row' is an optional parameter, and is not used by default
+   // on enter keypresses. When unset, we attempt to indent based on
+   // the cursor position (which is what we want for 'enter'
+   // keypresses).  However, for reindentation of particular lines (or
+   // blocks), we need the row parameter in order to choose which row
+   // we wish to reindent.
+   this.getNextLineIndent = function(state, line, tab, row)
+   {
+      if (Utils.endsWith(state, "qstring"))
          return "";
 
-      // TODO: optimize
-      var tabAsSpaces = Array(tabSize + 1).join(" ");
+      // NOTE: Pressing enter will already have moved the cursor to
+      // the next row, so we need to push that back a single row.
+      if (typeof row !== "number")
+         row = this.$session.getSelection().getCursor().row - 1;
+
+      var tabSize = this.$session.getTabSize();
+      var tabAsSpaces = new Array(tabSize + 1).join(" ");
 
       // This lineOverrides nonsense is necessary because the line has not 
       // changed in the real document yet. We need to simulate it by replacing
@@ -582,39 +1416,54 @@ var RCodeModel = function(doc, tokenizer, statePattern, codeBeginPattern) {
       // block of code, and in the editor hit Enter in the middle of a line 
       // that contains a }.
       this.$lineOverrides = null;
-      if (!(this.$doc.getLine(lastRow) === line))
+      if (!(this.$doc.getLine(row) === line))
       {
          this.$lineOverrides = {};
-         this.$lineOverrides[lastRow] = line;
-         this.$invalidateRow(lastRow);
+         this.$lineOverrides[row] = line;
+         this.$invalidateRow(row);
       }
       
       try
       {
-         var defaultIndent = lastRow < 0 ? "" 
-                                         : this.$getIndent(this.$getLine(lastRow));
+         var defaultIndent = row < 0 ?
+                "" : 
+                this.$getIndent(this.$getLine(row));
 
          // jcheng 12/7/2013: It doesn't look to me like $tokenizeUpToRow can return
          // anything but true, at least not today.
-         if (!this.$tokenizeUpToRow(lastRow))
+         if (!this.$tokenizeUpToRow(row))
             return defaultIndent;
-
-         // If we're in an Sweave/Rmd/etc. document and this line isn't R, then
-         // don't auto-indent
-         if (this.$statePattern && !this.$statePattern.test(endState))
-            return defaultIndent;
-
-         // Used to add extra whitspace if the next line is a continuation of the
-         // previous line (i.e. the last significant token is a binary operator).
-         var continuationIndent = "";
 
          // The significant token (no whitespace, comments) that most immediately
          // precedes this line. We don't look back further than 10 rows or so for
          // performance reasons.
-         var prevToken = this.$findPreviousSignificantToken({row: lastRow, column: this.$getLine(lastRow).length},
-                                                            lastRow - 10);
+         var startPos = {
+            row: row,
+            column: this.$getLine(row).length
+         };
 
-         if (prevToken
+         var prevToken = this.$findPreviousSignificantToken(
+            startPos,
+            row - 10
+         );
+
+         // Used to add extra whitspace if the next line is a continuation of the
+         // previous line (i.e. the last significant token is a binary operator).
+         var continuationIndent = "";
+         var startedOnOperator = false;
+
+         if (prevToken && isOperatorType(prevToken.token.type))
+         {
+            // Fix issue 2579: If the previous significant token is an operator
+            // (commonly, "+" when used with ggplot) then this line is a
+            // continuation of an expression that was started on a previous
+            // line. This line's indent should then be whatever would normally
+            // be used for a complete statement starting here, plus a tab.
+            continuationIndent = tab;
+            startedOnOperator = true;
+         }
+
+         else if (prevToken
                && /\bparen\b/.test(prevToken.token.type)
                && /\)$/.test(prevToken.token.value))
          {
@@ -655,140 +1504,363 @@ var RCodeModel = function(doc, tokenizer, statePattern, codeBeginPattern) {
             // and increase by one level.
             return this.$getIndent(this.$getLine(prevToken.row)) + tab;
          }
-         else if (prevToken && /\boperator\b/.test(prevToken.token.type) && !/\bparen\b/.test(prevToken.token.type))
-         {
-            // Fix issue 2579: If the previous significant token is an operator
-            // (commonly, "+" when used with ggplot) then this line is a
-            // continuation of an expression that was started on a previous
-            // line. This line's indent should then be whatever would normally
-            // be used for a complete statement starting here, plus a tab.
-            continuationIndent = tab;
-         }
 
-         // Walk backwards looking for an open paren, square bracket, or curly
-         // brace, *ignoring matched pairs along the way*. (That's the "balanced"
-         // in $walkParensBalanced.)
-         var openBracePos = this.$walkParensBalanced(
-               lastRow,
-               0,
-               function(parens, paren, pos)
+         // Walk backwards looking for an open paren, square bracket, curly
+         // brace, or assignment token. We use the first found token to provide
+         // context for the indentation.
+         var tokenCursor = this.getTokenCursor();
+
+         // moveToPosition can fail if there are no tokens previous to
+         // the cursor
+         if (!tokenCursor.moveToPosition(startPos))
+            return "";
+
+         // The first loop looks for an open brace for indentation.
+         do
+         {
+            // If we hit a chunk start/end, just use the same indentation.
+            var currentType = tokenCursor.currentType();
+            if (currentType === "support.function.codebegin" ||
+                currentType === "support.function.codeend")
+            {
+               return this.$getIndent(
+                  this.$doc.getLine(tokenCursor.$row)
+               ) + continuationIndent;
+            }
+
+            var currentValue = tokenCursor.currentValue();
+
+            if (tokenCursor.isAtStartOfNewExpression(false))
+            {
+               if (currentValue === "{" ||
+                   currentValue === "[" ||
+                   currentValue === "(")
                {
-                  return /[\[({]/.test(paren) && parens.length === 0;
-               },
-               null);
+                  continuationIndent += tab;
+               }
 
-         if (openBracePos != null)
-         {
-            // OK, we found an open brace; this just means we're not a
-            // top-level expression.
+               return this.$getIndent(
+                  this.$doc.getLine(tokenCursor.$row)
+               ) + continuationIndent;
+            }
 
-            var nextTokenPos = null;
+            if (currentValue === "(" &&
+                tokenCursor.isAtStartOfNewExpression(true))
+            {
+               return this.$getIndent(
+                  this.$doc.getLine(tokenCursor.$row)
+               ) + tab;
+            }
+             
+            // Walk over matching braces ('()', '{}', '[]')
+            if (tokenCursor.bwdToMatchingToken())
+               continue;
 
-            if ($verticallyAlignFunctionArgs) {
-               // If the user has selected verticallyAlignFunctionArgs mode in the
-               // prefs, for example:
-               //
-               // soDomethingAwesome(a = 1,
-               //                    b = 2,
-               //                    c = 3)
-               //
-               // Then we simply follow the example of the next significant
-               // token. BTW implies that this mode also supports this:
-               //
-               // soDomethingAwesome(
-               //   a = 1,
-               //   b = 2,
-               //   c = 3)
-               //
-               // But not this:
-               //
-               // soDomethingAwesome(a = 1,
-               //   b = 2,
-               //   c = 3)
-               nextTokenPos = this.$findNextSignificantToken(
+            // If we found a '{', we break out and loop back -- this is because
+            // we may want to indent either on a '<-' token or on a '{'
+            // token.
+            if (currentValue === "{")
+               break;
+
+            // If we find an open parenthesis or bracket, we
+            // can use this to provide the indentation context.
+            if (contains(["[", "("], currentValue))
+            {
+               var openBracePos = tokenCursor.currentPosition();
+               var nextTokenPos = null;
+
+               if ($verticallyAlignFunctionArgs) {
+                  // If the user has selected
+                  // verticallyAlignFunctionArgs mode in the prefs,
+                  // for example:
+                  //
+                  // soDomethingAwesome(a = 1,
+                  //                    b = 2,
+                  //                    c = 3)
+                  //
+                  // Then we simply follow the example of the next significant
+                  // token. BTW implies that this mode also supports this:
+                  //
+                  // soDomethingAwesome(
+                  //   a = 1,
+                  //   b = 2,
+                  //   c = 3)
+                  //
+                  // But not this:
+                  //
+                  // soDomethingAwesome(a = 1,
+                  //   b = 2,
+                  //   c = 3)
+                  nextTokenPos = this.$findNextSignificantToken(
                      {
                         row: openBracePos.row,
                         column: openBracePos.column + 1
-                     }, lastRow);
-            }
-
-            if (!nextTokenPos)
-            {
-               // Either there wasn't a significant token between the new
-               // line and the previous open brace, or, we're not in
-               // vertical argument alignment mode. Either way, we need
-               // to just indent one level from the open brace's level.
-               return this.getIndentForOpenBrace(openBracePos) +
-                      tab + continuationIndent;
-            }
-            else
-            {
-               // Return indent up to next token position.
-               // Note that in hard tab mode, the tab character only counts 
-               // as a single character unfortunately. What we really want
-               // is the screen column, but what we have is the document
-               // column, which we can't convert to screen column without
-               // copy-and-pasting a bunch of code from layer/text.js.
-               // As a shortcut, we just pull off the leading whitespace
-               // from the line and include it verbatim in the new indent.
-               // This strategy works fine unless there is a tab in the
-               // line that comes after a non-whitespace character, which
-               // seems like it should be rare.
-               var line = this.$getLine(nextTokenPos.row);
-               var leadingIndent = line.replace(/[^\s].*$/, '');
-
-               var indentWidth = nextTokenPos.column - leadingIndent.length;
-               var tabsToUse = Math.floor(indentWidth / tabSize);
-               var spacesToAdd = indentWidth - (tabSize * tabsToUse);
-               var buffer = "";
-               for (var i = 0; i < tabsToUse; i++)
-                  buffer += tab;
-               for (var j = 0; j < spacesToAdd; j++)
-                  buffer += " ";
-               var result = leadingIndent + buffer;
-
-               // Compute the size of the indent in spaces (e.g. if a tab
-               // is 4 spaces, and result is "\t\t ", the size is 9)
-               var resultSize = result.replace("\t", tabAsSpaces).length;
-
-               // Sometimes even though verticallyAlignFunctionArgs is used,
-               // the user chooses to manually "break the rules" and use the
-               // non-aligned style, like so:
-               //
-               // plot(foo,
-               //   bar, baz,
-               //
-               // Without the below loop, hitting Enter after "baz," causes
-               // the cursor to end up aligned with foo. The loop simply
-               // replaces the indentation with the minimal indentation.
-               //
-               // TODO: Perhaps we can skip the above few lines of code if
-               // there are other lines present
-               var thisIndent;
-               for (var i = nextTokenPos.row + 1; i <= lastRow; i++) {
-                  // If a line contains only whitespace, it doesn't count
-                  if (!/[^\s]/.test(this.$getLine(i)))
-                     continue;
-                  // If this line is is a continuation of a multi-line string, 
-                  // ignore it.
-                  var rowEndState = this.$endStates[i-1];
-                  if (rowEndState === "qstring" || rowEndState === "qqstring") 
-                     continue;
-                  thisIndent = this.$getLine(i).replace(/[^\s].*$/, '');
-                  thisIndentSize = thisIndent.replace("\t", tabAsSpaces).length;
-                  if (thisIndentSize < resultSize) {
-                     result = thisIndent;
-                     resultSize = thisIndentSize;
-                  }
+                     }, row);
                }
 
-               return result + continuationIndent;
+               if (!nextTokenPos)
+               {
+                  // Either there wasn't a significant token between the new
+                  // line and the previous open brace, or, we're not in
+                  // vertical argument alignment mode. Either way, we need
+                  // to just indent one level from the open brace's level.
+                  return this.getIndentForOpenBrace(openBracePos) +
+                     tab + continuationIndent;
+               }
+               else
+               {
+                  // Return indent up to next token position.
+                  // Note that in hard tab mode, the tab character only counts 
+                  // as a single character unfortunately. What we really want
+                  // is the screen column, but what we have is the document
+                  // column, which we can't convert to screen column without
+                  // copy-and-pasting a bunch of code from layer/text.js.
+                  // As a shortcut, we just pull off the leading whitespace
+                  // from the line and include it verbatim in the new indent.
+                  // This strategy works fine unless there is a tab in the
+                  // line that comes after a non-whitespace character, which
+                  // seems like it should be rare.
+                  var line = this.$getLine(nextTokenPos.row);
+                  var leadingIndent = line.replace(/[^\s].*$/, '');
+
+                  var indentWidth = nextTokenPos.column - leadingIndent.length;
+                  var tabsToUse = Math.floor(indentWidth / tabSize);
+                  var spacesToAdd = indentWidth - (tabSize * tabsToUse);
+                  var buffer = "";
+                  for (var i = 0; i < tabsToUse; i++)
+                     buffer += tab;
+                  for (var j = 0; j < spacesToAdd; j++)
+                     buffer += " ";
+                  var result = leadingIndent + buffer;
+
+                  // Compute the size of the indent in spaces (e.g. if a tab
+                  // is 4 spaces, and result is "\t\t ", the size is 9)
+                  var resultSize = result.replace("\t", tabAsSpaces).length;
+
+                  // Sometimes even though verticallyAlignFunctionArgs is used,
+                  // the user chooses to manually "break the rules" and use the
+                  // non-aligned style, like so:
+                  //
+                  // plot(foo,
+                  //   bar, baz,
+                  //
+                  // Without the below loop, hitting Enter after "baz," causes
+                  // the cursor to end up aligned with foo. The loop simply
+                  // replaces the indentation with the minimal indentation.
+                  //
+                  // TODO: Perhaps we can skip the above few lines of code if
+                  // there are other lines present
+                  var thisIndent;
+                  for (var i = nextTokenPos.row + 1; i <= row; i++) {
+                     // If a line contains only whitespace, it doesn't count
+                     if (!/[^\s]/.test(this.$getLine(i)))
+                        continue;
+                     // If this line is is a continuation of a multi-line string, 
+                     // ignore it.
+                     var rowEndState = this.$endStates[i-1];
+                     if (rowEndState === "qstring" || rowEndState === "qqstring") 
+                        continue;
+                     thisIndent = this.$getLine(i).replace(/[^\s].*$/, '');
+                     var thisIndentSize = thisIndent.replace("\t", tabAsSpaces).length;
+                     if (thisIndentSize < resultSize) {
+                        result = thisIndent;
+                        resultSize = thisIndentSize;
+                     }
+                  }
+
+                  // We want to tweak vertical alignment; e.g. in this
+                  // case:
+                  //
+                  //    if (foo &&
+                  //        |
+                  //
+                  // vs.
+                  //
+                  //    plot(x +
+                  //             |
+                  //
+                  // Ie, normally, we might want a continuation indent if
+                  // the line ended with an operator; however, in some
+                  // cases (notably with multi-line if statements) we
+                  // would prefer not including that indentation.
+                  if (isWithinControlFlowArgList(tokenCursor))
+                     return result;
+                  else
+                     return result + continuationIndent;
+
+               }
+
             }
+
+         } while (tokenCursor.moveToPreviousToken());
+
+         // If we got here, either the scope is provided by a '{'
+         // or we failed otherwise. For '{' scopes, we may want to
+         // short-circuit and indent based on a '<-', hence the second
+         // pass through here.
+         if (!tokenCursor.moveToPosition(startPos))
+            return "";
+
+         do
+         {
+            // Walk over matching parens.
+            if (tokenCursor.bwdToMatchingToken())
+               continue;
+            
+            // If we find an open brace, use its associated indentation
+            // plus a tab.
+            if (tokenCursor.currentValue() === "{")
+            {
+               return this.getIndentForOpenBrace(
+                  tokenCursor.currentPosition()
+               ) + tab + continuationIndent;
+            }
+
+            // If we found an assignment token, use that for indentation
+            if (pAssign(tokenCursor.currentToken()))
+            {
+               while (pAssign(tokenCursor.currentToken()))
+               {
+                  // Move off of the assignment token
+                  if (!tokenCursor.moveToPreviousToken())
+                     break;
+
+                  if (!tokenCursor.findStartOfEvaluationContext())
+                     break;
+
+                  // Make sure this isn't the only assignment within a 'naked'
+                  // control flow section
+                  //
+                  //    if (foo)
+                  //        x <- 1
+                  //
+                  // In such cases, we rely on the 'naked' control identifier
+                  // to provide the appropriate indentation.
+                  var clone = tokenCursor.cloneCursor();
+                  if (clone.moveToPreviousToken())
+                  {
+                     if (clone.currentValue() === "else" ||
+                         clone.currentValue() === "repeat")
+                     {
+                        return this.$getIndent(
+                           this.$doc.getLine(clone.$row)
+                        ) + continuationIndent + continuationIndent;
+                     }
+
+                     var tokenIsClosingParen = clone.currentValue() === ")";
+                     if (tokenIsClosingParen &&
+                         clone.bwdToMatchingToken() &&
+                         clone.moveToPreviousToken())
+                     {
+                        var currentValue = clone.currentValue();
+                        if (contains(
+                           ["if", "for", "while", "repeat", "else"],
+                           currentValue
+                        ))
+                        {
+                           return this.$getIndent(
+                              this.$doc.getLine(clone.$row)
+                           ) + continuationIndent + continuationIndent;
+                        }
+                     }
+                  }
+
+                  // If the previous token is an assignment operator,
+                  // move on to it
+                  if (pAssign(tokenCursor.peekBwd().currentToken()))
+                     tokenCursor.moveToPreviousToken();
+
+               }
+
+               // We broke out of the loop; we should be on the
+               // appropriate line to provide for indentation now.
+               return this.$getIndent(
+                  this.$getLine(tokenCursor.$row)
+               ) + continuationIndent;
+            }
+
+         } while (tokenCursor.moveToPreviousToken());
+
+         // Fix some edge-case indentation issues, mainly for naked
+         // 'if' and 'else' blocks.
+         if (startedOnOperator)
+         {
+            var maxTokensToWalk = 20;
+            var count = 0;
+            
+            tokenCursor = this.getTokenCursor();
+            tokenCursor.moveToPosition(startPos);
+
+            // Move off of the operator
+            tokenCursor.moveToPreviousToken();
+               
+            do
+            {
+               // If we encounter an 'if' or 'else' statement, add to
+               // the continuation indent
+               if (isOneOf(tokenCursor.currentValue(), ["if", "else"]))
+               {
+                  continuationIndent += tab;
+                  break;
+               }
+               
+               // If we're on a constant, then we need to find an
+               // operator beforehand, or give up.
+               if (tokenCursor.hasType("constant", "identifier"))
+               {
+
+                  if (!tokenCursor.moveToPreviousToken())
+                     break;
+
+                  // Check if we're already on an if / else
+                  if (isOneOf(tokenCursor.currentValue(), ["if", "else"]))
+                  {
+                     continuationIndent += tab;
+                     break;
+                  }
+
+                  // If we're on a ')', check if it's associated with an 'if'
+                  if (tokenCursor.currentValue() === ")")
+                  {
+                     if (!tokenCursor.bwdToMatchingToken())
+                        break;
+
+                     if (!tokenCursor.moveToPreviousToken())
+                        break;
+
+                     if (isOneOf(tokenCursor.currentValue(), ["if", "else"]))
+                     {
+                        continuationIndent += tab;
+                        break;
+                     }
+
+                  }
+
+                  if (!tokenCursor.hasType("operator"))
+                     break;
+
+                  continue;
+               }
+               
+               // Move over a generic 'evaluation', e.g.
+               // foo::bar()[1]
+               if (!tokenCursor.findStartOfEvaluationContext())
+                  break;
+
+            } while (tokenCursor.moveToPreviousToken() &&
+                     count++ < maxTokensToWalk);
          }
 
-         var firstToken = this.$findNextSignificantToken({row: 0, column: 0}, lastRow);
+         // All else fails -- just indent based on the first token.
+         var firstToken = this.$findNextSignificantToken(
+            {row: 0, column: 0},
+            row
+         );
+         
          if (firstToken)
-            return this.$getIndent(this.$getLine(firstToken.row)) + continuationIndent;
+            return this.$getIndent(
+               this.$getLine(firstToken.row)
+            ) + continuationIndent;
          else
             return "" + continuationIndent;
       }
@@ -797,48 +1869,43 @@ var RCodeModel = function(doc, tokenizer, statePattern, codeBeginPattern) {
          if (this.$lineOverrides)
          {
             this.$lineOverrides = null;
-            this.$invalidateRow(lastRow);
+            this.$invalidateRow(row);
          }
       }
    };
 
-   this.getBraceIndent = function(lastRow)
+   this.getBraceIndent = function(row)
    {
-      this.$tokenizeUpToRow(lastRow);
+      var tokenCursor = this.getTokenCursor();
+      var pos = {
+         row: row,
+         column: this.$getLine(row).length
+      };
 
-      var prevToken = this.$findPreviousSignificantToken({row: lastRow, column: this.$getLine(lastRow).length},
-                                                         lastRow - 10);
-      if (prevToken
-            && /\bparen\b/.test(prevToken.token.type)
-            && /\)$/.test(prevToken.token.value))
+      if (!tokenCursor.moveToPosition(pos))
+         return "";
+
+      if (tokenCursor.currentValue() === ")")
       {
-         var lastPos = this.$walkParensBalanced(
-               prevToken.row,
-               prevToken.row - 10,
-               null,
-               function(parens, paren, pos)
-               {
-                  return parens.length == 0;
-               });
-
-         if (lastPos != null)
+         if (tokenCursor.bwdToMatchingToken() &&
+             tokenCursor.moveToPreviousToken())
          {
-            var preParenToken = this.$findPreviousSignificantToken(lastPos, 0);
-            if (preParenToken && preParenToken.token.type === "keyword"
-                  && /^(if|while|for|function)$/.test(preParenToken.token.value))
+            var preParenValue = tokenCursor.currentValue();
+            if (isOneOf(preParenValue, ["if", "while", "for", "function"]))
             {
-               return this.$getIndent(this.$getLine(preParenToken.row));
+               return this.$getIndent(this.$getLine(tokenCursor.$row));
             }
          }
       }
-      else if (prevToken
-                  && prevToken.token.type === "keyword"
-                  && (prevToken.token.value === "repeat" || prevToken.token.value === "else"))
+      else if (isOneOf(tokenCursor.currentValue(),
+                       ["else", "repeat", "<-", "<<-", "="]) ||
+               tokenCursor.hasType("infix") ||
+               tokenCursor.currentType() === "keyword.operator")
       {
-         return this.$getIndent(this.$getLine(prevToken.row));
+         return this.$getIndent(this.$getLine(tokenCursor.$row));
       }
 
-      return this.$getIndent(lastRow);
+      return this.getIndentForRow(row);
    };
 
    /**
@@ -878,6 +1945,7 @@ var RCodeModel = function(doc, tokenizer, statePattern, codeBeginPattern) {
 
    this.$tokenizeUpToRow = function(lastRow)
    {
+
       // Don't let lastRow be past the end of the document
       lastRow = Math.min(lastRow, this.$endStates.length - 1);
 
@@ -892,9 +1960,13 @@ var RCodeModel = function(doc, tokenizer, statePattern, codeBeginPattern) {
          
          assumeGood = false;
 
-         var state = (row === 0) ? 'start' : this.$endStates[row-1];
-         var lineTokens = this.$tokenizer.getLineTokens(this.$getLine(row), state);
-         if (!this.$statePattern || this.$statePattern.test(lineTokens.state) || this.$statePattern.test(state))
+         var state = (row === 0) ? 'start' : this.$endStates[row - 1];
+         var line = this.$getLine(row);
+         var lineTokens = this.$tokenizer.getLineTokens(line, state);
+
+         if (!this.$statePattern ||
+             this.$statePattern.test(lineTokens.state) ||
+             this.$statePattern.test(state))
             this.$tokens[row] = this.$filterWhitespaceAndComments(lineTokens.tokens);
          else
             this.$tokens[row] = [];
@@ -1123,11 +2195,11 @@ var RCodeModel = function(doc, tokenizer, statePattern, codeBeginPattern) {
    this.findNextSignificantToken = function(pos)
    {
 	   return this.$findNextSignificantToken(pos, this.$tokens.length - 1);
-   }
+   };
    
    this.$findPreviousSignificantToken = function(pos, firstRow)
    {
-      if (this.$tokens.length == 0)
+      if (this.$tokens.length === 0)
          return null;
       firstRow = Math.max(0, firstRow);
       
@@ -1135,7 +2207,7 @@ var RCodeModel = function(doc, tokenizer, statePattern, codeBeginPattern) {
       for ( ; row >= firstRow; row--)
       {
          var tokens = this.$tokens[row];
-         if (tokens.length == 0)
+         if (tokens.length === 0)
             continue;
          
          if (row != pos.row)
@@ -1210,5 +2282,8 @@ exports.setVerticallyAlignFunctionArgs = function(verticallyAlign) {
    $verticallyAlignFunctionArgs = verticallyAlign;
 };
 
+exports.getVerticallyAlignFunctionArgs = function() {
+   return $verticallyAlignFunctionArgs;
+};
 
 });

@@ -1,8 +1,13 @@
+
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+#endif
+
 #import <Cocoa/Cocoa.h>
 
 #import <WebKit/WebFrame.h>
 #import <Webkit/WebUIDelegate.h>
-
 
 #import "Options.hpp"
 #import "WebViewController.h"
@@ -15,24 +20,51 @@
 #import "FileDownloader.h"
 #import "MainFrameController.h"
 
-struct PendingSatelliteWindow
+using namespace rstudio;
+
+struct PendingWindow
 {
-   PendingSatelliteWindow()
-      : name(), width(-1), height(-1)
+   PendingWindow()
+      : name(), x(-1), y(-1), width(-1), height(-1)
    {
    }
    
-   PendingSatelliteWindow(std::string name, int width, int height)
-      : name(name), width(width), height(height)
+   PendingWindow(std::string name, int x, int y, int width, int height)
+      : name(name), x(x), y(y), width(width), height(height), isSatellite(true)
+   {
+   }
+   
+   PendingWindow(std::string name, bool allowExternalNavigation)
+      : name(name), allowExternalNavigate(allowExternalNavigation),
+        isSatellite(false)
    {
    }
    
    bool empty() const { return name.empty(); }
    
    std::string name;
+   int x;
+   int y;
    int width;
    int height;
+   bool allowExternalNavigate;
+   bool isSatellite;
 };
+
+NSString* authorityFromUrl (NSString* url)
+{
+   // extract the authority (domain and port) from the URL:
+   // e.g. for http://foo:8402/bar/baz.html, extract http://foo:8402/
+   NSURL* authorityUrl = [NSURL URLWithString: 
+        [url stringByAddingPercentEscapesUsingEncoding: NSUTF8StringEncoding]];
+   NSString* port = @"";
+   if ([authorityUrl port] != nil) {
+      port = [NSString stringWithFormat: @":%@", [authorityUrl port]];
+   }
+   NSString* prefix = [NSString stringWithFormat: @"%@://%@%@/",
+                       [authorityUrl scheme], [authorityUrl host], port];
+   return prefix;
+}
 
 // get access to private webview zoom apis
 @interface WebView (Zoom)
@@ -44,24 +76,52 @@ struct PendingSatelliteWindow
 @implementation WebViewController
 
 static NSMutableDictionary* namedWindows_;
-static PendingSatelliteWindow pendingWindow_;
+static PendingWindow pendingWindow_;
 
 + (void) initialize
 {
    namedWindows_ = [[NSMutableDictionary alloc] init];
-   pendingWindow_ = PendingSatelliteWindow();
+   pendingWindow_ = PendingWindow();
 }
 
 + (void) prepareForSatelliteWindow: (NSString*) name
+                                 x: (int) x
+                                 y: (int) y
                              width: (int) width
                             height: (int) height
 {
-   pendingWindow_ = PendingSatelliteWindow([name UTF8String], width, height);
+   pendingWindow_ = PendingWindow([name UTF8String], x, y, width, height);
+}
+
++ (void) prepareForNamedWindow: (NSString *) name
+         allowExternalNavigate: (bool) allow
+{
+   pendingWindow_ = PendingWindow([name UTF8String], allow);
 }
 
 + (WebViewController*) windowNamed: (NSString*) name
 {
    return [namedWindows_ objectForKey: name];
+}
+
++ (WebViewController*) activeDesktopController
+{
+   // get the current key window; some satellites (right now, just the source
+   // window) have a desktop object and can handle commands themselves
+   NSWindow* keyWindow = [NSApp keyWindow];
+   NSWindowController* keyController = [keyWindow windowController];
+   if ([keyController isMemberOfClass: [SatelliteController class]])
+   {
+      SatelliteController* controller = (SatelliteController*)keyController;
+      if ([controller hasDesktopObject])
+      {
+         return controller;
+      }
+   }
+   
+   // current key window isn't a webview or doesn't have desktop hooks; use the
+   // main window
+   return [MainFrameController instance];
 }
 
 + (void) activateNamedWindow: (NSString*) name
@@ -71,6 +131,12 @@ static PendingSatelliteWindow pendingWindow_;
       [[controller window] makeKeyAndOrderFront: self];
 }
 
++ (void) closeNamedWindow: (NSString *)name
+{
+   WebViewController* controller = [self windowNamed: name];
+   if (controller)
+      [[controller window] close];
+}
 
 - (WebView*) webView
 {
@@ -82,6 +148,8 @@ static PendingSatelliteWindow pendingWindow_;
    [name_ release];
    [webView_ release];
    [baseUrl_ release];
+   [viewerUrl_ release];
+   [shinyDialogUrl_ release];
    [super dealloc];
 }
 
@@ -95,9 +163,14 @@ static PendingSatelliteWindow pendingWindow_;
 - (id)initWithURLRequest: (NSURLRequest*) request
                     name: (NSString*) name
               clientName: (NSString*) clientName
+   allowExternalNavigate: (bool) allowExternalNavigate
 {
    // record base url
    baseUrl_ = [[request URL] retain];
+   
+   // indicate whether this window is permitted to load external (non-local)
+   // URLs
+   allowExternalNav_ = allowExternalNavigate;
    
    // create window and become it's delegate
    NSRect frameRect =  NSMakeRect(20, 20, 1024, 768);
@@ -119,12 +192,13 @@ static PendingSatelliteWindow pendingWindow_;
          [self setWindowFrameAutosaveName: name];
       
       // create web view, save it as a member, and register as it's delegate,
+      
       webView_ = [[WebViewWithKeyEquiv alloc] initWithFrame: frameRect];
-      [webView_ setUIDelegate: self];
-      [webView_ setFrameLoadDelegate: self];
-      [webView_ setResourceLoadDelegate: self];
-      [webView_ setPolicyDelegate: self];
-      [webView_ setKeyEquivDelegate: self];
+      [webView_ setUIDelegate: (id) self];
+      [webView_ setFrameLoadDelegate: (id) self];
+      [webView_ setResourceLoadDelegate: (id) self];
+      [webView_ setPolicyDelegate: (id) self];
+      [webView_ setKeyEquivDelegate: (id) self];
       
       // respect the current zoom level
       [self syncZoomLevel];
@@ -154,7 +228,7 @@ static PendingSatelliteWindow pendingWindow_;
          clientName_ = [clientName copy];
       }
       
-      // set fullscreen mode (defualt to non-primary)
+      // set fullscreen mode (default to non-primary)
       desktop::utils::enableFullscreenMode(window, false);
       
    }
@@ -180,22 +254,33 @@ static PendingSatelliteWindow pendingWindow_;
 - (void) syncZoomLevel
 {
    // reset to a known baseline
-   [webView_ resetPageZoom: self];
+   [self adjustZoomLevel: 0];
    
    // get the zoom level
    int zoomLevel = desktop::options().zoomLevel();
-   
-   // zoom in
-   if (zoomLevel > 0)
+  
+   // apply it to the view
+   [self adjustZoomLevel: zoomLevel];
+}
+
+- (void) adjustZoomLevel: (int) zoomLevel
+{
+   // reset
+   if (zoomLevel == 0)
    {
-      for (int i=0; i<zoomLevel; i++)
+      [webView_ resetPageZoom: self];
+   }
+   // zoom in
+   else if (zoomLevel > 0)
+   {
+      for (int i=0; i < zoomLevel; i++)
          [webView_ zoomPageIn: self];
    }
    // zoom out
    else if (zoomLevel < 0)
    {
       zoomLevel = std::abs(zoomLevel);
-      for (int i=0; i<zoomLevel; i++)
+      for (int i = 0; i < zoomLevel; i++)
          [webView_ zoomPageOut: self];
    }
 }
@@ -214,17 +299,16 @@ static PendingSatelliteWindow pendingWindow_;
          return;
       }
       
-      // extract the authority (domain and port) from the URL; we'll agree to
-      // serve requests for the viewer pane that match this prefix.
-      // e.g. for http://foo:8402/bar/baz.html, extract http://foo:8402/
-      NSURL* viewerUrl = [NSURL URLWithString: url];
-      NSString* port = @"";
-      if ([viewerUrl port] != nil) {
-         port = [NSString stringWithFormat: @":%@", [viewerUrl port]];
-      }
-      NSString* prefix = [NSString stringWithFormat: @"%@://%@%@/",
-                          [viewerUrl scheme], [viewerUrl host], port];
-      viewerUrl_ = [prefix retain];
+      viewerUrl_ = [authorityFromUrl(url) retain];
+   }
+}
+
+- (void) setShinyDialogURL:(NSString *) url
+{
+   if (url != shinyDialogUrl_)
+   {
+      [shinyDialogUrl_ release];
+      shinyDialogUrl_ = [authorityFromUrl(url) retain];
    }
 }
 
@@ -288,7 +372,6 @@ runJavaScriptAlertPanelWithMessage: (NSString *) message
    [frameView printOperationWithPrintInfo: [NSPrintInfo sharedPrintInfo]];
    [printOperation runOperation];
 }
-
 
 // WebViewController is a self-freeing object so free it when the window closes
 - (void)windowWillClose:(NSNotification *) notification
@@ -383,8 +466,20 @@ runJavaScriptAlertPanelWithMessage: (NSString *) message
    {
       [listener use];
    }
+   else if (isLocal && (shinyDialogUrl_ != nil) &&
+            [[url absoluteString] hasPrefix: shinyDialogUrl_])
+   {
+      [listener use];
+   }
    else
    {
+      // get the host name
+      NSString* hostName =
+         [webView stringByEvaluatingJavaScriptFromString: @"window.location.host"];
+      BOOL isSameDomain = false;
+      if (hostName)
+         isSameDomain = [[url host] hasPrefix: hostName];
+      
       // perform a base64 download if necessary
       WebNavigationType navType = (WebNavigationType)[[actionInformation
                         objectForKey:WebActionNavigationTypeKey] intValue];
@@ -395,14 +490,28 @@ runJavaScriptAlertPanelWithMessage: (NSString *) message
          [self handleBase64Download: url
                          forElement: [actionInformation
                                       objectForKey:WebActionElementKey]];
+         [listener ignore];
       }
-      // show external links in a new window
-      else if (navType == WebNavigationTypeLinkClicked)
+      // show external links to a new domain in a new window
+      else if (navType == WebNavigationTypeLinkClicked && !isSameDomain)
       {
          desktop::utils::browseURL(url);
+         [listener ignore];
       }
-      
-      [listener ignore];
+      // allow embedding videos from whitelisted sources
+      else if ([host hasSuffix: @".youtube.com"] ||
+               [host hasSuffix: @".vimeo.com"]   ||
+               [host hasSuffix: @".ch9.ms"])
+      {
+         [listener use];
+      }
+      else
+      {
+         if (allowExternalNav_)
+            [listener use];
+         else
+            [listener ignore];
+      }
    }
 }
 
@@ -439,12 +548,15 @@ decidePolicyForMIMEType: (NSDictionary *) actionInformation
        decisionListener: (id < WebPolicyDecisionListener >)listener
 {
    
-   // get the response; if it isn't a NSHTTPURLResponse, ignore it (we need
-   // access to the headers below)
+   // get the response; if it isn't a NSHTTPURLResponse, don't process it here
+   // (we need access to the headers below)
    NSHTTPURLResponse* response = (NSHTTPURLResponse*)
                                  [[frame provisionalDataSource] response];
    if (![response isKindOfClass: [NSHTTPURLResponse class]])
+   {
+      [listener use];
       return;
+   }
 
    // get the Content-Disposition header to see if this file is intended to be
    // downloaded
@@ -457,10 +569,16 @@ decidePolicyForMIMEType: (NSDictionary *) actionInformation
       NSSavePanel* attSavePanel = [NSSavePanel savePanel];
       if ([self runSavePanelForFilename: attSavePanel filename: filename])
       {
+         // save the file ourselves and don't handle it in the webview
          desktop::downloadAndSaveFile(request,
                                       [[attSavePanel URL] path]);
+         [listener ignore];
+         return;
       }
    }
+   
+   // for other types, proceed normally
+   [listener use];
 }
 
 - (NSWindow*) uiWindow
@@ -472,43 +590,47 @@ decidePolicyForMIMEType: (NSDictionary *) actionInformation
 - (WebView *) webView: (WebView *) sender
               createWebViewWithRequest:(NSURLRequest *)request
 {
-   // check for a pending satellite request
+   NSString* name = nil;
+   bool isSatellite = false;
+   bool allowExternalNavigate = false;
+
+   // check to see if this window is one we're expecting
    if (!pendingWindow_.empty())
    {
-      // capture and then clear the pending window
-      PendingSatelliteWindow pendingWindow = pendingWindow_;
-      pendingWindow_ = PendingSatelliteWindow();
-      
-      // get the name
-      NSString* name =
-        [NSString stringWithUTF8String: pendingWindow.name.c_str()];
-     
-      // check for an existing window
+      PendingWindow pendingWindow = pendingWindow_;
+      pendingWindow_ = PendingWindow();
+      name = [NSString stringWithUTF8String: pendingWindow.name.c_str()];
+      isSatellite = pendingWindow.isSatellite;
+      allowExternalNavigate = pendingWindow.allowExternalNavigate;
+
+      // check for an existing window, and activate it
       WebViewController* controller = [namedWindows_ objectForKey: name];
       if (controller)
       {
          [[controller window] makeKeyAndOrderFront: self];
          return nil;
       }
-      else
-      {
-         // self-freeing so don't auto-release
-         SatelliteController* satelliteController =
-         [[SatelliteController alloc] initWithURLRequest: request
-                                                    name: name
-                                              clientName: name];
-         
-         // return it
-         return [satelliteController webView];
-      }
+   }
+   
+   // create the appropriate controller type; these are self-freeing so don't
+   // auto-release
+   if (isSatellite)
+   {
+      SatelliteController* satelliteController =
+      [[SatelliteController alloc] initWithURLRequest: request
+                                                 name: name
+                                           clientName: name
+                                allowExternalNavigate: allowExternalNavigate];
+      
+      return [satelliteController webView];
    }
    else
    {
-      // self-freeing so don't auto-release
       SecondaryWindowController * controller =
          [[SecondaryWindowController alloc] initWithURLRequest: request
-                                                          name: nil
-                                                    clientName: nil];
+                                                          name: name
+                                                    clientName: name
+                                         allowExternalNavigate: allowExternalNavigate];
       return [controller webView];
    }
 }
@@ -528,16 +650,45 @@ decidePolicyForMIMEType: (NSDictionary *) actionInformation
    std::string secret = desktop::options().sharedSecret();
    [mutableRequest setValue: [NSString stringWithUTF8String: secret.c_str()]
                    forHTTPHeaderField:@"X-Shared-Secret"];
-   [mutableRequest setTimeoutInterval: 300];
+   [mutableRequest setTimeoutInterval: 3600];
    return mutableRequest;
 }
 
 - (void) registerDesktopObject
 {
    id win = [webView_ windowScriptObject];
-   GwtCallbacks* gwtCallbacks =
+   gwtCallbacks_ =
             [[[GwtCallbacks alloc] initWithUIDelegate: self] autorelease];
-   [win setValue: gwtCallbacks forKey:@"desktop"];
+   [win setValue: gwtCallbacks_ forKey:@"desktop"];
+}
+
+- (BOOL) hasDesktopObject
+{
+   WebScriptObject* script = [webView_ windowScriptObject];
+   if (script == nil)
+      return NO;
+   
+   return [[script evaluateWebScript: @"!!window.desktopHooks"] boolValue];
+}
+
+- (id) invokeCommand: (NSString*) command
+{
+   static NSArray* noRefocusCommands = [[NSArray alloc] initWithObjects:
+                                        @"undoDummy", @"redoDummy",
+                                        @"cutDummy", @"copyDummy", @"pasteDummy",
+                                        nil];
+   
+   if (![noRefocusCommands containsObject: command])
+      [[self window] makeKeyAndOrderFront: self];
+   
+   return [self evaluateJavaScript: [NSString stringWithFormat: @"window.desktopHooks.invokeCommand(\"%@\");",
+                                     command]];
+}
+
+- (BOOL) isCommandEnabled: (NSString*) command
+{
+   return [[self evaluateJavaScript: [NSString stringWithFormat: @"window.desktopHooks.isCommandEnabled(\"%@\");",
+                                      command]] boolValue];
 }
 
 - (BOOL) performKeyEquivalent: (NSEvent *)theEvent
@@ -549,19 +700,34 @@ decidePolicyForMIMEType: (NSDictionary *) actionInformation
          (NSDeviceIndependentModifierFlagsMask ^ NSAlphaShiftKeyMask);
    if ([chr isEqualToString: @"w"] && mod == NSCommandKeyMask)
    {
-      [[webView_ window] performClose: self];
+      if ([clientName_ hasPrefix: SOURCE_WINDOW_PREFIX])
+      {
+         // in the source window, cmd+w should close the current tab
+         [self invokeCommand: @"closeSourceDoc"];
+      }
+      else
+      {
+         // cmd+w closes other satellites
+         [[webView_ window] performClose: self];
+      }
       return YES;
    }
+   
+   // check for empty selection (we don't want to blast the clipboard when
+   // cutting or copying and there's no text)
+   BOOL emptySelection = [[webView_ stringByEvaluatingJavaScriptFromString: @"window.desktopHooks.isSelectionEmpty()"] boolValue];
 
    // Without these, secondary/satellite windows don't respond to clipboard shortcuts
    if ([chr isEqualToString: @"x"] && mod == NSCommandKeyMask)
    {
-      [webView_ cut: self];
+      if (!emptySelection)
+         [webView_ cut: self];
       return YES;
    }
    if ([chr isEqualToString: @"c"] && mod == NSCommandKeyMask)
    {
-      [webView_ copy: self];
+      if (!emptySelection)
+         [webView_ copy: self];
       return YES;
    }
    if ([chr isEqualToString: @"v"] && mod == NSCommandKeyMask)
@@ -643,7 +809,7 @@ decidePolicyForMIMEType: (NSDictionary *) actionInformation
                         filename: (NSString*) filename
 {
    [panel setNameFieldStringValue: filename];
-   [panel beginSheetModalForWindow: [self window] completionHandler: nil];
+   [panel beginSheetModalForWindow: [self window] completionHandler: ^(NSInteger result) {}];
    long int result = [panel runModal];
    [NSApp endSheet: panel];
    
@@ -678,7 +844,7 @@ decidePolicyForMIMEType: (NSDictionary *) actionInformation
    [panel setCanChooseFiles: true];
    [panel setCanChooseDirectories: false];
    [panel beginSheetModalForWindow: [self uiWindow]
-                 completionHandler: nil];
+                 completionHandler: ^(NSInteger result) {}];
    long int result = [panel runModal];
    @try
    {
@@ -699,5 +865,8 @@ decidePolicyForMIMEType: (NSDictionary *) actionInformation
 
 @end
 
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
 
 

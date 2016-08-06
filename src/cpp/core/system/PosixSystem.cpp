@@ -81,6 +81,7 @@
 
 #include "config.h"
 
+namespace rstudio {
 namespace core {
 namespace system {
 
@@ -136,6 +137,9 @@ int signalForType(SignalType type)
 
       case SigChld:
          return SIGCHLD;
+
+      case SigTerm:
+         return SIGTERM;
          
       default:
          return -1;
@@ -166,7 +170,11 @@ Error realPath(const std::string& path, FilePath* pRealPath)
    char buffer[PATH_MAX*2];
    char* realPath = ::realpath(path.c_str(), buffer);
    if (realPath == NULL)
-      return systemError(errno, ERROR_LOCATION);
+   {
+      Error error = systemError(errno, ERROR_LOCATION);
+      error.addProperty("path", path);
+      return error;
+   }
   *pRealPath = FilePath(realPath);
    return Success();
 }
@@ -431,6 +439,11 @@ void sendSignalToSelf(SignalType signal)
 std::string username()
 {
    return system::getenv("USER");
+}
+
+unsigned int effectiveUserId()
+{
+   return ::geteuid();
 }
 
 FilePath userHomePath(std::string envOverride)
@@ -1138,9 +1151,6 @@ void printCoreDumpable(const std::string& context)
    std::cerr << ostr.str();
 }
 
-
-namespace {
-
 void setProcessLimits(ProcessLimits limits)
 {
    // memory limit
@@ -1210,6 +1220,11 @@ void setProcessLimits(ProcessLimits limits)
 #endif
 }
 
+
+
+namespace {
+
+
 void copyEnvironmentVar(const std::string& name,
                         core::system::Options* pVars,
                         bool evenIfEmpty = false)
@@ -1276,6 +1291,7 @@ Error waitForProcessExit(PidType processId)
 Error launchChildProcess(std::string path,
                          std::string runAsUser,
                          ProcessConfig config,
+                         ProcessConfigFilter configFilter,
                          PidType* pProcessId)
 {
    pid_t pid = ::fork();
@@ -1377,6 +1393,10 @@ Error launchChildProcess(std::string path,
       core::system::setenv(&env, "LOGNAME", user.username);
       core::system::setenv(&env, "HOME", user.homeDirectory);
       copyEnvironmentVar("SHELL", &env);
+
+      // apply config filter if we have one
+      if (configFilter)
+         configFilter(user, &config);
 
       // add custom environment vars (overriding as necessary)
       for (core::system::Options::const_iterator it = config.environment.begin();
@@ -1779,4 +1799,5 @@ Error restorePriv()
 
 } // namespace system
 } // namespace core
+} // namespace rstudio
 

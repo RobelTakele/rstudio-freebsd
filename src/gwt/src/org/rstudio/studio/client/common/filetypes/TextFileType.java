@@ -23,9 +23,10 @@ import org.rstudio.core.client.files.FileSystemItem;
 import org.rstudio.core.client.regex.Pattern;
 import org.rstudio.studio.client.application.events.EventBus;
 import org.rstudio.studio.client.common.filetypes.events.OpenSourceFileEvent;
-import org.rstudio.studio.client.common.filetypes.events.OpenSourceFileEvent.NavigationMethod;
+import org.rstudio.studio.client.common.filetypes.model.NavigationMethods;
 import org.rstudio.studio.client.common.reditor.EditorLanguage;
 import org.rstudio.studio.client.workbench.commands.Commands;
+import org.rstudio.studio.client.workbench.views.source.SourceWindowManager;
 import org.rstudio.studio.client.workbench.views.source.editors.text.ace.Token;
 import org.rstudio.studio.client.workbench.views.source.editors.text.ace.spelling.CharClassifier;
 import org.rstudio.studio.client.workbench.views.source.editors.text.ace.spelling.TokenPredicate;
@@ -34,8 +35,6 @@ import java.util.HashSet;
 
 public class TextFileType extends EditableFileType
 {
-   public static final String R_LANG_MODE = "R";
-
    TextFileType(String id,
                 String label,
                 EditorLanguage editorLanguage,
@@ -52,7 +51,8 @@ public class TextFileType extends EditableFileType
                 boolean canExecuteChunks,
                 boolean canAutoIndent,
                 boolean canCheckSpelling,
-                boolean canShowScopeTree)
+                boolean canShowScopeTree,
+                boolean canPreviewFromR)
    {
       super(id, label, defaultIcon);
       editorLanguage_ = editorLanguage;
@@ -69,12 +69,13 @@ public class TextFileType extends EditableFileType
       canAutoIndent_ = canAutoIndent;
       canCheckSpelling_ = canCheckSpelling;
       canShowScopeTree_ = canShowScopeTree;
+      canPreviewFromR_ = canPreviewFromR;
    }
 
    @Override
    public void openFile(FileSystemItem file,
                         FilePosition position,
-                        NavigationMethod navMethod,
+                        int navMethod,
                         EventBus eventBus)
    {
       eventBus.fireEvent(new OpenSourceFileEvent(file,
@@ -86,7 +87,7 @@ public class TextFileType extends EditableFileType
    @Override
    public void openFile(FileSystemItem file, EventBus eventBus)
    {
-      openFile(file, null, NavigationMethod.Default, eventBus);
+      openFile(file, null, NavigationMethods.DEFAULT, eventBus);
    }
 
    public EditorLanguage getEditorLanguage()
@@ -173,6 +174,21 @@ public class TextFileType extends EditableFileType
    {
       return canShowScopeTree_;
    }
+   
+   public boolean canGoNextPrevSection()
+   {
+      return isRmd() || isRpres();
+   }
+  
+   public boolean canPreviewFromR()
+   {
+      return canPreviewFromR_;
+   }
+   
+   public boolean isText()
+   {
+      return FileTypeRegistry.TEXT.getTypeId().equals(getTypeId());
+   }
 
    public boolean isR()
    {
@@ -222,6 +238,11 @@ public class TextFileType extends EditableFileType
       return FileTypeRegistry.MARKDOWN.getTypeId().equals(getTypeId());
    }
    
+   public boolean isRNotebook()
+   {
+      return FileTypeRegistry.RNOTEBOOK.getTypeId().equals(getTypeId());
+   }
+   
    public boolean isC()
    {
       return EditorLanguage.LANG_CPP.equals(getEditorLanguage());
@@ -235,6 +256,21 @@ public class TextFileType extends EditableFileType
    public boolean isCpp()
    {
       return false;
+   }
+   
+   public boolean isStan()
+   {
+      return EditorLanguage.LANG_STAN.equals(getEditorLanguage());
+   }
+   
+   public String getPreviewButtonText()
+   {
+      return "Preview";
+   }
+   
+   public String createPreviewCommand(String file)
+   {
+      return null;
    }
    
    public boolean isScript()
@@ -261,6 +297,20 @@ public class TextFileType extends EditableFileType
       results.add(commands.vcsViewOnGitHub());
       results.add(commands.vcsBlameOnGitHub());
       results.add(commands.goToLine());
+      results.add(commands.expandSelection());
+      results.add(commands.shrinkSelection());
+      
+      if (canExecuteCode() || isC())
+      {
+         results.add(commands.reindent());
+         results.add(commands.showDiagnosticsActiveDocument());
+      }
+      
+      if (canExecuteCode() && !isC())
+      {
+         results.add(commands.executeCurrentFunction());
+      }
+      
       if (canExecuteCode())
       {
          results.add(commands.executeCode());
@@ -269,26 +319,39 @@ public class TextFileType extends EditableFileType
          results.add(commands.extractFunction());
          results.add(commands.extractLocalVariable());
          results.add(commands.commentUncomment());
-         results.add(commands.reindent());
          results.add(commands.reflowComment());
+         results.add(commands.reformatCode());
+         results.add(commands.renameInScope());
+         results.add(commands.profileCode());
+         results.add(commands.profileCodeWithoutFocus());
       }
+      
       if (canExecuteAllCode())
       {
          results.add(commands.executeAllCode());
          results.add(commands.sourceActiveDocument());
-         results.add(commands.sourceActiveDocumentWithEcho());
+         // file types with chunks take the Cmd+Shift+Enter shortcut
+         // for run current chunk
+         if (!canExecuteChunks())
+            results.add(commands.sourceActiveDocumentWithEcho());
       }
+      
       if (canExecuteToCurrentLine())
       {
          results.add(commands.executeToCurrentLine());
          results.add(commands.executeFromCurrentLine());
-         results.add(commands.executeCurrentFunction());
          results.add(commands.executeCurrentSection());
+         results.add(commands.profileCode());
       }
       if (canKnitToHTML())
       {
-         results.add(commands.usingRMarkdownHelp());
          results.add(commands.editRmdFormatOptions());
+         results.add(commands.knitWithParameters());
+         results.add(commands.restartRClearOutput());
+         results.add(commands.restartRRunAllChunks());
+         results.add(commands.notebookCollapseAllOutput());
+         results.add(commands.notebookExpandAllOutput());
+         results.add(commands.executeSetupChunk());
       }
       if (canKnitToHTML() || canCompileNotebook())
       {
@@ -311,6 +374,7 @@ public class TextFileType extends EditableFileType
       {
          results.add(commands.insertChunk());
          results.add(commands.executePreviousChunks());
+         results.add(commands.executeSubsequentChunks());
          results.add(commands.executeCurrentChunk());
          results.add(commands.executeNextChunk());
       }
@@ -318,6 +382,15 @@ public class TextFileType extends EditableFileType
       {
          results.add(commands.checkSpelling());
       }
+      if (canShowScopeTree())
+      {
+         results.add(commands.toggleDocumentOutline());
+      }
+      
+      results.add(commands.goToNextSection());
+      results.add(commands.goToPrevSection());
+      results.add(commands.goToNextChunk());
+      results.add(commands.goToPrevChunk());
       results.add(commands.findReplace());
       results.add(commands.findNext());
       results.add(commands.findPrevious());
@@ -326,6 +399,10 @@ public class TextFileType extends EditableFileType
       results.add(commands.setWorkingDirToActiveDoc());
       results.add(commands.debugDumpContents());
       results.add(commands.debugImportDump());
+      results.add(commands.popoutDoc());
+      if (!SourceWindowManager.isMainSourceWindow())
+         results.add(commands.returnDocToMain());
+
       return results;
    }
 
@@ -390,7 +467,8 @@ public class TextFileType extends EditableFileType
    private final boolean canExecuteChunks_;
    private final boolean canAutoIndent_;
    private final boolean canCheckSpelling_;
-   private boolean canShowScopeTree_;
+   private final boolean canShowScopeTree_;
+   private final boolean canPreviewFromR_;
    private final String defaultExtension_;
 
    private static Pattern reTextType_ = Pattern.create("\\btext\\b");

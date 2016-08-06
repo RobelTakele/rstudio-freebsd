@@ -17,11 +17,9 @@
 
 .enableCodeIndexing {
    margin-left: 5px;
+   margin-bottom: 13px;
 }
 
-.enableCodeIndexing input[type=checkbox] {
-   margin-bottom: 13px; 
-}
 
 .useSpacesForTab {
    margin-left: 5px;
@@ -38,9 +36,14 @@
 }
 
 .encodingChooser {
-   margin-top: 13px; 
+   margin-top: 3px; 
    margin-left: 10px;
    margin-bottom: 15px;
+}
+
+.lineEndings {
+   margin-top: 14px;
+   margin-bottom: 12px;
 }
 
 .vcsSelectExtraSpaced {
@@ -62,6 +65,10 @@
 .vcsNoOriginUrl {
    width: 150px;
    color: #494949;
+}
+
+.directorySelector {
+   width: 375px;
 }
 
 .buildToolsAdditionalArguments {
@@ -88,6 +95,20 @@
 
 .buildToolsDevtools {
    margin-bottom: 10px;
+}
+
+.previewWebsite {
+   margin-top: 8px;
+}
+
+.infoLabel {
+   margin-top: 6px;
+   font-style: italic;
+   font-size: 0.9em; 
+}
+
+.websiteOutputFormat {
+   margin-top: 16px;
 }
 
 

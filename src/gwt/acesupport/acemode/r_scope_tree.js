@@ -12,10 +12,12 @@
  * AGPL (http://www.gnu.org/licenses/agpl-3.0.txt) for more details.
  *
  */
-define('mode/r_scope_tree', function(require, exports, module) {
+define('mode/r_scope_tree', ["require", "exports", "module"], function(require, exports, module) {
 
+   var $debuggingEnabled = false;
    function debuglog(str) {
-      //console.log(str);
+      if ($debuggingEnabled)
+         console.log(str);
    }
 
    function assert(condition, label) {
@@ -30,24 +32,108 @@ define('mode/r_scope_tree', function(require, exports, module) {
    }
 
 
-   var ScopeManager = function() {
+   // The 'ScopeNodeFactory' is a constructor of scope nodes -- it exists so that
+   // we can properly perform inheritance for specializations of the ScopeNode 'class'.
+   var ScopeManager = function(ScopeNodeFactory) {
+      this.$ScopeNodeFactory = ScopeNodeFactory;
       this.parsePos = {row: 0, column: 0};
-      this.$root = new ScopeNode("(Top Level)", this.parsePos, null,
+      this.$root = new this.$ScopeNodeFactory("(Top Level)", this.parsePos, null,
                                  ScopeNode.TYPE_ROOT);
    };
 
    (function() {
 
-      this.onSectionHead = function(sectionLabel, sectionPos) {
-         var existingScopes = this.getActiveScopes(sectionPos);
-         if (existingScopes.length == 2 && existingScopes[1].isSection()) {
-            this.$root.closeScope(sectionPos, ScopeNode.TYPE_SECTION);
-         }
-         else if (existingScopes.length != 1)
-            return;
+      this.onSectionHead = function(sectionLabel, sectionPos, attributes) {
 
-         this.$root.addNode(new ScopeNode(sectionLabel, sectionPos, sectionPos,
-                                          ScopeNode.TYPE_SECTION));
+         if (typeof attributes == "undefined")
+            attributes = {};
+
+         var existingScopes = this.getActiveScopes(sectionPos);
+
+         // A section will close a previous section that exists as part
+         // of that parent node (if it exists).
+         if (existingScopes.length > 1)
+         {
+            var parentNode = existingScopes[existingScopes.length - 2];
+            var children = parentNode.$children;
+            for (var i = children.length - 1; i >= 0; i--)
+            {
+               if (children[i].isSection())
+               {
+                  this.$root.closeScope(sectionPos, ScopeNode.TYPE_SECTION);
+                  break;
+               }
+            }
+         }
+
+         var node = new this.$ScopeNodeFactory(
+            sectionLabel,
+            sectionPos,
+            sectionPos,
+            ScopeNode.TYPE_SECTION,
+            attributes
+         );
+
+         this.$root.addNode(node);
+      };
+
+      this.onSectionEnd = function(position)
+      {
+         this.$root.closeScope(position, ScopeNode.TYPE_SECTION);
+      };
+
+      // A little tricky: a new Markdown header will implicitly
+      // close all previously open headers of greater or equal depth.
+      //
+      // For example:
+      //
+      //    # Top Level
+      //    ## Sub Section
+      //    ### Sub-sub Section
+      //    ## Sub Section Two
+      //
+      // In the above case, the '## Sub Section Two' header will close both the
+      // '### Sub-sub section' as well as the '## Sub-Section'
+      this.closeMarkdownHeaderScopes = function(node, position, depth)
+      {
+         var children = node.$children;
+         for (var i = children.length - 1; i >= 0; i--)
+         {
+            var child = children[i];
+            if (child.isSection() && child.attributes.depth >= depth)
+            {
+               debuglog("Closing Markdown scope: '" + child.label + "'");
+               this.$root.closeScope(position, ScopeNode.TYPE_SECTION);
+               if (child.attributes.depth === depth)
+                  return;
+
+               if (node.isRoot() || node == null)
+                  return;
+
+               return this.closeMarkdownHeaderScopes(node.parentScope, position, depth);
+            }
+         }
+
+         if (node.isRoot() || node == null)
+            return;
+         
+         this.closeMarkdownHeaderScopes(node.parentScope, position, depth);
+      };
+
+      this.onMarkdownHead = function(label, labelStartPos, labelEndPos, depth)
+      {
+         debuglog("Adding Markdown header: '" + label + "' [" + depth + "]");
+         var scopes = this.getActiveScopes(labelStartPos);
+         if (scopes.length > 1)
+            this.closeMarkdownHeaderScopes(scopes[scopes.length - 2], labelStartPos, depth);
+
+         this.$root.addNode(new this.$ScopeNodeFactory(
+            label,
+            labelEndPos,
+            labelStartPos,
+            ScopeNode.TYPE_SECTION,
+            {depth: depth, isMarkdown: true}
+         ));
       };
 
       this.onChunkStart = function(chunkLabel, label, chunkStartPos, chunkPos) {
@@ -57,7 +143,7 @@ define('mode/r_scope_tree', function(require, exports, module) {
             debuglog("chunk-scope implicit end: " + prev.label);
 
          debuglog("adding chunk-scope " + label);
-         var node = new ScopeNode(label, chunkPos, chunkStartPos,
+         var node = new this.$ScopeNodeFactory(label, chunkPos, chunkStartPos,
                                   ScopeNode.TYPE_CHUNK);
          node.chunkLabel = chunkLabel;
          this.$root.addNode(node);
@@ -74,16 +160,32 @@ define('mode/r_scope_tree', function(require, exports, module) {
          return closed;
       };
 
-      this.onFunctionScopeStart = function(label, functionStartPos, scopePos) {
+      this.onFunctionScopeStart = function(label, functionStartPos, scopePos, name, args) {
+         
          debuglog("adding function brace-scope " + label);
-         this.$root.addNode(new ScopeNode(label, scopePos, functionStartPos,
-                                          ScopeNode.TYPE_BRACE));
+         this.$root.addNode(
+            new this.$ScopeNodeFactory(
+               label,
+               scopePos,
+               functionStartPos,
+               ScopeNode.TYPE_BRACE,
+               {
+                  "name": name,
+                  "args": args
+               }
+            )
+         );
+         
          this.printScopeTree();
+      };
+
+      this.onNamedScopeStart = function(label, pos) {
+         this.$root.addNode(new this.$ScopeNodeFactory(label, pos, null, ScopeNode.TYPE_BRACE));
       };
 
       this.onScopeStart = function(pos) {
          debuglog("adding anon brace-scope");
-         this.$root.addNode(new ScopeNode(null, pos, null,
+         this.$root.addNode(new this.$ScopeNodeFactory(null, pos, null,
                                           ScopeNode.TYPE_BRACE));
          this.printScopeTree();
       };
@@ -111,6 +213,10 @@ define('mode/r_scope_tree', function(require, exports, module) {
                                                            functionName);
       };
 
+      this.getFunctionsInScope = function(pos, tokenizer) {
+         return this.$root.getFunctionsInScope(pos, tokenizer);
+      };
+
       this.invalidateFrom = function(pos) {
          pos = {row: Math.max(0, pos.row-1), column: 0};
          debuglog("Invalidate from " + pos.row + ", " + pos.column);
@@ -119,37 +225,99 @@ define('mode/r_scope_tree', function(require, exports, module) {
          this.printScopeTree();
       };
 
+      function $getChunkCount(node) {
+         count = node.isChunk() ? 1 : 0;
+         var children = node.$children || [];
+         for (var i = 0; i < children.length; i++)
+            count += $getChunkCount(children[i]);
+         return count;
+      }
+
+      this.getChunkCount = function(count) {
+         return $getChunkCount(this.$root);
+      };
+
       this.getTopLevelScopeCount = function() {
          return this.$root.$children.length;
       };
 
       this.printScopeTree = function() {
+         if (!$debuggingEnabled)
+            return;
+         
          this.$root.printDebug();
+      };
+
+      this.getAllFunctionScopes = function() {
+         var array = [];
+         var node = this.$root;
+         doGetAllFunctionScopes(node, array);
+         return array;
+      };
+
+      var doGetAllFunctionScopes = function(node, array) {
+         if (node.isFunction())
+         {
+            array.push(node);
+         }
+         var children = node.$children;
+         for (var i = 0; i < children.length; i++)
+         {
+            doGetAllFunctionScopes(children[i], array);
+         }
+         
       };
 
    }).call(ScopeManager.prototype);
 
 
 
-   var ScopeNode = function(label, start, preamble, scopeType) {
+   var ScopeNode = function(label, start, preamble, scopeType, attributes) {
+
+      // The label associated with the scope.
       this.label = label;
 
-      // The position of the open brace
+      // The 'start' and the 'preamble' both denote where the node begins;
+      // however, the 'start' is where parsing for the scope should begin (for
+      // incremental scope tree builds).
+      //
+      // For example, given the function definition:
+      //
+      //    foo <- function(a, b, c) {
+      //    ^ -- preamble
+      //                             ^ -- start
+      //
+      // In general, these should be supplied separately -- otherwise, the
+      // scope tree builder runs the risk of improperly adding duplicates of a
+      // node when change events are emitted.
       this.start = start;
 
-      // The position of the start of the function declaration (possibly
-      // with added whitespace)
+      // Validate that the preamble lies before the start.
+      if (start && preamble)
+      {
+         if (preamble.row > start.row ||
+             (preamble.row === start.row && preamble.column > start.column))
+         {
+            throw new Error("Malformed preamble: should lie before start position");
+         }
+      }
+
       this.preamble = preamble || start;
 
-      // The position of the close brance (possibly with added whitespace)
+      // The end position of the scope.
       this.end = null;
 
-      // Whether this scope is
+      // The type of this scope (e.g. a braced scope, a section, and so on)
       this.scopeType = scopeType;
-      
-      // A pointer to the parent scope (if any) 
+
+      // A pointer to the parent scope (if any; only the root scope should
+      // have no parent)
       this.parentScope = null;
 
+      // Generalized attributes (an object with names)
+      this.attributes = attributes || {};
+
+      // Child nodes
       this.$children = [];
    };
 
@@ -168,9 +336,24 @@ define('mode/r_scope_tree', function(require, exports, module) {
          return this.isBrace() && !!this.label;
       };
 
+      this.equals = function(node) {
+         if (this.scopeType !== node.scopeType ||
+             this.start.row !== node.start.row ||
+             this.start.column !== node.start.column)
+         {
+            return false;
+         }
+
+         return true;
+      };
+
       this.addNode = function(node) {
          assert(!node.end, "New node is already closed");
          assert(node.$children.length == 0, "New node already had children");
+
+         // Avoid adding duplicate nodes.
+         if (this.equals(node))
+            return;
 
          // It's possible for this node to be already closed. If that's the
          // case, we need to open it back up. Example:
@@ -210,12 +393,12 @@ define('mode/r_scope_tree', function(require, exports, module) {
 
          // NB: This function will never close the "this" node. This is by
          // design as we don't want the top-level node to ever be closed.
-
+         
          // No children
          if (this.$children.length == 0)
             return null;
 
-         var lastNode = this.$children[this.$children.length-1]
+         var lastNode = this.$children[this.$children.length-1];
 
          // Last child is already closed
          if (lastNode.end)
@@ -248,7 +431,7 @@ define('mode/r_scope_tree', function(require, exports, module) {
             return;
          lastNode.$forceDescendantsClosed(pos);
          lastNode.end = pos;
-      }
+      };
 
       // Returns array of nodes that contain the position, from outermost to
       // innermost; or null if no nodes contain it.
@@ -274,7 +457,7 @@ define('mode/r_scope_tree', function(require, exports, module) {
          var index = this.$binarySearch(pos);
          var stack = index >= 0 ? this.$children[index].$getFunctionStack(pos)
                                 : [];
-         if (this.label) {
+         if (this.isFunction()) {
             stack.push(this);
          }
          return stack;
@@ -293,6 +476,24 @@ define('mode/r_scope_tree', function(require, exports, module) {
          }
 
          return null;
+      };
+
+      // Get functions in scope. This returns an array of objects,
+      // one object for each function, of the form:
+      //
+      // [{"name": fn, "args": ["arg1", "arg2", ...]}]
+      //
+      this.getFunctionsInScope = function(pos) {
+         var stack = this.$getFunctionStack(pos);
+         var objects = [];
+         for (var i = 0; i < stack.length; i++)
+         {
+            objects.push({
+               "name": stack[i].attributes.name,
+               "args": stack[i].attributes.args.slice()
+            });
+         }
+         return objects;
       };
 
       // Invalidates everything after pos, and possibly some stuff before.
@@ -391,5 +592,6 @@ define('mode/r_scope_tree', function(require, exports, module) {
 
 
    exports.ScopeManager = ScopeManager;
+   exports.ScopeNode = ScopeNode;
 
 });

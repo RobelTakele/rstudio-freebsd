@@ -51,7 +51,8 @@ public class CodeFilesList extends Composite
       panel.add(labelPanel);
       
       HorizontalPanel dictionariesPanel = new HorizontalPanel();
-      listBox_ = new ListBox(false);
+      listBox_ = new ListBox();
+      listBox_.setMultipleSelect(true);
       listBox_.addStyleName(RES.styles().codeFilesListBox());
       listBox_.getElement().<SelectElement>cast().setSize(3);
       dictionariesPanel.add(listBox_);
@@ -118,13 +119,10 @@ public class CodeFilesList extends Composite
       @Override
       public void onClick(ClickEvent event)
       {
-         // get selected index
-         int index = listBox_.getSelectedIndex();
-         if (index != -1)
-            listBox_.removeItem(index);
+         while (listBox_.getSelectedIndex() != -1)
+            listBox_.removeItem(listBox_.getSelectedIndex());
       }
    };
- 
    
    private SmallButton createButton(String caption)
    {

@@ -21,12 +21,14 @@ import java.util.List;
 
 import com.google.gwt.core.client.JsArray;
 import com.google.gwt.core.client.JsArrayString;
+import com.google.gwt.event.shared.HandlerRegistration;
 import com.google.gwt.user.client.Command;
 import com.google.inject.Inject;
 
 import org.rstudio.core.client.CommandWithArg;
 import org.rstudio.core.client.Debug;
 import org.rstudio.core.client.JsArrayUtil;
+import org.rstudio.core.client.MessageDisplay;
 import org.rstudio.core.client.StringUtil;
 import org.rstudio.core.client.files.FileSystemItem;
 import org.rstudio.core.client.widget.Operation;
@@ -34,6 +36,7 @@ import org.rstudio.core.client.widget.OperationWithInput;
 import org.rstudio.core.client.widget.ProgressIndicator;
 import org.rstudio.studio.client.RStudioGinjector;
 import org.rstudio.studio.client.application.events.EventBus;
+import org.rstudio.studio.client.common.ConsoleDispatcher;
 import org.rstudio.studio.client.common.GlobalDisplay;
 import org.rstudio.studio.client.common.GlobalProgressDelayer;
 import org.rstudio.studio.client.common.SimpleRequestCallback;
@@ -43,12 +46,15 @@ import org.rstudio.studio.client.common.filetypes.TextFileType;
 import org.rstudio.studio.client.notebookv2.CompileNotebookv2Options;
 import org.rstudio.studio.client.notebookv2.CompileNotebookv2OptionsDialog;
 import org.rstudio.studio.client.notebookv2.CompileNotebookv2Prefs;
+import org.rstudio.studio.client.rmarkdown.RmdOutput;
 import org.rstudio.studio.client.rmarkdown.events.RenderRmdEvent;
 import org.rstudio.studio.client.rmarkdown.events.RenderRmdSourceEvent;
+import org.rstudio.studio.client.rmarkdown.events.RmdParamsReadyEvent;
 import org.rstudio.studio.client.rmarkdown.model.RMarkdownContext;
 import org.rstudio.studio.client.rmarkdown.model.RMarkdownServerOperations;
 import org.rstudio.studio.client.rmarkdown.model.RmdChosenTemplate;
 import org.rstudio.studio.client.rmarkdown.model.RmdCreatedTemplate;
+import org.rstudio.studio.client.rmarkdown.model.RmdExecutionState;
 import org.rstudio.studio.client.rmarkdown.model.RmdFrontMatter;
 import org.rstudio.studio.client.rmarkdown.model.RmdFrontMatterOutputOptions;
 import org.rstudio.studio.client.rmarkdown.model.RmdOutputFormat;
@@ -63,9 +69,11 @@ import org.rstudio.studio.client.rmarkdown.model.YamlTree;
 import org.rstudio.studio.client.server.ServerError;
 import org.rstudio.studio.client.server.ServerRequestCallback;
 import org.rstudio.studio.client.server.Void;
+import org.rstudio.studio.client.workbench.WorkbenchContext;
 import org.rstudio.studio.client.workbench.model.Session;
 import org.rstudio.studio.client.workbench.prefs.model.UIPrefs;
 import org.rstudio.studio.client.workbench.views.files.model.FilesServerOperations;
+import org.rstudio.studio.client.workbench.views.source.editors.text.ace.Position;
 import org.rstudio.studio.client.workbench.views.source.events.FileEditEvent;
 import org.rstudio.studio.client.workbench.views.source.model.DocUpdateSentinel;
 
@@ -96,6 +104,8 @@ public class TextEditingTargetRMarkdownHelper
                           GlobalDisplay globalDisplay,
                           EventBus eventBus,
                           UIPrefs prefs,
+                          ConsoleDispatcher consoleDispatcher,
+                          WorkbenchContext workbenchContext,
                           FileTypeCommands fileTypeCommands,
                           DependencyManager dependencyManager,
                           RMarkdownServerOperations server,
@@ -106,6 +116,8 @@ public class TextEditingTargetRMarkdownHelper
       globalDisplay_ = globalDisplay;
       eventBus_ = eventBus;
       prefs_ = prefs;
+      consoleDispatcher_ = consoleDispatcher;
+      workbenchContext_ = workbenchContext;
       dependencyManager_ = dependencyManager;
       server_ = server;
       fileServer_ = fileServer;
@@ -117,8 +129,7 @@ public class TextEditingTargetRMarkdownHelper
    {
       if (extendedType.length() == 0 && 
           fileType.isMarkdown() &&
-          !contents.contains("<!-- rmarkdown v1 -->") && 
-          session_.getSessionInfo().getRMarkdownPackageAvailable())
+          useRMarkdownV2(contents))
       {
          return "rmarkdown";
       }
@@ -133,10 +144,18 @@ public class TextEditingTargetRMarkdownHelper
           final boolean isShinyDoc,
           final CommandWithArg<RMarkdownContext> onReady)
    {
+      withRMarkdownPackage("R Markdown", userAction, isShinyDoc, onReady);
+   }
+
+   public void withRMarkdownPackage(
+          String progressCaption,
+          final String userAction, 
+          final boolean isShinyDoc,
+          final CommandWithArg<RMarkdownContext> onReady)
+   {
       dependencyManager_.withRMarkdown(
-         
+         progressCaption,
          userAction,  
-         
          new Command() {
             
             @Override
@@ -252,20 +271,26 @@ public class TextEditingTargetRMarkdownHelper
                                              1, 
                                              format, 
                                              sourceDoc.getEncoding(),
+                                             null,
                                              false,
-                                             false));
+                                             RmdOutput.TYPE_STATIC,
+                                             null));
    }
    
    public void renderRMarkdown(final String sourceFile, 
                                final int sourceLine,
                                final String format,
                                final String encoding, 
+                               final String paramsFile,
                                final boolean asTempfile,
-                               final boolean isShinyDoc,
+                               final int type,
                                final boolean asShiny)
    {
-      withRMarkdownPackage("Rendering R Markdown documents", 
-                           isShinyDoc,
+      withRMarkdownPackage(type == RmdOutput.TYPE_NOTEBOOK ?
+                              "R Notebook" :
+                              "R Markdown", 
+                           "Rendering R Markdown documents", 
+                           type == RmdOutput.TYPE_SHINY,
                            new CommandWithArg<RMarkdownContext>() {
          @Override
          public void execute(RMarkdownContext arg)
@@ -274,8 +299,10 @@ public class TextEditingTargetRMarkdownHelper
                                                    sourceLine,
                                                    format,
                                                    encoding, 
+                                                   paramsFile,
                                                    asTempfile,
-                                                   asShiny));
+                                                   type,
+                                                   null));
          }
       });
    }
@@ -293,6 +320,37 @@ public class TextEditingTargetRMarkdownHelper
          }
       });
    }
+   
+   
+   public void prepareForRmdChunkExecution(String id, 
+                                        String contents,
+                                        final Command onExecuteChunk)
+   {
+      // if this is R Markdown v2 then look for params
+      if (useRMarkdownV2(contents))
+      {
+         server_.prepareForRmdChunkExecution(id, 
+            new ServerRequestCallback<RmdExecutionState>() 
+         {
+            @Override
+            public void onResponseReceived(RmdExecutionState state)
+            {
+               onExecuteChunk.execute();
+            }
+
+            @Override
+            public void onError(ServerError error)
+            {
+               Debug.logError(error);
+            }
+         });
+      }
+      else
+      {
+         onExecuteChunk.execute();
+      }
+   }
+  
    
    public boolean verifyPrerequisites(WarningBarDisplay display,
                                       TextFileType fileType)
@@ -420,10 +478,11 @@ public class TextEditingTargetRMarkdownHelper
          if (tree.getKeyValue(RmdFrontMatter.KNIT_KEY).length() > 0)
             return null;
          
+         List<String> outFormats = getOutputFormats(tree);
+
          // Find the template appropriate to the first output format listed.
          // If no output format is present, assume HTML document (as the 
          // renderer does).
-         List<String> outFormats = getOutputFormats(tree);
          String outFormat = outFormats == null ? 
                RmdOutputFormat.OUTPUT_HTML_DOCUMENT :
                outFormats.get(0);
@@ -448,6 +507,44 @@ public class TextEditingTargetRMarkdownHelper
          Debug.log("Warning: Exception thrown while parsing YAML:\n" + yaml);
       }
       return null;
+   }
+   
+   public boolean isRuntimeShiny(String yaml)
+   {
+      // This is in the editor load path, so guard against exceptions and log
+      // any we find without bringing down the editor. 
+      try
+      {  
+         YamlTree tree = new YamlTree(yaml);
+         
+         if (tree.getKeyValue(RmdFrontMatter.KNIT_KEY).length() > 0)
+            return false;
+         
+         return tree.getKeyValue(
+             RmdFrontMatter.RUNTIME_KEY).equals(RmdFrontMatter.SHINY_RUNTIME);
+      }
+      catch (Exception e)
+      {
+         Debug.log("Warning: Exception thrown while parsing YAML:\n" + yaml);
+      }
+      return false;
+   }
+   
+   public String getCustomKnit(String yaml)
+   {
+      // This is in the editor load path, so guard against exceptions and log
+      // any we find without bringing down the editor. 
+      try
+      {  
+         YamlTree tree = new YamlTree(yaml);
+         String knit = tree.getKeyValue(RmdFrontMatter.KNIT_KEY);
+         return knit;
+      }
+      catch (Exception e)
+      {
+         Debug.log("Warning: Exception thrown while parsing YAML:\n" + yaml);
+      }
+      return new String();
    }
    
    // Parses YAML, adds the given format option with any transferable
@@ -516,6 +613,125 @@ public class TextEditingTargetRMarkdownHelper
       return yamlTree.toString();
    }
    
+   public void replaceOutputFormatOptions(final String yaml, 
+         final String format, final RmdFrontMatterOutputOptions options, 
+         final OperationWithInput<String> onCompleted)
+   {
+      server_.convertToYAML(options, new ServerRequestCallback<RmdYamlResult>()
+      {
+         @Override
+         public void onResponseReceived(RmdYamlResult result)
+         {
+            boolean isDefault = options.getOptionList().length() == 0;
+            YamlTree yamlTree = new YamlTree(yaml);
+            YamlTree optionTree = new YamlTree(result.getYaml());
+            // add the output key if needed
+            if (!yamlTree.containsKey(RmdFrontMatter.OUTPUT_KEY))
+            {
+               yamlTree.addYamlValue(null, RmdFrontMatter.OUTPUT_KEY, 
+                     RmdOutputFormat.OUTPUT_HTML_DOCUMENT);
+            }
+            String treeFormat = yamlTree.getKeyValue(RmdFrontMatter.OUTPUT_KEY);
+
+            if (treeFormat.equals(format))
+            {
+               // case 1: the output format is a simple format and we're not
+               // changing to a different format
+
+               if (isDefault)
+               {
+                  // 1-a: if all options are still at their defaults, leave
+                  // untouched
+               }
+               else
+               {
+                  // 1-b: not all options are at defaults; replace the simple
+                  // format with an option list
+                  yamlTree.setKeyValue(RmdFrontMatter.OUTPUT_KEY, "");
+                  yamlTree.addYamlValue(RmdFrontMatter.OUTPUT_KEY, format, "");
+                  yamlTree.setKeyValue(format, optionTree);
+               }
+            }
+            else if (treeFormat.length() > 0)
+            {
+               // case 2: the output format is a simple format and we are 
+               // changing it
+               if (isDefault)
+               {
+                  // case 2-a: change one simple format to another 
+                  yamlTree.setKeyValue(RmdFrontMatter.OUTPUT_KEY, format);
+               }
+               
+               else
+               {
+                  // case 2-b: change a simple format to a complex one
+                  yamlTree.setKeyValue(RmdFrontMatter.OUTPUT_KEY, "");
+                  yamlTree.addYamlValue(RmdFrontMatter.OUTPUT_KEY, format, "");
+                  yamlTree.setKeyValue(format, optionTree);
+               }
+            }
+            else
+            {
+               // case 3: the output format is already not simple
+               treeFormat = yamlTree.getKeyValue(format);
+               
+               if (treeFormat.equals(RmdFrontMatter.DEFAULT_FORMAT))
+               {
+                  if (isDefault)
+                  {
+                     // case 3-a: still at default settings
+                  }
+                  else
+                  {
+                     // case 3-b: default to complex
+                     yamlTree.setKeyValue(format, optionTree);
+                  }
+               }
+               else
+               {
+                  if (isDefault)
+                  {
+                     // case 3-c: complex to default
+                     if (yamlTree.getChildKeys(
+                           RmdFrontMatter.OUTPUT_KEY).size() == 1)
+                     {
+                        // case 3-c-i: only one format, and has default settings
+                        yamlTree.clearChildren(RmdFrontMatter.OUTPUT_KEY);
+                        yamlTree.setKeyValue(RmdFrontMatter.OUTPUT_KEY, format);
+                     }
+                     else
+                     {
+                        // case 3-c-i: multiple formats, this one's becoming
+                        // the default
+                        yamlTree.clearChildren(format);
+                        yamlTree.setKeyValue(format, RmdFrontMatter.DEFAULT_FORMAT);
+                     }
+                  }
+                  else
+                  {
+                     // case 3-d: complex to complex
+                     if (!yamlTree.containsKey(format))
+                     {
+                        yamlTree.addYamlValue(RmdFrontMatter.OUTPUT_KEY, 
+                              format, "");
+                     }
+                     yamlTree.setKeyValue(format, optionTree);
+                  }
+               }
+            }
+
+            yamlTree.reorder(Arrays.asList(format));
+            onCompleted.execute(yamlTree.toString());
+         }
+         @Override
+         public void onError(ServerError error)
+         {
+            // if we fail, return the unmodified YAML
+            onCompleted.execute(yaml);
+         }
+      });
+   }
+   
    public void getTemplateContent(
          final RmdChosenTemplate template, 
          final OperationWithInput<String> onContentReceived)
@@ -538,7 +754,119 @@ public class TextEditingTargetRMarkdownHelper
          });
    }
    
+   public void addAdditionalResourceFiles(String yaml, 
+         final ArrayList<String> files, 
+         final CommandWithArg<String> onCompleted)
+   {
+      convertFromYaml(yaml, new CommandWithArg<RmdYamlData>() 
+      {
+         @Override
+         public void execute(RmdYamlData arg)
+         {
+            if (!arg.parseSucceeded())
+               onCompleted.execute(null);
+            else
+               addAdditionalResourceFiles(arg.getFrontMatter(), files, 
+                     onCompleted);
+         }
+      });
+   }
+
+   public void getRMarkdownParamsFile(final String file, 
+                                      final String encoding,
+                                      final boolean contentKnownToBeAscii,
+                                      final CommandWithArg<String> onReady)
+   {
+      // can't do this if the server is already busy
+      if (workbenchContext_.isServerBusy())
+      {
+         globalDisplay_.showMessage(
+               MessageDisplay.MSG_WARNING,
+               "R Session Busy", 
+               "Unable to edit parameters (the R session is currently busy).");
+         return;
+      }
+      
+      // meet all dependencies then ask for params
+      final String action = "Specifying Knit parameters";
+      dependencyManager_.withRMarkdown(
+         action, 
+         new Command() {
+            @Override
+            public void execute()
+            {
+               dependencyManager_.withShiny(
+                  action,
+                  new Command() {
+
+                     @Override
+                     public void execute()
+                     {  
+                        // subscribe to notification of params ready
+                        // (ensure only one handler at a time is sucscribed)
+                        rmdParamsReadyUnsubscribe();
+                        rmdParamsReadyRegistration_ = eventBus_.addHandler(
+                              RmdParamsReadyEvent.TYPE, 
+                              new RmdParamsReadyEvent.Handler()
+                        {   
+                           @Override
+                           public void onRmdParamsReady(RmdParamsReadyEvent e)
+                           {
+                              rmdParamsReadyUnsubscribe();     
+                              onReady.execute(e.getParamsFile());
+                           }
+                        });
+                        
+                        // execute knit_with_parameters in the console
+                        FileSystemItem targetFile = 
+                                          FileSystemItem.createFile(file);
+                        consoleDispatcher_.executeCommandWithFileEncoding(
+                                             "knit_with_parameters", 
+                                             targetFile.getPath(),
+                                             encoding,
+                                             contentKnownToBeAscii);
+                     }
+                  });                 
+            }
+      });
+   }
+   
+   /**
+    * For a chunk like:
+    * 
+    * ```{r cars, echo=FALSE}
+    * ```
+    * 
+    * returns the text "r cars, echo=FALSE".
+    * 
+    * @param chunk Scope representing the chunk
+    * @return Range representing the contents of the chunk's {} options block
+    */
+   public static String getRmdChunkOptionText(Scope chunk, DocDisplay display)
+   {
+      if (chunk == null)
+         return null;
+
+      assert chunk.isChunk();
+
+      Position start = Position.create(chunk.getPreamble().getRow(), 
+            chunk.getPreamble().getColumn() + 4); // 4 = length of "```{"
+      Position end = Position.create(chunk.getPreamble().getRow(), 
+            display.getLine(start.getRow()).length() - 1);
+      return display.getCode(start, end);
+   }
+
    // Private methods ---------------------------------------------------------
+   
+   
+   private static void rmdParamsReadyUnsubscribe()
+   {
+      if (rmdParamsReadyRegistration_ != null)
+      {
+         rmdParamsReadyRegistration_.removeHandler();
+         rmdParamsReadyRegistration_ = null;
+      }
+   }
    
    private void cleanAndCreateTemplate(final RmdChosenTemplate template, 
                                        final String target,
@@ -652,6 +980,20 @@ public class TextEditingTargetRMarkdownHelper
       return result;
    }
       
+   public List<String> getOutputFormats(String yaml)
+   {
+      try
+      {  
+         YamlTree tree = new YamlTree(yaml);
+         return getOutputFormats(tree);   
+      }
+      catch (Exception e)
+      {
+         Debug.log("Warning: Exception thrown while parsing YAML:\n" + yaml);
+      }
+      return null;
+   }
+   
    private List<String> getOutputFormats(YamlTree tree)
    {
       List<String> outputs = tree.getChildKeys(RmdFrontMatter.OUTPUT_KEY);
@@ -671,12 +1013,34 @@ public class TextEditingTargetRMarkdownHelper
                              " or higher)");
    }
    
+   private void addAdditionalResourceFiles(RmdFrontMatter frontMatter,
+         ArrayList<String> additionalFiles, 
+         CommandWithArg<String> onCompleted)
+   {
+      for (String file: additionalFiles)
+      {
+         frontMatter.addResourceFile(file);
+      }
+
+      frontMatterToYAML(frontMatter, null, onCompleted);
+   }
+   
+   private boolean useRMarkdownV2(String contents)
+   {
+      return !contents.contains("<!-- rmarkdown v1 -->") && 
+              session_.getSessionInfo().getRMarkdownPackageAvailable();
+   }
+   
    private Session session_;
    private GlobalDisplay globalDisplay_;
    private EventBus eventBus_;
    private UIPrefs prefs_;
+   private ConsoleDispatcher consoleDispatcher_;
+   private WorkbenchContext workbenchContext_;
    private FileTypeCommands fileTypeCommands_;
    private DependencyManager dependencyManager_;
    private RMarkdownServerOperations server_;
    private FilesServerOperations fileServer_;
+   
+   private static HandlerRegistration rmdParamsReadyRegistration_ = null;
 }

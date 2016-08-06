@@ -39,6 +39,7 @@ typedef pid_t PidType;
 
 #include <core/system/Types.hpp>
 
+namespace rstudio {
 namespace core {
 
 class FileInfo;
@@ -192,7 +193,8 @@ enum SignalType
    SigUsr1,
    SigUsr2,
    SigPipe,
-   SigChld
+   SigChld,
+   SigTerm
 };
 
 
@@ -226,6 +228,7 @@ std::string username();
 FilePath userHomePath(std::string envOverride = std::string());
 FilePath userSettingsPath(const FilePath& userHomeDirectory,
                           const std::string& appName);
+unsigned int effectiveUserId();
 bool currentUserIsPrivilleged(unsigned int minimumUserId);
 
 // log
@@ -267,6 +270,7 @@ Error terminateProcess(PidType pid);
    
 } // namespace system
 } // namespace core 
+} // namespace rstudio
 
 #endif // CORE_SYSTEM_SYSTEM_HPP
 

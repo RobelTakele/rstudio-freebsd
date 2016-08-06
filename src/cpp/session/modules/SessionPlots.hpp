@@ -16,10 +16,15 @@
 #ifndef SESSION_PLOTS_HPP
 #define SESSION_PLOTS_HPP
 
+#include <boost/signals.hpp>
+
+namespace rstudio {
 namespace core {
    class Error;
 }
+}
 
+namespace rstudio {
 namespace session {
 namespace modules {
 namespace plots {
@@ -27,9 +32,19 @@ namespace plots {
 bool haveCairoPdf();
 
 core::Error initialize();
+
+struct Events : boost::noncopyable
+{
+   boost::signal<void()> onBeforeNewPlot;
+   boost::signal<void()> onBeforeNewGridPage;
+   boost::signal<void()> onNewPlot;
+};
+
+Events& events();
    
 } // namespace plots
 } // namespace modules   
 } // namespace session
+} // namespace rstudio
 
 #endif // SESSION_PLOTS_HPP

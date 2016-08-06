@@ -24,8 +24,10 @@
 #include <boost/asio/placeholders.hpp>
 #include <boost/algorithm/string/predicate.hpp>
 
+#include <core/Macros.hpp>
 #include <core/BoostThread.hpp>
 #include <core/FilePath.hpp>
+#include <core/FileLock.hpp>
 #include <core/Error.hpp>
 #include <core/BoostErrors.hpp>
 #include <core/system/System.hpp>
@@ -46,29 +48,8 @@
 #include "SessionHttpConnectionImpl.hpp"
 
 
+namespace rstudio {
 namespace session {
-
-namespace {
-
-bool isShutdownError(const boost::system::error_code& ec)
-{
-   // for windows check explicitly for is not a socket error
-#ifdef _WIN32
-   if (ec.value() == WSAENOTSOCK)
-      return true;
-#endif
-
-   //  - operation cancelled (happens while shutting down the server)
-   //  - invalid argument (happens if socket is closed before we
-   //    can actually peform the handleAccept)
-   //  - bad file descriptor (simillar to above)
-   return (ec == boost::asio::error::operation_aborted ||
-           ec == boost::asio::error::invalid_argument ||
-           ec == boost::system::errc::bad_file_descriptor);
-}
-
-}
-
 
 template <typename ProtocolType>
 class HttpConnectionListenerImpl : public HttpConnectionListener,
@@ -94,6 +75,9 @@ public:
 
       // accept next connection (asynchronously)
       acceptNextConnection();
+      
+      // refresh locks
+      core::FileLock::refreshPeriodically(acceptorService_.ioService());
 
       // block all signals for launch of listener thread (will cause it
       // to never receive signals)
@@ -108,7 +92,7 @@ public:
          using boost::bind;
          boost::thread listenerThread(bind(&boost::asio::io_service::run,
                                            &(acceptorService_.ioService())));
-         listenerThread_ = listenerThread.move();
+         listenerThread_ = MOVE_THREAD(listenerThread);
 
          // set started flag
          started_ = true;
@@ -233,7 +217,7 @@ private:
          {
             // for errors, log and continue,but don't log errors caused
             // by normal course of socket shutdown
-            if (!isShutdownError(ec))
+            if (!core::isShutdownError(ec))
                LOG_ERROR(core::Error(ec, ERROR_LOCATION)) ;
          }
       }
@@ -314,6 +298,7 @@ private:
 };
 
 } // namespace session
+} // namespace rstudio
 
 #endif // SESSION_HTTP_CONNECTION_LISTENER_IMPL_HPP
 

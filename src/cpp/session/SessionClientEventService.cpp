@@ -13,8 +13,6 @@
  *
  */
 
-#include "SessionClientEventService.hpp"
-
 #include <algorithm>
 
 #include <boost/function.hpp>
@@ -25,17 +23,20 @@
 #include <core/BoostErrors.hpp>
 #include <core/Thread.hpp>
 #include <core/system/System.hpp>
+#include <core/Macros.hpp>
 
 
 #include <core/http/Request.hpp>
 
 #include <session/SessionOptions.hpp>
 #include <session/SessionHttpConnectionListener.hpp>
+#include <session/SessionClientEventService.hpp>
 
 #include "SessionClientEventQueue.hpp"
 
-using namespace core;
+using namespace rstudio::core;
 
+namespace rstudio {
 namespace session {
    
 namespace {
@@ -74,7 +75,7 @@ Error ClientEventService::start(const std::string& clientId)
    {
       using boost::bind;
       boost::thread serviceThread(bind(&ClientEventService::run, this));       
-      serviceThread_ = serviceThread.move();
+      serviceThread_ = MOVE_THREAD(serviceThread);
       
       return Success();
    }
@@ -194,7 +195,7 @@ void ClientEventService::run()
       time_duration maxTotalBatchDelay = seconds(2);
 
       // make much shorter for desktop mode
-      if (session::options().programMode() == kSessionProgramModeDesktop)
+      if (options().programMode() == kSessionProgramModeDesktop)
       {
          batchDelay = milliseconds(2);
          maxTotalBatchDelay = milliseconds(10);
@@ -351,3 +352,4 @@ void ClientEventService::run()
 }
       
 } // namespace session
+} // namespace rstudio

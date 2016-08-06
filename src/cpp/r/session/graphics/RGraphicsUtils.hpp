@@ -18,20 +18,21 @@
 
 #include <boost/shared_ptr.hpp>
 
+namespace rstudio {
 namespace core {
    class Error;
    class ErrorLocation;
    class FilePath;
 }
+}
 
+namespace rstudio {
 namespace r {
 namespace session {
 namespace graphics {
 
 void setCompatibleEngineVersion(int version);
 bool validateRequirements(std::string* pMessage = NULL);
-
-std::string extraBitmapParams();
 
 class RestorePreviousGraphicsDeviceScope
 {
@@ -52,6 +53,7 @@ void logAndReportError(const core::Error& error,
 } // namespace graphics
 } // namespace session
 } // namespace r
+} // namespace rstudio
 
 
 #endif // R_SESSION_GRAPHICS_UTILS_HPP 

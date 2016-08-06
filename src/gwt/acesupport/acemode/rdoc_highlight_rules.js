@@ -12,7 +12,7 @@
  * AGPL (http://www.gnu.org/licenses/agpl-3.0.txt) for more details.
  *
  */
-define("mode/rdoc_highlight_rules", function(require, exports, module) {
+define("mode/rdoc_highlight_rules", ["require", "exports", "module"], function(require, exports, module) {
 
 var oop = require("ace/lib/oop");
 var lang = require("ace/lib/lang");
@@ -22,6 +22,18 @@ var RDocHighlightRules = function() {
 
     // regexp must not have capturing parentheses. Use (?:) instead.
     // regexps are ordered -> the first match is used
+    var keywords =
+        "name|alias|method|S3method|S4method|item|code|" +
+        "preformatted|kbd|pkg|var|env|option|command|author|" +
+        "email|url|source|cite|acronym|href|code|preformatted|" +
+        "link|eqn|deqn|keyword|usage|examples|dontrun|dontshow|" +
+        "figure|if|ifelse|Sexpr|RdOpts|inputencoding|usepackage";
+
+    keywords = "\\" + keywords.replace(/\|/g, "|\\");
+
+    var keywordMapper = this.createKeywordMapper({
+        "keyword": keywords
+    }, "identifer");
 
     this.$rules = {
         "start" : [
@@ -56,7 +68,7 @@ var RDocHighlightRules = function() {
 	        }
         ],
         // This mode is necessary to prevent spell checking, but to keep the
-        // same syntax highlighting behavior. 
+        // same syntax highlighting behavior.
         "nospell" : [
            {
                token : "comment",

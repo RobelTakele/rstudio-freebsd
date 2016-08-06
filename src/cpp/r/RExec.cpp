@@ -22,6 +22,7 @@
 #include <r/RErrorCategory.hpp>
 #include <r/RSourceManager.hpp>
 #include <r/RInterface.hpp>
+#include <r/RCntxt.hpp>
 #include <r/ROptions.hpp>
 
 #include <R_ext/Parse.h>
@@ -33,8 +34,9 @@ LibExtern int R_interrupts_pending;
 LibExtern int UserBreak;
 #endif
 
-using namespace core ;
+using namespace rstudio::core ;
 
+namespace rstudio {
 namespace r {
    
 namespace exec {
@@ -50,13 +52,12 @@ class DisableErrorHandlerScope : boost::noncopyable
 {
 public:
    DisableErrorHandlerScope()
-      : didDisable_(false),
-        previousErrorHandlerSEXP_(R_NilValue)
+      : didDisable_(false)
    {
-      previousErrorHandlerSEXP_ = r::options::setErrorOption(R_NilValue);
-      if (previousErrorHandlerSEXP_ != R_NilValue)
+      SEXP handlerSEXP = r::options::setErrorOption(R_NilValue);
+      if (handlerSEXP != R_NilValue)
       {
-         rProtect_.add(previousErrorHandlerSEXP_);
+         preservedSEXP_.set(handlerSEXP);
          didDisable_ = true;
       }
    }
@@ -65,7 +66,7 @@ public:
       try
       {
          if (didDisable_)
-            r::options::setErrorOption(previousErrorHandlerSEXP_);
+            r::options::setErrorOption(preservedSEXP_.get());
       }
       catch(...)
       {
@@ -74,8 +75,7 @@ public:
 
 private:
    bool didDisable_;
-   r::sexp::Protect rProtect_;
-   SEXP previousErrorHandlerSEXP_;
+   r::sexp::PreservedSEXP preservedSEXP_;
 };
 
 
@@ -102,15 +102,20 @@ Error parseString(const std::string& str, SEXP* pSEXP, sexp::Protect* pProtect)
    }
 }
 
+
 // evaluate expressions without altering the error handler (use with caution--
 // a user-supplied error handler may be invoked if the expression raises
 // an error!)
+enum EvalType {
+   EvalTry,    // use R_tryEval
+   EvalDirect  // use Rf_eval directly
+};
 Error evaluateExpressionsUnsafe(SEXP expr,
                                 SEXP env,
                                 SEXP* pSEXP,
-                                sexp::Protect* pProtect)
+                                sexp::Protect* pProtect,
+                                EvalType evalType)
 {
-
    int er=0;
    int i=0,l;
    
@@ -122,7 +127,10 @@ Error evaluateExpressionsUnsafe(SEXP expr,
       l = LENGTH(expr);
       while (i<l) 
       {
-         *pSEXP = R_tryEval(VECTOR_ELT(expr, i), env, &er);
+         if (evalType == EvalTry)
+            *pSEXP = R_tryEval(VECTOR_ELT(expr, i), env, &er);
+         else
+            *pSEXP = Rf_eval(VECTOR_ELT(expr, i), env);
          i++;
       }
    } 
@@ -130,7 +138,10 @@ Error evaluateExpressionsUnsafe(SEXP expr,
    else
    {
       DisableDebugScope disableStepInto(R_GlobalEnv);
-      *pSEXP = R_tryEval(expr, R_GlobalEnv, &er);
+      if (evalType == EvalTry)
+         *pSEXP = R_tryEval(expr, R_GlobalEnv, &er);
+      else
+         *pSEXP = Rf_eval(expr, R_GlobalEnv);
    }
    
    // protect the result
@@ -161,7 +172,7 @@ Error evaluateExpressions(SEXP expr,
    // disable custom error handlers while we execute code
    DisableErrorHandlerScope disableErrorHandler;
 
-   return evaluateExpressionsUnsafe(expr, env, pSEXP, pProtect);
+   return evaluateExpressionsUnsafe(expr, env, pSEXP, pProtect, EvalTry);
 }
 
 Error evaluateExpressions(SEXP expr, SEXP* pSEXP, sexp::Protect* pProtect)
@@ -225,6 +236,18 @@ core::Error executeSafely(boost::function<SEXP()> function, SEXP* pSEXP)
       return Success();
    }
 }
+
+Error executeStringUnsafe(const std::string& str, SEXP* pSEXP, 
+      sexp::Protect* pProtect)
+{
+   SEXP parsedSEXP = R_NilValue;
+   Error error = r::exec::parseString(str, &parsedSEXP, pProtect);
+   if (error)
+      return error;
+   
+   return evaluateExpressionsUnsafe(parsedSEXP, R_GlobalEnv, 
+         pSEXP, pProtect, EvalDirect);
+}
   
 Error executeString(const std::string& str)
 {
@@ -241,7 +264,7 @@ Error evaluateString(const std::string& str,
    r::sourceManager().reloadIfNecessary();
    
    // surrond the string with try in silent mode so we can capture error text
-   std::string rCode = "try(" + str + ", TRUE)";
+   std::string rCode = "base::try(" + str + ", TRUE)";
 
    // parse expression
    SEXP ps;
@@ -276,14 +299,13 @@ Error evaluateString(const std::string& str,
    
 bool atTopLevelContext() 
 {
-   return getGlobalContext() != NULL &&
-          getGlobalContext()->callflag == CTXT_TOPLEVEL;
+   return context::RCntxt::begin()->callflag() == CTXT_TOPLEVEL;
 }
 
 RFunction::RFunction(SEXP functionSEXP)
 {
    functionSEXP_ = functionSEXP;
-   rProtect_.add(functionSEXP_);
+   preserver_.add(functionSEXP_);
 }
    
 RFunction::~RFunction()
@@ -308,7 +330,6 @@ void RFunction::commonInit(const std::string& functionName)
    {
       ns = functionName_.substr(0, pos);
       name = functionName_.substr(pos + nsQual.size());
-      
    }
    else
    {
@@ -318,7 +339,7 @@ void RFunction::commonInit(const std::string& functionName)
    // lookup function
    functionSEXP_ = sexp::findFunction(name, ns);
    if (functionSEXP_ != R_UnboundValue)
-      rProtect_.add(functionSEXP_);
+      preserver_.add(functionSEXP_);
 }
    
 Error RFunction::callUnsafe()
@@ -349,6 +370,7 @@ Error RFunction::call(SEXP evalNS, bool safely, SEXP* pResultSEXP,
    // verify the function
    if (functionSEXP_ == R_UnboundValue)
    {
+      LOG_ERROR_MESSAGE("Failed to find function: '" + functionName_ + "'");
       Error error(errc::SymbolNotFoundError, ERROR_LOCATION);
       if (!functionName_.empty())
          error.addProperty("symbol", functionName_);
@@ -378,7 +400,8 @@ Error RFunction::call(SEXP evalNS, bool safely, SEXP* pResultSEXP,
    // call the function
    Error error = safely ?
             evaluateExpressions(callSEXP, evalNS, pResultSEXP, pProtect) :
-            evaluateExpressionsUnsafe(callSEXP, evalNS, pResultSEXP, pProtect);
+            evaluateExpressionsUnsafe(callSEXP, evalNS, pResultSEXP, pProtect,
+                  EvalTry);
    if (error)
       return error;
    
@@ -548,6 +571,7 @@ DisableDebugScope::~DisableDebugScope()
 
 } // namespace exec   
 } // namespace r
+} // namespace rstudio
 
 
 

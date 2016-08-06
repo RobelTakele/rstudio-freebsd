@@ -26,6 +26,7 @@
 
 #define kSessionLocalStreamsDir "/tmp/rstudio-rsession"
 
+namespace rstudio {
 namespace session {
 namespace local_streams {
 
@@ -35,20 +36,18 @@ inline core::Error ensureStreamsDir()
    return core::http::initializeStreamDir(sessionStreamsPath);
 }
    
-inline core::FilePath streamPath(const std::string& user)
+inline core::FilePath streamPath(const std::string& file)
 {
-   return core::FilePath(kSessionLocalStreamsDir).complete(user);
-}
-
-inline void removeStreams(const std::string& user)
-{
-   core::Error error = streamPath(user).removeIfExists();
+   core::FilePath path = core::FilePath(kSessionLocalStreamsDir).complete(file);
+   core::Error error = core::http::initializeStreamDir(path.parent());
    if (error)
       LOG_ERROR(error);
+   return path;
 }
 
 } // namepspace local_streams
 } // namespace session
+} // namespace rstudio
 
 #endif // SESSION_SESSION_LOCAL_STREAMS_HPP
 

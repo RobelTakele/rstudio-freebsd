@@ -23,6 +23,7 @@
 
 #include <r/RExec.hpp>
 #include <r/session/RSessionUtils.hpp>
+#include <r/session/RGraphics.hpp>
 
 #undef TRUE
 #undef FALSE
@@ -32,8 +33,9 @@
 
 #include <Rembedded.h>
 
-using namespace core ;
+using namespace rstudio::core ;
 
+namespace rstudio {
 namespace r {
 namespace session {
 namespace graphics {
@@ -106,12 +108,18 @@ Error shadowDevDesc(DeviceContext* pDC, pDevDesc* pDev)
 
       PreserveCurrentDeviceScope preserveCurrentDeviceScope;
 
+      // determine width, height, and res
+      int width = pDC->width * pDC->devicePixelRatio;
+      int height = pDC->height * pDC->devicePixelRatio;
+      int res = 96 * pDC->devicePixelRatio;
+
       // create PNG device (completely bail on error)
-      boost::format fmt("grDevices:::png(\"%1%\", %2%, %3% %4%, pointsize = 16)");
+      boost::format fmt("grDevices:::png(\"%1%\", %2%, %3%, res = %4% %5%)");
       std::string code = boost::str(fmt %
                                     string_utils::utf8ToSystem(pDC->targetPath.absolutePath()) %
-                                    pDC->width %
-                                    pDC->height %
+                                    width %
+                                    height %
+                                    res %
                                     r::session::graphics::extraBitmapParams());
       Error err = r::exec::executeString(code);
       if (err)
@@ -187,8 +195,7 @@ void shadowDevSync(DeviceContext* pDC)
    // the invalid name warning in checkValidSymbolId in dotcode.c
    {
       r::session::utils::SuppressOutputInScope scope;
-      error = r::exec::executeSafely(boost::bind(GEcopyDisplayList,
-                                                    rsDeviceNumber));
+      error = r::exec::RFunction(".rs.GEcopyDisplayList", rsDeviceNumber).call();
       if (error && !r::isCodeExecutionError(error))
          LOG_ERROR(error);
    }
@@ -197,11 +204,12 @@ void shadowDevSync(DeviceContext* pDC)
 } // anonymous namespace
 
 
-bool initialize(int width, int height, DeviceContext* pDC)
+bool initialize(int width, int height, double devicePixelRatio, DeviceContext* pDC)
 {
    pDC->targetPath = tempFile("png");
    pDC->width = width;
    pDC->height = height;
+   pDC->devicePixelRatio = devicePixelRatio;
 
    return true;
 }
@@ -231,6 +239,7 @@ void setSize(pDevDesc pDev)
 {
    dev_desc::setSize(pDev);
    dev_desc::setSize(shadowDevDesc(pDev));
+   setDeviceAttributes(pDev);
 }
 
 void setDeviceAttributes(pDevDesc pDev)
@@ -238,6 +247,15 @@ void setDeviceAttributes(pDevDesc pDev)
    pDevDesc shadowDev = shadowDevDesc(pDev);
    if (shadowDev == NULL)
       return;
+   
+   pDev->left = shadowDev->left;
+   pDev->top = shadowDev->top;
+   pDev->right = shadowDev->right;
+   pDev->bottom = shadowDev->bottom;
+   pDev->clipLeft = shadowDev->clipLeft;
+   pDev->clipTop = shadowDev->clipTop;
+   pDev->clipRight = shadowDev->clipRight;
+   pDev->clipBottom = shadowDev->clipBottom;
    
    pDev->cra[0] = shadowDev->cra[0];
    pDev->cra[1] = shadowDev->cra[1];
@@ -318,12 +336,13 @@ Error writeToPNG(const FilePath& targetPath, DeviceContext* pDC)
    pDevDesc dev = pDC->dev;
    int width = pDC->width;
    int height = pDC->height;
+   double devicePixelRatio = pDC->devicePixelRatio;
    handler::destroy(pDC);
    pDC = handler::allocate(dev);
    dev->deviceSpecific = pDC;
 
    // re-create with the correct size
-   if (!handler::initialize(width, height, pDC))
+   if (!handler::initialize(width, height, devicePixelRatio, pDC))
       return systemError(boost::system::errc::not_connected, ERROR_LOCATION);
 
    // now update the device structure
@@ -560,6 +579,7 @@ void installShadowHandler()
 } // namespace graphics
 } // namespace session
 } // namespace r
+} // namespace rstudio
 
 
 

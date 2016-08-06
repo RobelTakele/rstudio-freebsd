@@ -36,7 +36,7 @@ public class RFileType extends TextFileType
             defaultExtension,
             defaultIcon,
             false, true, true, true, true, false, 
-            false, false, false, true, false, true);
+            false, false, false, true, false, true, false);
    }
 
    @Override
@@ -62,6 +62,7 @@ public class RFileType extends TextFileType
       result.add(commands.insertSection());
       result.add(commands.codeCompletion());
       result.add(commands.debugBreakpoint());
+      result.add(commands.insertRoxygenSkeleton());
       return result;
    }
 }

@@ -31,13 +31,15 @@ public class DataItem extends JavaScriptObject
                                               int totalObservations,
                                               int displayedObservations,
                                               int variables,
-                                              String contentUrl) /*-{
+                                              String contentUrl,
+                                              int preview) /*-{
       var dataItem = new Object();
       dataItem.caption = caption ;
       dataItem.totalObservations = totalObservations ;
       dataItem.displayedObservations = displayedObservations;
       dataItem.variables = variables;
       dataItem.contentUrl = contentUrl;
+      dataItem.preview = preview;
       return dataItem ;
    }-*/;
 
@@ -68,6 +70,26 @@ public class DataItem extends JavaScriptObject
    public native final String getContentUrl() /*-{
       return this.contentUrl;
    }-*/;
+   
+   public native final String getCacheKey() /*-{
+      return this.cacheKey;
+   }-*/;
+
+   public native final String getObject() /*-{
+      return this.object;
+   }-*/;
+
+   public native final String getEnvironment() /*-{
+      return this.environment;
+   }-*/;
+   
+   public native final boolean isPreview() /*-{
+      // This will sometimes be a number, sometimes a string. Ugh
+      if (this.preview !== undefined)
+         return (this.preview - 0) === 1;
+      else
+         return false;
+   }-*/;
 
    public final void fillProperties(HashMap<String, String> properties)
    {
@@ -80,6 +102,10 @@ public class DataItem extends JavaScriptObject
       properties.put("displayedObservations", getDisplayedObservations() + "");
       properties.put("variables", getVariables() + "");
       properties.put("contentUrl", getContentUrl());
+      properties.put("cacheKey", getCacheKey());
+      properties.put("object", getObject());
+      properties.put("environment", getEnvironment());
+      properties.put("preview", (isPreview() ? 1 : 0) + "");
    }
 
    public final void fillProperties(JsObject properties)
@@ -89,5 +115,9 @@ public class DataItem extends JavaScriptObject
       properties.setInteger("displayedObservations", getDisplayedObservations());
       properties.setInteger("variables", getVariables());
       properties.setString("contentUrl", getContentUrl());
+      properties.setString("cacheKey", getCacheKey());
+      properties.setString("object", getObject());
+      properties.setString("environment", getEnvironment());
+      properties.setInteger("properties", isPreview() ? 1 : 0);
    }
 }

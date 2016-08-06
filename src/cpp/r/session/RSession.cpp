@@ -30,6 +30,7 @@
 #include <core/system/System.hpp>
 #include <core/system/Environment.hpp>
 #include <core/FileSerializer.hpp>
+#include <core/FileUtils.hpp>
 #include <core/http/Util.hpp>
 
 #include <r/RExec.hpp>
@@ -51,6 +52,7 @@
 #include "RRestartContext.hpp"
 #include "REmbedded.hpp"
 
+#include "graphics/RGraphicsDevDesc.hpp"
 #include "graphics/RGraphicsUtils.hpp"
 #include "graphics/RGraphicsDevice.hpp"
 #include "graphics/RGraphicsPlotManager.hpp"
@@ -70,8 +72,9 @@ extern "C" SA_TYPE SaveAction;
 // constants for graphics scratch subdirectory
 #define kGraphicsPath "graphics"
 
-using namespace core ;
+using namespace rstudio::core ;
 
+namespace rstudio {
 namespace r {
 namespace session {
 
@@ -79,6 +82,9 @@ namespace {
 
 // is this R 3.0 or greator
 bool s_isR3 = false;
+
+// is this R 3.3 or greator
+bool s_isR3_3 = false;
 
 // options
 ROptions s_options;
@@ -262,6 +268,13 @@ Error saveDefaultGlobalEnvironment()
       return Success();
    }
 }
+
+Error restoreGlobalEnvFromFile(const std::string& path, std::string* pErrMessage)
+{
+   r::exec::RFunction fn(".rs.restoreGlobalEnvFromFile");
+   fn.addParam(path);
+   return fn.call(pErrMessage);
+}
    
 void deferredRestoreNewSession()
 {
@@ -280,18 +293,30 @@ void deferredRestoreNewSession()
       r::exec::IgnoreInterruptsScope ignoreInterrupts;
 
       std::string path = string_utils::utf8ToSystem(globalEnvPath.absolutePath());
-      Error error = r::exec::executeSafely(boost::bind(
-                                        R_RestoreGlobalEnvFromFile,
-                                        path.c_str(),
-                                        TRUE));
-      if (error)   
+      std::string aliasedPath = createAliasedPath(globalEnvPath);
+      
+      std::string errMessage;
+      Error error = restoreGlobalEnvFromFile(path, &errMessage);
+      if (error)
       {
-         reportDeferredDeserializationError(error);
+         ::REprintf(
+                  "WARNING: Failed to restore workspace from '%s' "
+                  "(an internal error occurred)\n",
+                  aliasedPath.c_str());
+         LOG_ERROR(error);
+      }
+      else if (!errMessage.empty())
+      {
+         std::stringstream ss;
+         ss << "WARNING: Failed to restore workspace from "
+            << "'" << aliasedPath << "'" << std::endl
+            << "Reason: " << errMessage << std::endl;
+         std::string message = ss.str();
+         ::REprintf(message.c_str());
+         LOG_ERROR_MESSAGE(message);
       }
       else
       {
-         // print path to console
-         std::string aliasedPath = createAliasedPath(globalEnvPath);
          Rprintf(("[Workspace loaded from " + aliasedPath + "]\n\n").c_str());
       }
    }
@@ -375,10 +400,22 @@ Error initialize()
    if (libError)
       LOG_ERROR(libError);
 
-   // check whether this is R 3.0 or greater
-   Error r3Error = r::exec::evaluateString("getRversion() >= '3.0.0'", &s_isR3);
-   if (r3Error)
-      LOG_ERROR(r3Error);
+   // check whether this is R 3.3 or greater
+   Error r33Error = r::exec::evaluateString("getRversion() >= '3.3.0'", &s_isR3_3);
+   if (r33Error)
+      LOG_ERROR(r33Error);
+
+   if (s_isR3_3)
+   {
+      s_isR3 = true;
+   }
+   else
+   {
+      // check whether this is R 3.0 or greater
+      Error r3Error = r::exec::evaluateString("getRversion() >= '3.0.0'", &s_isR3);
+      if (r3Error)
+         LOG_ERROR(r3Error);
+   }
 
    // initialize console history capacity
    r::session::consoleHistory().setCapacityFromRHistsize();
@@ -389,6 +426,12 @@ Error initialize()
    if (error)
       return error ;
 
+   // install RStudio API
+   FilePath apiFilePath = s_options.rSourcePath.complete("Api.R");
+   error = r::sourceManager().sourceTools(apiFilePath);
+   if (error)
+      return error;
+
    // initialize graphics device -- use a stable directory for server mode
    // and temp directory for desktop mode (so that we can support multiple
    // concurrent processes using the same project)
@@ -398,7 +441,7 @@ Error initialize()
       std::string path = kGraphicsPath;
       if (utils::isR3())
          path += "-r3";
-      graphicsPath = s_options.scopedScratchPath.complete(path);
+      graphicsPath = s_options.sessionScratchPath.complete(path);
    }
    else
    {
@@ -481,6 +524,11 @@ Error initialize()
       if (error)
          return error;
    }
+
+   // initialize profile resources
+   error = r::exec::RFunction(".rs.profileResources").call();
+   if (error)
+      return error;
 
    // complete embedded r initialization
    error = r::session::completeEmbeddedRInitialization(s_options.useInternet2);
@@ -688,7 +736,7 @@ int RReadConsole (const char *pmt,
 
       // get the next input
       bool addToHistory = (hist == 1);
-      RConsoleInput consoleInput;
+      RConsoleInput consoleInput("");
       if ( s_callbacks.consoleRead(promptString, addToHistory, &consoleInput) )
       {
          // add prompt to console actions (we do this after consoleRead
@@ -1110,7 +1158,15 @@ SA_TYPE saveAsk()
    {
       // end user prompt
       std::string wsPath = createAliasedPath(rSaveGlobalEnvironmentFilePath());
-      std::string prompt = "Save workspace image to " + wsPath + "? [y/n/c]: ";
+      std::string prompt = "Save workspace image to " + wsPath + "? [y/n";
+      // The Rf_jump_to_top_level doesn't work (freezes the process) with
+      // 64-bit mingw due to the way it does stack unwinding. Since this is
+      // a farily obscure gesture (quit from command line then cancel the quit)
+      // we just eliminate the possiblity of it on windows
+#ifndef _WIN32
+      prompt += "/c";
+#endif
+      prompt += "]: ";
 
       // input buffer
       std::vector<CONSOLE_BUFFER_CHAR> inputBuffer(512, 0);
@@ -1127,8 +1183,10 @@ SA_TYPE saveAsk()
             return SA_SAVE;
          else if (input == "n")
             return SA_NOSAVE;
+#ifndef _WIN32
          else if (input == "c")
             throw JumpToTopException();
+#endif
       }
    }
    catch(JumpToTopException)
@@ -1297,6 +1355,22 @@ bool win32Quit(const std::string& saveAction,
 }
 #endif
 
+namespace {
+
+SEXP rs_GEcopyDisplayList(SEXP fromDeviceSEXP)
+{
+   int fromDevice = r::sexp::asInteger(fromDeviceSEXP);
+   GEcopyDisplayList(fromDevice);
+   return Rf_ScalarLogical(1);
+}
+
+SEXP rs_GEplayDisplayList()
+{
+   graphics::device::playDisplayList();
+   return Rf_ScalarLogical(1);
+}
+
+} // end anonymous namespace
    
 Error run(const ROptions& options, const RCallbacks& callbacks) 
 {   
@@ -1335,9 +1409,34 @@ Error run(const ROptions& options, const RCallbacks& callbacks)
    sourceManager().setAutoReload(options.autoReloadSource);
      
    // initialize suspended session path
-   FilePath userScratchPath = s_options.userScratchPath;
-   s_suspendedSessionPath = userScratchPath.complete("suspended-session");  
-   
+   FilePath userScratch = s_options.userScratchPath;
+   FilePath oldSuspendedSessionPath = userScratch.complete("suspended-session");
+   FilePath sessionScratch = s_options.sessionScratchPath;
+   s_suspendedSessionPath = sessionScratch.complete("suspended-session-data");
+
+   // one time migration of global suspend to default project suspend
+   if (!s_suspendedSessionPath.exists() && oldSuspendedSessionPath.exists())
+   {
+     // try to move it first
+     Error error = oldSuspendedSessionPath.move(s_suspendedSessionPath);
+     if (error)
+     {
+        // log the move error
+        LOG_ERROR(error);
+
+        // try to copy it as a failsafe (eliminates cross-volume issues)
+        error = file_utils::copyDirectory(oldSuspendedSessionPath,
+                                                s_suspendedSessionPath);
+        if (error)
+           LOG_ERROR(error);
+
+        // remove so this is always a one-time only thing
+        error = oldSuspendedSessionPath.remove();
+        if (error)
+           LOG_ERROR(error);
+     }
+   }
+
    // initialize restart context
    restartContext().initialize(s_options.scopedScratchPath,
                                s_options.sessionPort);
@@ -1384,6 +1483,9 @@ Error run(const ROptions& options, const RCallbacks& callbacks)
    saveHistoryMethodDef.numArgs = 1;
    r::routines::addCallMethod(saveHistoryMethodDef);
 
+   // register graphics methods
+   RS_REGISTER_CALL_METHOD(rs_GEcopyDisplayList, 1);
+   RS_REGISTER_CALL_METHOD(rs_GEplayDisplayList, 0);
 
    // run R
 
@@ -1551,9 +1653,13 @@ bool suspend(const RSuspendOptions& options,
    }
 }
 
-bool suspend(bool force)
+bool suspend(bool force, int status)
 {
-   return suspend(RSuspendOptions(), s_suspendedSessionPath, false, force);
+   return suspend(RSuspendOptions(),
+                  s_suspendedSessionPath,
+                  false,
+                  force,
+                  status);
 }
 
 void suspendForRestart(const RSuspendOptions& options)
@@ -1633,14 +1739,33 @@ bool isR3()
    return s_isR3;
 }
 
+bool isR3_3()
+{
+   return s_isR3_3;
+}
+
 bool isPackratModeOn()
 {
    return !core::system::getenv("R_PACKRAT_MODE").empty();
 }
 
+bool isDevtoolsDevModeOn()
+{
+   bool isDevtoolsDevModeOn = false;
+   Error error = r::exec::RFunction(".rs.devModeOn").call(&isDevtoolsDevModeOn);
+   if (error)
+      LOG_ERROR(error);
+   return isDevtoolsDevModeOn;
+}
+
 bool isDefaultPrompt(const std::string& prompt)
 {
    return prompt == r::options::getOption<std::string>("prompt");
+}
+
+bool isServerMode()
+{
+   return s_options.serverMode;
 }
 
 const FilePath& userHomePath()
@@ -1687,3 +1812,4 @@ SuppressOutputInScope::~SuppressOutputInScope()
    
 } // namespace session
 } // namespace r
+} // namespace rstudio

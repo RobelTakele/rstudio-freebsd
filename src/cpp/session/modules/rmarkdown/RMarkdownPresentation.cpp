@@ -20,8 +20,9 @@
 
 #include <core/FileSerializer.hpp>
 
-using namespace core;
+using namespace rstudio::core;
 
+namespace rstudio {
 namespace session {
 namespace modules { 
 namespace rmarkdown {
@@ -92,7 +93,7 @@ void ammendResults(const std::string& formatName,
    boost::regex reYaml("^\\-{3}\\s*$");
    boost::regex reTitle("^title\\:(.*)$");
    boost::regex reCode("^`{3,}.*$");
-   boost::regex reTitledSlide("^#(#)?([^|\\{]+).*$");
+   boost::regex reTitledSlide("^#(#)?([^#][^|\\{]+).*$");
    boost::regex reUntitledSlide("^(\\-{3,}|\\*{3,})\\w*$");
    for (unsigned i = 0; i<lines.size(); i++)
    {
@@ -207,4 +208,5 @@ void ammendResults(const std::string& formatName,
 } // namepsace rmarkdown
 } // namespace modules
 } // namesapce session
+} // namespace rstudio
 

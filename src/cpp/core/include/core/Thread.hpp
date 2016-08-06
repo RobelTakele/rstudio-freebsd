@@ -26,19 +26,24 @@
 #include <core/Error.hpp>
 #include <core/Log.hpp>
 
+#define LOCK_MUTEX(m)                                                          \
+   try                                                                         \
+   {                                                                           \
+      boost::lock_guard<boost::mutex> lock(m);
 
+#define RECURSIVE_LOCK_MUTEX(m) try {\
+   boost::lock_guard<boost::recursive_mutex> lock(m);
 
-#define LOCK_MUTEX(m) try { \
-   boost::lock_guard<boost::mutex> lock(m); 
-
-#define END_LOCK_MUTEX } \
-   catch(const boost::thread_resource_error& e) \
-   { \
-      Error threadError(boost::thread_error::ec_from_exception(e), \
-                        ERROR_LOCATION) ; \
-      LOG_ERROR(threadError); \
+#define END_LOCK_MUTEX                                                         \
+   }                                                                           \
+   catch (const boost::thread_resource_error& e)                               \
+   {                                                                           \
+      Error threadError(boost::thread_error::ec_from_exception(e),             \
+                        ERROR_LOCATION);                                       \
+      LOG_ERROR(threadError);                                                  \
    }
 
+namespace rstudio {
 namespace core {
 namespace thread {
       
@@ -287,6 +292,7 @@ void safeLaunchThread(boost::function<void()> threadMain,
       
 } // namespace thread
 } // namespace core
+} // namespace rstudio
 
 #endif // CORE_THREAD_HPP
 

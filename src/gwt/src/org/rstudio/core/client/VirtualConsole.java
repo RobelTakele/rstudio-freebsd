@@ -18,9 +18,15 @@ import java.util.ArrayList;
 
 import org.rstudio.core.client.regex.Match;
 import org.rstudio.core.client.regex.Pattern;
+import org.rstudio.studio.client.RStudioGinjector;
+import org.rstudio.studio.client.workbench.prefs.model.UIPrefs;
 
-import com.google.gwt.safehtml.shared.SafeHtml;
-import com.google.gwt.safehtml.shared.SafeHtmlBuilder;
+import com.google.gwt.core.client.JsArrayString;
+import com.google.gwt.dom.client.Document;
+import com.google.gwt.dom.client.Element;
+import com.google.gwt.dom.client.SpanElement;
+import com.google.gwt.dom.client.Text;
+import com.google.inject.Inject;
 
 /**
  * Simulates a console that behaves like the R console, specifically with
@@ -30,22 +36,33 @@ public class VirtualConsole
 {
    public VirtualConsole()
    {
+      RStudioGinjector.INSTANCE.injectMembers(this);
    }
    
-   public void submit(String data)
+   @Inject
+   private void initialize(UIPrefs prefs)
    {
-      submit(data, null);
+      prefs_ = prefs;
+   }
+   
+   public boolean submit(String data)
+   {
+      return submit(data, null);
    }
 
-   public void submit(String data, String className)
+   // Adds the given data to the console. Returns true if the data can be 
+   // processed as an append-only operation, false if characters were 
+   // overwritten.
+   public boolean submit(String data, String className)
    {
+      boolean appendOnly = true;
       if (StringUtil.isNullOrEmpty(data))
-         return;
+         return true;
 
       if (CONTROL_SPECIAL.match(data, 0) == null)
       {
          text(data, className);
-         return;
+         return true;
       }
 
       int tail = 0;
@@ -64,15 +81,22 @@ public class VirtualConsole
          {
             case '\r':
                carriageReturn();
+               // the sequence \r\n or \n\r can be represented in an append-only
+               // way, so treat these cases as an append
+               appendOnly = 
+                     ((pos > 0 && data.charAt(pos - 1) == '\n') ||
+                      (tail < data.length() && data.charAt(tail) == '\n'));
                break;
             case '\b':
                backspace();
+               appendOnly = false;
                break;
             case '\n':
                newline();
                break;
             case '\f':
                formfeed();
+               appendOnly = false;
                break;
             default:
                assert false : "Unknown control char, please check regex";
@@ -85,28 +109,29 @@ public class VirtualConsole
 
       // If there was any plain text after the last control character, add it
       text(data.substring(tail), className);
+      return appendOnly;
    }
 
    private void backspace()
    {
-      if (pos == 0)
+      if (pos_ == 0)
          return;
-      o.deleteCharAt(--pos);
+      o.deleteCharAt(--pos_);
    }
 
    private void carriageReturn()
    {
-      if (pos == 0)
+      if (pos_ == 0)
          return;
-      while (pos > 0 && o.charAt(pos - 1) != '\n')
-         pos--;
+      while (pos_ > 0 && o.charAt(pos_ - 1) != '\n')
+         pos_--;
       // Now we're either at the beginning of the buffer, or just past a '\n'
    }
 
    private void newline()
    {
-      while (pos < o.length() && o.charAt(pos) != '\n')
-         pos++;
+      while (pos_ < o.length() && o.charAt(pos_) != '\n')
+         pos_++;
       // Now we're either at the end of the buffer, or on top of a '\n'
       text("\n", null);
    }
@@ -114,6 +139,7 @@ public class VirtualConsole
    private void formfeed()
    {
       o.setLength(0);
+      pos_ = 0;
       charClass.clear();
    }
 
@@ -121,21 +147,21 @@ public class VirtualConsole
    {
       assert text.indexOf('\r') < 0 && text.indexOf('\b') < 0;
 
-      int endPos = pos + text.length();
+      int endPos = pos_ + text.length();
       
-      o.replace(pos, endPos, text);
+      o.replace(pos_, endPos, text);
       
       // record the class of each character emitted
       if (className != null) 
       {
          padCharClass(endPos);
-         for (int i = pos; i < endPos; i++)
+         for (int i = pos_; i < endPos; i++)
          {
             charClass.set(i, className);
          }
       }
 
-      pos = endPos;
+      pos_ = endPos;
    }
    
    // ensures that the character class mapping buffer is at least 'len' 
@@ -154,36 +180,48 @@ public class VirtualConsole
    @Override
    public String toString()
    {
-      return o.toString();
+      String output = o.toString();
+      
+      int maxLength = prefs_.truncateLongLinesInConsoleHistory().getGlobalValue();
+      if (maxLength == 0)
+         return output;
+      
+      JsArrayString splat = StringUtil.split(output, "\n");
+      for (int i = 0; i < splat.length(); i++)
+      {
+         String string = splat.get(i);
+         String trimmed = StringUtil.trimRight(string);
+         if (trimmed.length() > maxLength)
+            splat.set(i, trimmed.substring(0, maxLength) + "... <truncated>");
+         else if (string.length() > maxLength)
+            splat.set(i, string.substring(0, maxLength));
+      }
+      
+      String joined = splat.join("\n");
+      return joined;
    }
    
-   public SafeHtml toSafeHtml()
+   public int getLength()
    {
-      // convert to a plain-text string
-      String plainText = toString();
-      SafeHtmlBuilder sb = new SafeHtmlBuilder();
-      String lastClass = null;
-      int len = plainText.length();
-      padCharClass(len);
-      
-      // iterate in lockstep over the plain-text string and character class
-      // assignment list; emit the appropriate tags when switching classes
-      for (int i = 0; i < len; i++)
+      return o.length();
+   }
+   
+   public void submitAndRender(String data, String clazz, Element parent)
+   {
+      if (!submit(data, clazz))
       {
-         if (!charClass.get(i).equals(lastClass))
-         {
-            if (lastClass != null) 
-               sb.appendHtmlConstant("</span>");
-            lastClass = charClass.get(i);
-            if (lastClass != null)
-               sb.appendHtmlConstant("<span class=\"" + lastClass + "\">");
-         }
-         sb.appendEscaped(plainText.substring(i, i+1));
+         // output isn't append-only; redraw the whole thing
+         // (note that even this isn't technically necessary but control 
+         // characters are relatively infrequent and additional bookkeeping
+         // would be required to determine the invalidated range when 
+         // control characters are used)
+         redraw(parent);
       }
-      if (lastClass != null)
-         sb.appendHtmlConstant("</span>");
-      
-      return sb.toSafeHtml();
+      else
+      {
+         // consolify just the data to be rendered
+         emitRange(consolify(data), clazz, parent);
+      }
    }
    
    public void clear()
@@ -198,9 +236,67 @@ public class VirtualConsole
       return console.toString();
    }
 
+   private void emitRange(String text, String clazz, Element parent)
+   {
+      if (StringUtil.isNullOrEmpty(text))
+         return;
+      Text textNode = Document.get().createTextNode(text);
+      if (clazz != null)
+      {
+         SpanElement span = Document.get().createSpanElement();
+         span.addClassName(clazz);
+         parent.appendChild(span);
+         parent = span;
+      }
+      parent.appendChild(textNode);
+   }
+   
+   public void redraw(Element parent)
+   {
+      // convert to a plain-text string
+      String plainText = toString();
+      int len = plainText.length();
+      String lastClass = null;
+      padCharClass(len);
+      
+      // clean existing content
+      parent.setInnerHTML("");
+      
+      // for performance reasons, we don't emit one character at a time;
+      // instead, we keep track of the string indices that correspond to
+      // contiguous runs of characters to emit into the stream
+      int accumulateBegin = 0;
+      int accumulateEnd = 0;
+
+      // iterate in lockstep over the plain-text string and character class
+      // assignment list; emit the appropriate tags when switching classes
+      for (int i = 0; i < len; i++)
+      {
+         if (!charClass.get(i).equals(lastClass))
+         {
+            emitRange(
+                  plainText.substring(accumulateBegin, accumulateEnd),
+                  lastClass, parent);
+            
+            // begin accumulating from the emitted point
+            accumulateBegin = accumulateEnd;
+         }
+         lastClass = charClass.get(i);
+         accumulateEnd = i;
+      }
+
+      // finishing up--emit accumulated text into stream
+      emitRange(
+            plainText.substring(accumulateBegin),
+            lastClass, parent);
+      return;
+   }
    private final StringBuilder o = new StringBuilder();
    private final ArrayList<String> charClass = new ArrayList<String>();
-   private int pos = 0;
+   private int pos_ = 0;
    private static final Pattern CONTROL = Pattern.create("[\r\b\f\n]");
    private static final Pattern CONTROL_SPECIAL = Pattern.create("[\r\b\f]");
+   
+   // Injected ----
+   private UIPrefs prefs_;
 }

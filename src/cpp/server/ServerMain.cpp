@@ -61,10 +61,12 @@
 #include "ServerPAMAuth.hpp"
 #include "ServerREnvironment.hpp"
 
-using namespace core ;
+using namespace rstudio;
+using namespace rstudio::core;
 using namespace server;
 
 // forward-declare overlay methods
+namespace rstudio {
 namespace server {
 namespace overlay {
 
@@ -74,6 +76,7 @@ void shutdown();
 
 } // namespace overlay
 } // namespace server
+} // namespace rstudio
 
 namespace {
    
@@ -98,6 +101,7 @@ http::UriHandlerFunction blockingFileHandler()
                                    "/",
                                    mainPageFilter,
                                    initJs,
+                                   options.gwtPrefix(),
                                    options.wwwUseEmulatedStack());
 }
 
@@ -177,6 +181,10 @@ void httpServerAddHandlers()
    uri_handlers::add("/docs", secureAsyncHttpHandler(secureAsyncFileHandler(), true));
    uri_handlers::add("/html_preview", secureAsyncHttpHandler(proxyContentRequest, true));
    uri_handlers::add("/rmd_output", secureAsyncHttpHandler(proxyContentRequest, true));
+   uri_handlers::add("/grid_data", secureAsyncHttpHandler(proxyContentRequest, true));
+   uri_handlers::add("/grid_resource", secureAsyncHttpHandler(proxyContentRequest, true));
+   uri_handlers::add("/chunk_output", secureAsyncHttpHandler(proxyContentRequest, true)); 
+   uri_handlers::add("/profiles", secureAsyncHttpHandler(proxyContentRequest, true));
 
    // proxy localhost if requested
    if (server::options().wwwProxyLocalhost())
@@ -301,6 +309,7 @@ Error waitForSignals()
 } // anonymous namespace
 
 // provide global access to handlers
+namespace rstudio {
 namespace server {
 namespace uri_handlers {
 
@@ -327,6 +336,17 @@ void setBlockingDefault(const http::UriHandlerFunction& handler)
   s_pHttpServer->setBlockingDefaultHandler(handler);
 }
 
+void setRequestFilter(const core::http::RequestFilter& filter)
+{
+   s_pHttpServer->setRequestFilter(filter);
+}
+
+void setResponseFilter(const core::http::ResponseFilter& filter)
+{
+   s_pHttpServer->setResponseFilter(filter);
+}
+
+
 } // namespace uri_handlers
 
 namespace scheduler {
@@ -338,6 +358,7 @@ void addCommand(boost::shared_ptr<ScheduledCommand> pCmd)
 
 } // namespace scheduler
 } // namespace server
+} // namespace rstudio
 
 
 int main(int argc, char * const argv[]) 
@@ -377,23 +398,14 @@ int main(int argc, char * const argv[])
             return core::system::exitFailure(error, ERROR_LOCATION);
 
          // set file creation mask to 022 (might have inherted 0 from init)
-         setUMask(core::system::OthersNoWriteMask);
+         if (options.serverSetUmask())
+            setUMask(core::system::OthersNoWriteMask);
       }
 
       // wait until now to output options warnings (we need to wait for our
       // first call to logging functions until after daemonization)
       if (!optionsWarnings.empty())
          program_options::reportWarnings(optionsWarnings, ERROR_LOCATION);
-
-      // detect R environment variables (calls R (and this forks) so must
-      // happen after daemonize so that upstart script can correctly track us
-      std::string errMsg;
-      bool detected = r_environment::initialize(&errMsg);
-      if (!detected)
-      {
-         program_options::reportError(errMsg, ERROR_LOCATION);
-         return EXIT_FAILURE;
-      }
 
       // increase the number of open files allowed (need more files
       // so we can supports lots of concurrent connectins)
@@ -447,6 +459,16 @@ int main(int argc, char * const argv[])
       error = overlay::initialize();
       if (error)
          return core::system::exitFailure(error, ERROR_LOCATION);
+
+      // detect R environment variables (calls R (and this forks) so must
+      // happen after daemonize so that upstart script can correctly track us
+      std::string errMsg;
+      bool detected = r_environment::initialize(&errMsg);
+      if (!detected)
+      {
+         program_options::reportError(errMsg, ERROR_LOCATION);
+         return EXIT_FAILURE;
+      }
 
       // add handlers and initiliaze addins (offline has distinct behavior)
       if (server::options().serverOffline())

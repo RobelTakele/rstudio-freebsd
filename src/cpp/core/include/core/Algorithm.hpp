@@ -17,6 +17,16 @@
 #ifndef CORE_ALGORITHM_HPP
 #define CORE_ALGORITHM_HPP
 
+#include <vector>
+#include <algorithm>
+
+#include <boost/type_traits.hpp>
+#include <boost/algorithm/string.hpp>
+
+#include <core/StringUtils.hpp>
+#include <core/type_traits/TypeTraits.hpp>
+
+namespace rstudio {
 namespace core {
 namespace algorithm {
 
@@ -54,9 +64,174 @@ OutputIterator copy_transformed_if(InputIterator begin,
    return destBegin;
 }
 
+namespace detail {
+
+template <typename Container, typename ValueType>
+typename boost::enable_if_c< type_traits::has_key_type<Container>::value, bool >::type
+contains(const Container& container, const ValueType& value, boost::true_type)
+{
+   return container.count(value);
+}
+
+template <typename Container, typename ValueType>
+typename boost::disable_if_c< type_traits::has_key_type<Container>::value, bool >::type
+contains(const Container& container, const ValueType& value, boost::false_type)
+{
+   return std::find(container.begin(), container.end(), value) != container.end();
+}
+
+} // namespace detail
+
+template <typename Container, typename ValueType>
+bool contains(const Container& container, const ValueType& value)
+{
+   return detail::contains(
+            container,
+            value,
+            type_traits::has_key_type<Container>());
+}
+
+namespace detail {
+
+template <typename Container, typename ValueType>
+typename boost::enable_if_c<type_traits::has_key_type<Container>::value, void>::type
+insert(Container& container, const ValueType& value, boost::true_type)
+{
+   container.insert(value);
+}
+
+template <typename Container, typename ValueType>
+typename boost::disable_if_c<type_traits::has_key_type<Container>::value, void>::type
+insert(Container& container, const ValueType& value, boost::false_type)
+{
+   container.push_back(value);
+}
+
+} // namespace detail
+
+template <typename Container, typename ValueType>
+void insert(Container& container, const ValueType& value)
+{
+   detail::insert(container, value, type_traits::has_key_type<Container>());
+}
+
+namespace detail {
+
+template <typename Container, typename Iterator>
+typename boost::enable_if_c<type_traits::has_key_type<Container>::value, void>::type
+insert(Container& container, Iterator begin, Iterator end, boost::true_type)
+{
+   container.insert(begin, end);
+}
+
+template <typename Container, typename Iterator>
+typename boost::disable_if_c<type_traits::has_key_type<Container>::value, void>::type
+insert(Container& container, Iterator begin, Iterator end, boost::false_type)
+{
+   container.insert(container.end(), begin, end);
+}
+
+} // namespace detail
+
+template <typename Container, typename Iterator>
+void insert(Container& container, Iterator begin, Iterator end)
+{
+   detail::insert(container, begin, end,
+                  type_traits::has_key_type<Container>());
+}
+
+/* Wrappers for the erase-remove idiom */
+template <typename Container, typename ValueType>
+void expel(Container& container, const ValueType& value)
+{
+   container.erase(std::remove(container.begin(), container.end(), value), container.end());
+}
+
+template <typename Container, typename Predicate>
+void expel_if(Container& container, Predicate predicate)
+{
+   container.erase(std::remove_if(container.begin(), container.end(), predicate), container.end());
+}
+
+/* Value-based wrappers for erase-remove idiom */
+template <typename Container, typename ValueType>
+Container without(Container container, const ValueType& value)
+{
+   container.erase(std::remove(container.begin(), container.end(), value), container.end());
+   return container;
+}
+
+template <typename Container, typename Predicate>
+Container without_if(Container container, Predicate predicate)
+{
+   container.erase(std::remove_if(container.begin(), container.end(), predicate), container.end());
+   return container;
+}
+
+template <typename T>
+std::vector<T> seq(T length)
+{
+   std::vector<T> result;
+   result.reserve(length);
+   for (std::size_t i = 0; i < length; ++i)
+      result.push_back(i);
+   return result;
+}
+
+template <typename AssociativeContainer,
+          typename KeyType,
+          typename MappedType>
+bool get(const AssociativeContainer& container,
+         const KeyType& key,
+         MappedType** ppValue)
+{
+   if (!container.count(key))
+      return false;
+   
+   *ppValue = &(const_cast<AssociativeContainer&>(container)[key]);
+   return true;
+}
+
+template <typename ContainerType>
+void append(ContainerType* pContainer, const ContainerType& other)
+{
+   pContainer->insert(
+            pContainer->end(),
+            other.begin(),
+            other.end());
+}
+
+inline std::vector<std::string> split(const std::string& string, const std::string& delim)
+{
+   std::vector<std::string> result;
+   
+   std::string::size_type start = 0;
+   std::string::size_type end   = string.find(delim, start);
+   
+   // Add all of the initial split pieces
+   while (end != std::string::npos)
+   {
+      result.push_back(string_utils::substring(string, start, end));
+      
+      start = end + delim.size();
+      end   = string.find(delim, start);
+   }
+   
+   // Add the final piece
+   result.push_back(string_utils::substring(string, start));
+   
+   // And return!
+   return result;
+}
+
+inline std::string join(const std::vector<std::string>& container, const std::string& delim)
+{
+   return boost::algorithm::join(container, delim);
+}
 
 } // namespace algorithm
 } // namespace core
+} // namespace rstudio
 
 
 #endif // CORE_ALGORITHM_HPP

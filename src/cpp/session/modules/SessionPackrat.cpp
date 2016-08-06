@@ -36,7 +36,7 @@
 #include "SessionPackages.hpp"
 #include "session-config.h"
 
-using namespace core;
+using namespace rstudio::core;
 
 #ifdef TRACE_PACKRAT_OUTPUT
 #define PACKRAT_TRACE(x) \
@@ -64,6 +64,7 @@ using namespace core;
 // compatibility with older versions of RStudio
 #define kPackratRStudioProtocolVersion 1
 
+namespace rstudio {
 namespace session {
 
 namespace modules { 
@@ -615,24 +616,6 @@ void onConsolePrompt(const std::string& prompt)
    pendingSnapshot(EXEC_PENDING_SNAPSHOT);
 }
 
-void printDevtoolsMessage()
-{
-   r::exec::message(
-      "To install GitHub packages within packrat projects please use:\n\n"
-      "    packrat::install_github\n");
-}
-
-void onConsoleInput(const std::string& input)
-{
-   // if there is about to be a devtools not found error then print
-   // a message indicating that packrat::devtools should be used
-   if (boost::algorithm::starts_with(input, "devtools::install_github") &&
-       !module_context::isPackageInstalled("devtools"))
-   {
-      module_context::scheduleDelayedWork(boost::posix_time::milliseconds(50),
-                                          printDevtoolsMessage);
-   }
-}
 
 // RPC -----------------------------------------------------------------------
 
@@ -874,7 +857,6 @@ void afterSessionInitHook(bool newSession)
          LOG_ERROR(error);
 
       module_context::events().onDetectChanges.connect(onDetectChanges);
-      module_context::events().onConsoleInput.connect(onConsoleInput);
 
       // check whether there are pending actions and if there are then
       // ensure that the packages pane is activated. we do this on a
@@ -1011,7 +993,7 @@ namespace module_context {
 
 bool isRequiredPackratInstalled()
 {
-   return getPackageCompatStatus("packrat", "0.4.0",
+   return getPackageCompatStatus("packrat", "0.4.6",
                                   kPackratRStudioProtocolVersion) == COMPAT_OK;
 }
 
@@ -1163,4 +1145,5 @@ json::Object packratOptionsAsJson()
 
 } // namespace module_context
 } // namespace session
+} // namespace rstudio
 

@@ -1,7 +1,11 @@
 #!/bin/sh
 
 daemonCmd() {
-  if test -e /etc/init/rstudio-server.conf
+  INIT_SYSTEM=`cat /proc/1/comm 2>/dev/null`
+  if test "$INIT_SYSTEM" = "systemd"
+  then
+     eval "systemctl $1 rstudio-server.service"
+  elif test -e /etc/init/rstudio-server.conf
   then
      eval "initctl $1 rstudio-server"
   else
@@ -20,6 +24,11 @@ verifyInstallation() {
 
 
 case "$1" in
+    
+    status)
+        daemonCmd "status"
+        ;;
+    
     start)
         testConfig || return $?
         daemonCmd "start"
@@ -28,11 +37,14 @@ case "$1" in
     stop)
         daemonCmd "stop"
         killall -s USR2 $2 $3 $4 $5 $6 $7 $8 $9  rsession
+        killall -s USR2 $2 $3 $4 $5 $6 $7 $8 $9  rworkspaces 2>/dev/null
         ;;
 
     restart)
         testConfig || return $?
         daemonCmd "restart"
+        killall -s USR2 $2 $3 $4 $5 $6 $7 $8 $9  rsession
+        killall -s USR2 $2 $3 $4 $5 $6 $7 $8 $9  rworkspaces 2>/dev/null
         ;;
 
     test-config)
@@ -57,6 +69,7 @@ case "$1" in
 
     suspend-all)
         killall -s USR1 $2 $3 $4 $5 $6 $7 $8 $9 rsession
+        killall -s USR1 $2 $3 $4 $5 $6 $7 $8 $9 rworkspaces 2>/dev/null
         ;;
 
     force-suspend-session)
@@ -71,6 +84,22 @@ case "$1" in
 
     force-suspend-all)
         killall -s USR2 $2 $3 $4 $5 $6 $7 $8 $9  rsession
+        killall -s USR2 $2 $3 $4 $5 $6 $7 $8 $9  rworkspaces 2>/dev/null
+        ;;
+
+    kill-session)
+        if test -n $2
+        then
+           kill -s KILL $3 $4 $5 $6 $7 $8 $9 $2
+        else
+           echo "Must specify PID of session to kill"
+           exit 1
+        fi
+        ;;
+
+    kill-all)
+        killall -s KILL $2 $3 $4 $5 $6 $7 $8 $9  rsession
+        killall -s KILL $2 $3 $4 $5 $6 $7 $8 $9  rworkspaces 2>/dev/null
         ;;
 
     offline)
@@ -78,6 +107,7 @@ case "$1" in
         touch /var/lib/rstudio-server/offline
         daemonCmd "restart"
         killall -s USR2 $2 $3 $4 $5 $6 $7 $8 $9  rsession
+        killall -s USR2 $2 $3 $4 $5 $6 $7 $8 $9  rworkspaces
         ;;
 
     online)
@@ -95,7 +125,7 @@ case "$1" in
         ;;
 
     *)
-        echo $"Usage: rstudio-server {start|stop|restart|test-config|verify-installation|suspend-session|suspend-all|force-suspend-session|force-suspend-all|offline|online|active-sessions|version}"
+        echo $"Usage: rstudio-server {status|start|stop|restart|test-config|verify-installation|suspend-session|suspend-all|force-suspend-session|force-suspend-all|kill-session|kill-all|offline|online|active-sessions|version}"
         exit 2
 esac
 

@@ -70,7 +70,7 @@ public class Synctex implements CompilePdfStartedEvent.Handler,
       satellite_ = satellite;
       
       // main window and satellite export callbacks to eachother
-      if (!satellite.isCurrentWindowSatellite())
+      if (!Satellite.isCurrentWindowSatellite())
       {
          registerMainWindowCallbacks();
          
@@ -98,7 +98,7 @@ public class Synctex implements CompilePdfStartedEvent.Handler,
    @Override
    public void onCompilePdfCompleted(CompilePdfCompletedEvent event)
    {
-      String pdfPreview = prefs_.getPdfPreviewValue();
+      String pdfPreview = prefs_.pdfPreview().getValue();
       
       boolean synctexSupported =
                   // internal previewer
@@ -214,7 +214,7 @@ public class Synctex implements CompilePdfStartedEvent.Handler,
    
    public void inverseSearch(PdfLocation pdfLocation)
    {
-      if (satellite_.isCurrentWindowSatellite())
+      if (Satellite.isCurrentWindowSatellite())
       {
          // switch back to the main window 
          satellite_.focusMainWindow();
@@ -338,8 +338,8 @@ public class Synctex implements CompilePdfStartedEvent.Handler,
    private boolean handleDesktopSynctex()
    {
       return Desktop.isDesktop() && 
-             !satellite_.isCurrentWindowSatellite() &&
-              prefs_.getPdfPreviewValue().equals(
+             !Satellite.isCurrentWindowSatellite() &&
+             prefs_.pdfPreview().getValue().equals(
                                    UIPrefs.PDF_PREVIEW_DESKTOP_SYNCTEX);
    }
 

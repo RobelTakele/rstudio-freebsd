@@ -26,6 +26,7 @@
 #include <algorithm>
 #include <cstdlib>
 #include <csignal>
+#include <limits>
 
 #include <boost/shared_ptr.hpp>
 #include <boost/function.hpp>
@@ -41,6 +42,7 @@
 #include <core/BoostThread.hpp>
 #include <core/ConfigUtils.hpp>
 #include <core/FilePath.hpp>
+#include <core/FileLock.hpp>
 #include <core/Exec.hpp>
 #include <core/Scope.hpp>
 #include <core/Settings.hpp>
@@ -64,6 +66,9 @@
 #include <core/system/ParentProcessMonitor.hpp>
 #include <core/system/FileMonitor.hpp>
 #include <core/text/TemplateFilter.hpp>
+#include <core/r_util/RSessionContext.hpp>
+#include <core/r_util/REnvironment.hpp>
+#include <core/WaitUtils.hpp>
 
 #include <r/RJsonRpc.hpp>
 #include <r/RExec.hpp>
@@ -88,13 +93,17 @@ extern "C" const char *locale2charset(const char *);
 #include <session/SessionSourceDatabase.hpp>
 #include <session/SessionPersistentState.hpp>
 #include <session/SessionContentUrls.hpp>
+#include <session/SessionScopes.hpp>
+#include <session/SessionClientEventService.hpp>
+#include <session/RVersionSettings.hpp>
 
 #include "SessionAddins.hpp"
 
 #include "SessionModuleContextInternal.hpp"
 
 #include "SessionClientEventQueue.hpp"
-#include "SessionClientEventService.hpp"
+
+#include <session/SessionRUtil.hpp>
 
 #include "modules/SessionAbout.hpp"
 #include "modules/SessionAgreement.hpp"
@@ -117,9 +126,11 @@ extern "C" const char *locale2charset(const char *);
 #include "modules/SessionPackages.hpp"
 #include "modules/SessionPackrat.hpp"
 #include "modules/SessionProfiler.hpp"
+#include "modules/SessionRAddins.hpp"
+#include "modules/SessionRCompletions.hpp"
 #include "modules/SessionRPubs.hpp"
 #include "modules/SessionRHooks.hpp"
-#include "modules/SessionShinyApps.hpp"
+#include "modules/SessionRSConnect.hpp"
 #include "modules/SessionShinyViewer.hpp"
 #include "modules/SessionSpelling.hpp"
 #include "modules/SessionSource.hpp"
@@ -129,19 +140,28 @@ extern "C" const char *locale2charset(const char *);
 #include "modules/SessionLimits.hpp"
 #include "modules/SessionLists.hpp"
 #include "modules/build/SessionBuild.hpp"
+#include "modules/clang/SessionClang.hpp"
+#include "modules/connections/SessionConnections.hpp"
 #include "modules/data/SessionData.hpp"
 #include "modules/environment/SessionEnvironment.hpp"
 #include "modules/overlay/SessionOverlay.hpp"
 #include "modules/presentation/SessionPresentation.hpp"
 #include "modules/rmarkdown/SessionRMarkdown.hpp"
+#include "modules/rmarkdown/SessionRmdNotebook.hpp"
 #include "modules/shiny/SessionShiny.hpp"
 #include "modules/viewer/SessionViewer.hpp"
+#include "modules/SessionDiagnostics.hpp"
+#include "modules/SessionMarkers.hpp"
+#include "modules/SessionSnippets.hpp"
+#include "modules/SessionUserCommands.hpp"
+#include "modules/SessionRAddins.hpp"
 
 #include "modules/SessionGit.hpp"
 #include "modules/SessionSVN.hpp"
 
 #include <session/SessionConsoleProcess.hpp>
 
+#include <session/projects/ProjectsSettings.hpp>
 #include <session/projects/SessionProjects.hpp>
 #include "projects/SessionProjectsInternal.hpp"
 
@@ -151,16 +171,25 @@ extern "C" const char *locale2charset(const char *);
 
 #include "session-config.h"
 
-using namespace core; 
-using namespace session;
-using namespace session::client_events;
+#include <tests/TestRunner.hpp>
+
+using namespace rstudio;
+using namespace rstudio::core;
+
+// Use rsession alias to avoid collision with 'session'
+// object brought in by Catch
+namespace rsession = rstudio::session;
+using namespace rsession;
+using namespace rsession::client_events;
 
 // forward-declare overlay methods
+namespace rstudio {
 namespace session {
 namespace overlay {
 Error initialize();
 } // namespace overlay
 } // namespace session
+} // namespace rstudio
 
 namespace {
 
@@ -190,13 +219,20 @@ bool s_sessionInitialized = false;
 // was the underlying r session resumed
 bool s_rSessionResumed = false;
 
+// url for next session
+std::string s_nextSessionUrl;
+
+// indicates whether we should destroy the session at cleanup time
+// (true if the user does a full quit)
+bool s_destroySession = false;
+
 // manage global state indicating whether R is processing input
 volatile sig_atomic_t s_rProcessingInput = 0;
 
 // did we fail to coerce the charset to UTF-8
 bool s_printCharsetWarning = false;
 
-std::queue<r::session::RConsoleInput> s_consoleInputBuffer;
+std::queue<rstudio::r::session::RConsoleInput> s_consoleInputBuffer;
 
 // json rpc methods we handle (the rest are delegated to the HttpServer)
 const char * const kClientInit = "client_init" ;
@@ -238,63 +274,32 @@ void handleUSR2(int unused)
       s_forceSuspendInterruptedR = 1;
 
    // set the r interrupt flag (always)
-   r::exec::setInterruptsPending(true);
+   rstudio::r::exec::setInterruptsPending(true);
 
    // note that a suspend is being forced. 
    s_forceSuspend = 1;
 }
 
-// version of the executable
-double s_version = 0;
-   
-// installed version (computed as the time in seconds since epoch that 
-// the running/served code was installed) can be distinct from the version 
-// of the currently running executable if a deployment occured after this 
-// executable started running.
-double installedVersion()
+// version of the executable -- this is the legacy version designator. we
+// set it to double max so that it always invalidates legacy clients
+double s_version = std::numeric_limits<double>::max();
+
+// client version -- this is determined by the git revision hash. the client
+// and the server can diverge if a new version of the server was installed
+// underneath a previously rendered client. if versions diverge then a reload
+// of the client is forced
+inline std::string clientVersion()
 {
    // never return a version in desktop mode
-   if (session::options().programMode() == kSessionProgramModeDesktop)
-      return 0;
+   if (rsession::options().programMode() == kSessionProgramModeDesktop)
+      return std::string();
 
    // never return a version in standalone mode
-   if (session::options().standalone())
-      return 0;
+   if (rsession::options().standalone())
+      return std::string();
 
-   // read installation time (as string) from file (return 0 if not found)
-   FilePath installedPath("/var/lib/rstudio-server/installed");
-   if (!installedPath.exists())
-      return 0;
-   
-   // attempt to get the value (return 0 if we have any trouble)
-   std::string installedStr;
-   Error error = readStringFromFile(installedPath, &installedStr);
-   if (error)
-   {
-      LOG_ERROR(error);
-      return 0;
-   }
-   
-   // empty string means 0
-   if (installedStr.empty())
-   {
-      LOG_ERROR_MESSAGE("No value within /var/lib/rstudio-server/installed");
-      return 0;
-   }
-   
-   // attempt to parse the value into a double
-   double installedSeconds = 0.0;
-   try
-   {
-      std::istringstream istr(installedStr);
-      istr >> installedSeconds;
-      if (istr.fail())
-         LOG_ERROR(systemError(boost::system::errc::io_error, ERROR_LOCATION));
-   }
-   CATCH_UNEXPECTED_EXCEPTION
-    
-   // return installed seconds as version
-   return installedSeconds ;
+   // clientVersion is the git revision hash
+   return RSTUDIO_GIT_REVISION_HASH;
 }
    
 
@@ -316,7 +321,7 @@ void ensureSessionInitialized()
    // ensure the session is fully deserialized (deferred deserialization
    // is supported so that the workbench UI can load without having to wait
    // for the potentially very lengthy deserialization of the environment)
-   r::session::ensureDeserialized();
+   rstudio::r::session::ensureDeserialized();
 }
 
 FilePath getDefaultWorkingDirectory()
@@ -328,18 +333,40 @@ FilePath getDefaultWorkingDirectory()
    if (defaultWorkingDir.exists() && defaultWorkingDir.isDirectory())
       return defaultWorkingDir;
    else
-      return session::options().userHomePath();
+      return rsession::options().userHomePath();
 }
 
 FilePath getInitialWorkingDirectory()
 {
    // check for a project
    if (projects::projectContext().hasProject())
+   {
       return projects::projectContext().directory();
+   }
+
+   // check for working dir in project none
+   else if (options().sessionScope().isProjectNone())
+   {
+      // if this is the initial session then use the default working directory
+      // (reset initial to false so this is one shot thing)
+      using namespace module_context;
+      if (activeSession().initial())
+      {
+         activeSession().setInitial(false);
+         return getDefaultWorkingDirectory();
+      }
+
+      FilePath workingDirPath = module_context::resolveAliasedPath(
+                      module_context::activeSession().workingDir());
+      if (workingDirPath.exists())
+         return workingDirPath;
+      else
+         return getDefaultWorkingDirectory();
+   }
 
    // see if there is an override from the environment (perhaps based
    // on a folder drag and drop or other file association)
-   FilePath workingDirPath = session::options().initialWorkingDirOverride();
+   FilePath workingDirPath = rsession::options().initialWorkingDirOverride();
    if (workingDirPath.exists() && workingDirPath.isDirectory())
    {
       return workingDirPath;
@@ -351,60 +378,45 @@ FilePath getInitialWorkingDirectory()
    }
 }
 
-std::string switchToProject(const http::Request& request)
+FilePath getProjectUserDataDir(const ErrorLocation& location)
 {
-   std::string referrer = request.headerValue("referer");
-   std::string baseURL, queryString;
-   http::URL(referrer).split(&baseURL, &queryString);
-   http::Fields fields;
-   http::util::parseQueryString(queryString, &fields);
-   std::string project = http::util::fieldValue(fields, "project");
+   // get the project directory
+   FilePath projectDir = projects::projectContext().directory();
 
-   if (!project.empty())
+   // presume that the project dir is the data dir then check
+   // for a .Ruserdata directory as an alternative
+   FilePath dataDir = projectDir;
+
+   FilePath ruserdataDir = projectDir.childPath(".Ruserdata");
+   if (ruserdataDir.exists())
    {
-      // resolve project
-      FilePath projectPath = module_context::resolveAliasedPath(project);
-      if ((projectPath.extensionLowerCase() != ".rproj") &&
-          projectPath.isDirectory())
+      // create user-specific subdirectory if necessary
+      FilePath userDir = ruserdataDir.childPath(core::system::username());
+      Error error = userDir.ensureDirectory();
+      if (!error)
       {
-         FilePath discoveredPath = r_util::projectFromDirectory(projectPath);
-         if (!discoveredPath.empty())
-            projectPath = discoveredPath;
+         dataDir = userDir;
       }
-      project = module_context::createAliasedPath(projectPath);
-
-      // check if we're already in this project
-      if (projects::projectContext().hasProject())
-      {
-         std::string currentProject = module_context::createAliasedPath(
-                                          projects::projectContext().file());
-         if (project != currentProject)
-            return project;
-         else
-            return std::string();
-      }
-      // no project active so need to switch
       else
       {
-         return project;
+         core::log::logError(error, location);
       }
    }
-   // no project in the query string
-   else
-   {
-      return std::string();
-   }
+
+   // return the data dir
+   return dataDir;
 }
+
 
 
 void handleClientInit(const boost::function<void()>& initFunction,
                       boost::shared_ptr<HttpConnection> ptrConnection)
 {
    // alias options
-   Options& options = session::options();
+   Options& options = rsession::options();
    
    // calculate initialization parameters
-   std::string clientId = session::persistentState().newActiveClientId();
+   std::string clientId = rsession::persistentState().newActiveClientId();
    bool resumed = s_rSessionResumed || s_sessionInitialized;
 
    // if we are resuming then we don't need to worry about events queued up
@@ -443,21 +455,21 @@ void handleClientInit(const boost::function<void()>& initFunction,
    }
 
    // temp dir
-   FilePath tempDir = r::session::utils::tempDir();
+   FilePath tempDir = rstudio::r::session::utils::tempDir();
    Error error = tempDir.ensureDirectory();
    if (error)
       LOG_ERROR(error);
    sessionInfo["temp_dir"] = tempDir.absolutePath();
    
-   // installed version
-   sessionInfo["version"] = installedVersion();
+   // installed client version
+   sessionInfo["client_version"] = clientVersion();
    
    // default prompt
-   sessionInfo["prompt"] = r::options::getOption<std::string>("prompt");
+   sessionInfo["prompt"] = rstudio::r::options::getOption<std::string>("prompt");
 
    // client state
    json::Object clientStateObject;
-   r::session::clientState().currentState(&clientStateObject);
+   rstudio::r::session::clientState().currentState(&clientStateObject);
    sessionInfo["client_state"] = clientStateObject;
    
    // source documents
@@ -472,10 +484,10 @@ void handleClientInit(const boost::function<void()>& initFunction,
    sessionInfo["pendingAgreement"] = modules::agreement::pendingAgreement();
 
    // docs url
-   sessionInfo["docsURL"] = session::options().docsURL();
+   sessionInfo["docsURL"] = rsession::options().docsURL();
 
    // get alias to console_actions and get limit
-   r::session::ConsoleActions& consoleActions = r::session::consoleActions();
+   rstudio::r::session::ConsoleActions& consoleActions = rstudio::r::session::consoleActions();
    sessionInfo["console_actions_limit"] = consoleActions.capacity();
 
    // resumed
@@ -497,6 +509,8 @@ void handleClientInit(const boost::function<void()>& initFunction,
 
    sessionInfo["find_in_files_state"] = modules::find::findInFilesStateAsJson();
 
+   sessionInfo["markers_state"] = modules::markers::markersStateAsJson();
+
    sessionInfo["rstudio_version"] = std::string(RSTUDIO_VERSION);
 
    sessionInfo["ui_prefs"] = userSettings().uiPrefs();
@@ -508,6 +522,12 @@ void handleClientInit(const boost::function<void()>& initFunction,
    std::string initialWorkingDir = module_context::createAliasedPath(
                                                 getInitialWorkingDirectory());
    sessionInfo["initial_working_dir"] = initialWorkingDir;
+   std::string defaultWorkingDir = module_context::createAliasedPath(
+                                                getDefaultWorkingDirectory());
+   sessionInfo["default_working_dir"] = defaultWorkingDir;
+
+   // default project dir
+   sessionInfo["default_project_dir"] = options.defaultProjectDir();
 
    // active project file
    if (projects::projectContext().hasProject())
@@ -516,12 +536,22 @@ void handleClientInit(const boost::function<void()>& initFunction,
                               projects::projectContext().file());
       sessionInfo["project_ui_prefs"] = projects::projectContext().uiPrefs();
       sessionInfo["project_open_docs"] = projects::projectContext().openDocs();
+      sessionInfo["project_supports_sharing"] = 
+         projects::projectContext().supportsSharing();
+      sessionInfo["project_parent_browseable"] = 
+         projects::projectContext().parentBrowseable();
+      sessionInfo["project_user_data_directory"] =
+       module_context::createAliasedPath(getProjectUserDataDir(ERROR_LOCATION));
+
    }
    else
    {
       sessionInfo["active_project_file"] = json::Value();
       sessionInfo["project_ui_prefs"] = json::Value();
       sessionInfo["project_open_docs"] = json::Value();
+      sessionInfo["project_supports_sharing"] = false;
+      sessionInfo["project_owned_by_user"] = false;
+      sessionInfo["project_user_data_directory"] = json::Value();
    }
 
    sessionInfo["system_encoding"] = std::string(::locale2charset(NULL));
@@ -541,7 +571,7 @@ void handleClientInit(const boost::function<void()>& initFunction,
    sessionInfo["lists"] = modules::lists::allListsAsJson();
 
    sessionInfo["console_processes"] =
-         session::console_process::processesAsJson();
+         rsession::console_process::processesAsJson();
 
    // send sumatra pdf exe path if we are on windows
 #ifdef _WIN32
@@ -554,6 +584,9 @@ void handleClientInit(const boost::function<void()>& initFunction,
    {
       std::string type = projects::projectContext().config().buildType;
       sessionInfo["build_tools_type"] = type;
+
+      sessionInfo["build_tools_bookdown_website"] =
+                              module_context::isBookdownWebsite();
 
       FilePath buildTargetDir = projects::projectContext().buildTargetPath();
       if (!buildTargetDir.empty())
@@ -577,16 +610,20 @@ void handleClientInit(const boost::function<void()>& initFunction,
    else
    {
       sessionInfo["build_tools_type"] = r_util::kBuildTypeNone;
+      sessionInfo["build_tools_bookdown_website"] = false;
       sessionInfo["build_target_dir"] = json::Value();
       sessionInfo["has_pkg_src"] = false;
       sessionInfo["has_pkg_vig"] = false;
    }
 
    sessionInfo["presentation_state"] = modules::presentation::presentationStateAsJson();
+   sessionInfo["presentation_commands"] = options.allowPresentationCommands();
+
+   sessionInfo["tutorial_api_available"] = false;
+   sessionInfo["tutorial_api_client_origin"] = json::Value();
 
    sessionInfo["build_state"] = modules::build::buildStateAsJson();
-   sessionInfo["devtools_installed"] = module_context::isPackageInstalled(
-                                                                  "devtools");   
+   sessionInfo["devtools_installed"] = module_context::isMinimumDevtoolsInstalled();
    sessionInfo["have_cairo_pdf"] = modules::plots::haveCairoPdf();
 
    sessionInfo["have_srcref_attribute"] =
@@ -595,13 +632,12 @@ void handleClientInit(const boost::function<void()>& initFunction,
    // console history -- we do this at the end because
    // restoreBuildRestartContext may have reset it
    json::Array historyArray;
-   r::session::consoleHistory().asJson(&historyArray);
+   rstudio::r::session::consoleHistory().asJson(&historyArray);
    sessionInfo["console_history"] = historyArray;
    sessionInfo["console_history_capacity"] =
-                              r::session::consoleHistory().capacity();
+                              rstudio::r::session::consoleHistory().capacity();
 
-   sessionInfo["disable_packages"] =
-           !core::system::getenv("RSTUDIO_DISABLE_PACKAGES").empty();
+   sessionInfo["disable_packages"] = module_context::disablePackages();
 
    sessionInfo["disable_check_for_updates"] =
           !core::system::getenv("RSTUDIO_DISABLE_CHECK_FOR_UPDATES").empty();
@@ -613,10 +649,23 @@ void handleClientInit(const boost::function<void()>& initFunction,
    sessionInfo["allow_shell"] = options.allowShell();
    sessionInfo["allow_file_download"] = options.allowFileDownloads();
    sessionInfo["allow_remove_public_folder"] = options.allowRemovePublicFolder();
-   sessionInfo["allow_rpubs_publish"] = options.allowRpubsPublish();
 
-   // check whether a switch project is required
-   sessionInfo["switch_to_project"] = switchToProject(ptrConnection->request());
+   // publishing may be disabled globally or just for external services, and
+   // via configuration options or environment variables
+   bool allowPublish = options.allowPublish() &&
+      core::system::getenv("RSTUDIO_DISABLE_PUBLISH").empty();
+   sessionInfo["allow_publish"] = allowPublish;
+
+   sessionInfo["allow_external_publish"] = options.allowRpubsPublish() &&
+      options.allowExternalPublish() &&
+      core::system::getenv("RSTUDIO_DISABLE_EXTERNAL_PUBLISH").empty() &&
+      allowPublish;
+
+   // allow opening shared projects if it's enabled, and if there's shared
+   // storage from which we can discover the shared projects
+   sessionInfo["allow_open_shared_projects"] = 
+         core::system::getenv(kRStudioDisableProjectSharing).empty() &&
+         !options.getOverlayOption(kSessionSharedStoragePath).empty();
 
    sessionInfo["environment_state"] = modules::environment::environmentStateAsJson();
    sessionInfo["error_state"] = modules::errors::errorStateAsJson();
@@ -626,10 +675,51 @@ void handleClientInit(const boost::function<void()>& initFunction,
            (options.programMode() == kSessionProgramModeServer) &&
            options.showUserIdentity();
 
-   // light up shinyapps-related UI features if shinyapps is installed
-   sessionInfo["shinyapps_available"] = session::options().allowRpubsPublish();
    sessionInfo["rmarkdown_available"] =
          modules::rmarkdown::rmarkdownPackageAvailable();
+
+   sessionInfo["packrat_available"] =
+                     module_context::isRequiredPackratInstalled();
+
+
+   sessionInfo["knit_params_available"] =
+         modules::rmarkdown::knitParamsAvailable();
+
+   sessionInfo["clang_available"] = modules::clang::isAvailable();
+
+   // don't show help home until we figure out a sensible heuristic
+   // sessionInfo["show_help_home"] = options.showHelpHome();
+   sessionInfo["show_help_home"] = false;
+
+   sessionInfo["multi_session"] = options.multiSession();
+
+   json::Object rVersionsJson;
+   rVersionsJson["r_version"] = module_context::rVersion();
+   rVersionsJson["r_home_dir"] = module_context::rHomeDir();
+   sessionInfo["r_versions_info"] = rVersionsJson;
+
+   sessionInfo["show_user_home_page"] = options.showUserHomePage();
+   sessionInfo["user_home_page_url"] = json::Value();
+   
+   sessionInfo["r_addins"] = modules::r_addins::addinRegistryAsJson();
+
+   sessionInfo["connections_enabled"] = modules::connections::connectionsEnabled();
+   sessionInfo["activate_connections"] = modules::connections::activateConnections();
+   sessionInfo["connection_list"] = modules::connections::connectionsAsJson();
+   sessionInfo["active_connections"] = modules::connections::activeConnectionsAsJson();
+
+   std::string sessionId = module_context::activeSession().id();
+   if (sessionId.empty())
+   {
+      // create virtual session ID if we don't have an explicitly assigned ID
+      sessionId = resumed ?
+         rsession::persistentState().virtualSessionId() :
+         rsession::persistentState().newVirtualSessionId();
+
+   }
+   sessionInfo["session_id"] = sessionId;
+
+   module_context::events().onSessionInfo(&sessionInfo);
 
    // send response  (we always set kEventsPending to false so that the client
    // won't poll for events until it is ready)
@@ -812,16 +902,26 @@ bool parseAndValidateJsonRpcConnection(
    }
 
    // check for invalid client id
-   if (pJsonRpcRequest->clientId != session::persistentState().activeClientId())
+   if (pJsonRpcRequest->clientId != rsession::persistentState().activeClientId())
    {
       Error error(json::errc::InvalidClientId, ERROR_LOCATION);
       ptrConnection->sendJsonRpcError(error);
       return false;
    }
 
-   // check for old client version
+   // check for legacy client version (need to invalidate any client using
+   // the old version field)
    if ( (pJsonRpcRequest->version > 0) &&
         (s_version > pJsonRpcRequest->version) )
+   {
+      Error error(json::errc::InvalidClientVersion, ERROR_LOCATION);
+      ptrConnection->sendJsonRpcError(error);
+      return false;
+   }
+
+   // check for client version
+   if (!pJsonRpcRequest->clientVersion.empty() &&
+       clientVersion() != pJsonRpcRequest->clientVersion)
    {
       Error error(json::errc::InvalidClientVersion, ERROR_LOCATION);
       ptrConnection->sendJsonRpcError(error);
@@ -874,7 +974,7 @@ void handleConnection(boost::shared_ptr<HttpConnection> ptrConnection,
 #ifdef _WIN32
             // if we are on windows then we can't quit while the browser
             // context is active
-            if (r::session::browserContextActive())
+            if (rstudio::r::session::browserContextActive())
             {
                module_context::consoleWriteError(
                         "Error: unable to quit when browser is active\n");
@@ -887,18 +987,97 @@ void handleConnection(boost::shared_ptr<HttpConnection> ptrConnection,
 
             // see whether we should save the workspace
             bool saveWorkspace = true;
-            std::string switchToProject;
+            std::string switchToProject, hostPageUrl;
+            json::Value switchToVersionJson;
             Error error = json::readParams(jsonRpcRequest.params,
                                            &saveWorkspace,
-                                           &switchToProject) ;
+                                           &switchToProject,
+                                           &switchToVersionJson,
+                                           &hostPageUrl) ;
             if (error)
                LOG_ERROR(error);
 
             // note switch to project
             if (!switchToProject.empty())
             {
-               session::projects::projectContext().setNextSessionProject(
-                                                                  switchToProject);
+               if (options().switchProjectsWithUrl())
+               {
+                  using namespace module_context;
+
+                  std::string projDir;
+                  r_util::SessionScope scope;
+                  if (switchToProject == kProjectNone)
+                  {
+                     scope = r_util::SessionScope::projectNone(
+                                          options().sessionScope().id());
+
+                     // update the project and working dir
+                     activeSession().setProject(kProjectNone);
+                     activeSession().setWorkingDir(
+                             createAliasedPath(getDefaultWorkingDirectory()));
+                  }
+                  else
+                  {
+                     // extract the directory (aliased)
+                     using namespace module_context;
+                     FilePath projFile = resolveAliasedPath(switchToProject);
+                     projDir = createAliasedPath(projFile.parent());
+
+                     scope = r_util::SessionScope::fromProject(
+                              projDir,
+                              options().sessionScope().id(),
+                              filePathToProjectId(options().userScratchPath(),
+                                   FilePath(options().getOverlayOption(
+                                               kSessionSharedStoragePath))));
+
+                     // update the project and working dir
+                     activeSession().setProject(projDir);
+                     activeSession().setWorkingDir(projDir);
+                  }
+
+                  // set next session url
+                  s_nextSessionUrl = r_util::createSessionUrl(hostPageUrl,
+                                                              scope);
+               }
+               else
+               {
+                  projects::ProjectsSettings(options().userScratchPath()).
+                                    setSwitchToProjectPath(switchToProject);
+               }
+
+               // note switch to R version if requested
+               if (json::isType<json::Object>(switchToVersionJson))
+               {
+                  using namespace module_context;
+                  std::string version, rHome;
+                  Error error = json::readObject(
+                                            switchToVersionJson.get_obj(),
+                                            "version", &version,
+                                            "r_home", &rHome);
+                  if (!error)
+                  {
+                     // set version for active session
+                     activeSession().setRVersion(version, rHome);
+
+                     // if we had a project directory as well then
+                     // set it's version (this is necessary because
+                     // project versions override session versions)
+                     if (switchToProject != kProjectNone)
+                     {
+                        FilePath projFile = resolveAliasedPath(switchToProject);
+                        std::string projDir = createAliasedPath(projFile.parent());
+                        RVersionSettings verSettings(
+                                            options().userScratchPath(),
+                                            FilePath(options().getOverlayOption(
+                                                  kSessionSharedStoragePath)));
+                        verSettings.setProjectLastRVersion(projDir,
+                                                           version,
+                                                           rHome);
+                     }
+                 }
+                 else
+                    LOG_ERROR(error);
+               }
             }
 
             // exit status
@@ -908,7 +1087,7 @@ void handleConnection(boost::shared_ptr<HttpConnection> ptrConnection,
             json::JsonRpcResponse response;
             response.setResult(true);
             ptrConnection->sendJsonRpcResponse(response);
-            r::session::quit(saveWorkspace, status); // does not return
+            rstudio::r::session::quit(saveWorkspace, status); // does not return
          }
          else if (jsonRpcRequest.method == kSuspendSession)
          {
@@ -938,7 +1117,10 @@ void handleConnection(boost::shared_ptr<HttpConnection> ptrConnection,
 
             // only accept interrupts while R is processing input
             if ( s_rProcessingInput )
-               r::exec::setInterruptsPending(true);
+               rstudio::r::exec::setInterruptsPending(true);
+
+            // let modules know
+            module_context::events().onUserInterrupt();
          }
 
          // other rpc method, handle it
@@ -1016,7 +1198,7 @@ void polledEventHandler()
    if (s_wasForked)
    {
       // no more polled events
-      r::session::event_loop::permanentlyDisablePolledEventHandler();
+      rstudio::r::session::event_loop::permanentlyDisablePolledEventHandler();
 
       // done
       return;
@@ -1066,7 +1248,7 @@ void polledEventHandler()
             // client_init means the user is attempting to reload the browser
             // in the middle of a computation. process client_init and post
             // a busy event as our initFunction
-            using namespace session::module_context;
+            using namespace rsession::module_context;
             ClientEvent busyEvent(client_events::kBusy, true);
             handleClientInit(boost::bind(enqueClientEvent, busyEvent),
                              ptrConnection);
@@ -1079,20 +1261,20 @@ void polledEventHandler()
    }
 }
 
-bool suspendSession(bool force)
+bool suspendSession(bool force, int status = EXIT_SUCCESS)
 {
    // need to make sure the global environment is loaded before we
    // attemmpt to save it!
-   r::session::ensureDeserialized();
+   rstudio::r::session::ensureDeserialized();
 
    // perform the suspend (does not return if successful)
-   return r::session::suspend(force);
+   return rstudio::r::session::suspend(force, status);
 }
 
 void suspendIfRequested(const boost::function<bool()>& allowSuspend)
 {
    // never suspend in desktop mode
-   if (session::options().programMode() == kSessionProgramModeDesktop)
+   if (rsession::options().programMode() == kSessionProgramModeDesktop)
       return;
 
    // check for forced suspend request
@@ -1109,14 +1291,14 @@ void suspendIfRequested(const boost::function<bool()>& allowSuspend)
          s_forceSuspendInterruptedR = false;
 
          // notify user
-         r::session::reportAndLogWarning(
+         rstudio::r::session::reportAndLogWarning(
             "Session forced to suspend due to system upgrade, restart, maintenance, "
             "or other issue. Your session data was saved however running "
             "computations may have been interrupted.");
       }
 
       // execute the forced suspend (does not return)
-      suspendSession(true);
+      suspendSession(true, EX_FORCE);
    }
 
    // cooperative suspend request
@@ -1140,7 +1322,9 @@ bool haveRunningChildren()
 
 bool canSuspend(const std::string& prompt)
 {
-   return !haveRunningChildren() && r::session::isSuspendable(prompt);
+   return !haveRunningChildren() &&
+          modules::connections::isSuspendable() &&
+          rstudio::r::session::isSuspendable(prompt);
 }
 
 
@@ -1149,7 +1333,7 @@ bool isTimedOut(const boost::posix_time::ptime& timeoutTime)
    using namespace boost::posix_time;
 
    // never time out in desktop mode
-   if (session::options().programMode() == kSessionProgramModeDesktop)
+   if (rsession::options().programMode() == kSessionProgramModeDesktop)
       return false;
 
    // check for an client disconnection based timeout
@@ -1177,11 +1361,11 @@ bool isTimedOut(const boost::posix_time::ptime& timeoutTime)
 
 boost::posix_time::ptime timeoutTimeFromNow()
 {
-   int timeoutMinutes = session::options().timeoutMinutes();
+   int timeoutMinutes = rsession::options().timeoutMinutes();
    if (timeoutMinutes > 0)
    {
       return boost::posix_time::second_clock::universal_time() +
-             boost::posix_time::minutes(session::options().timeoutMinutes());
+             boost::posix_time::minutes(rsession::options().timeoutMinutes());
    }
    else
    {
@@ -1192,12 +1376,12 @@ boost::posix_time::ptime timeoutTimeFromNow()
 void processDesktopGuiEvents()
 {
    // keep R gui alive when we are in destkop mode
-   if (session::options().programMode() == kSessionProgramModeDesktop)
+   if (rsession::options().programMode() == kSessionProgramModeDesktop)
    {
       // execute safely since this can call arbitrary R code (and
       // (can also cause jump_to_top if an interrupt is pending)
-      Error error = r::exec::executeSafely(
-                        r::session::event_loop::processEvents);
+      Error error = rstudio::r::exec::executeSafely(
+                        rstudio::r::session::event_loop::processEvents);
       if (error)
          LOG_ERROR(error);
    }
@@ -1309,8 +1493,8 @@ bool waitForMethod(const std::string& method,
          // by the logic above. if we didn't do this then client_init or
          // console_input (often the first request) could go directly to
          // handleConnection which wouldn't know what to do with them
-         if (!r::session::event_loop::polledEventHandlerInitialized())
-            r::session::event_loop::initializePolledEventHandler(
+         if (!rstudio::r::session::event_loop::polledEventHandlerInitialized())
+            rstudio::r::session::event_loop::initializePolledEventHandler(
                                                      polledEventHandler);
       }
    }
@@ -1339,7 +1523,7 @@ bool waitForMethod(const std::string& method,
 // prompt or a busy event
 void waitForMethodInitFunction(const ClientEvent& initEvent);
 
-void addToConsoleInputBuffer(const r::session::RConsoleInput& consoleInput)
+void addToConsoleInputBuffer(const rstudio::r::session::RConsoleInput& consoleInput)
 {
    if (consoleInput.cancel || consoleInput.text.find('\n') == std::string::npos)
    {
@@ -1359,25 +1543,39 @@ void addToConsoleInputBuffer(const r::session::RConsoleInput& consoleInput)
       std::string line(*lineIter);
 
       // add to buffer
-      s_consoleInputBuffer.push(line);
+      s_consoleInputBuffer.push(rstudio::r::session::RConsoleInput(
+               line, consoleInput.console));
    }
 }
 
 // extract console input -- can be either null (user hit escape) or a string
 Error extractConsoleInput(const json::JsonRpcRequest& request)
 {
-   if (request.params.size() == 1)
+   if (request.params.size() == 2)
    {
+      // ensure the caller specified the requesting console
+      std::string console;
+      if (request.params[1].type() == json::StringType)
+      {
+         console = request.params[1].get_str();
+      }
+      else
+      {
+         return Error(json::errc::ParamTypeMismatch, ERROR_LOCATION);
+      }
+
+      // extract the requesting console
       if (request.params[0].is_null())
       {
-         addToConsoleInputBuffer(r::session::RConsoleInput());
+         addToConsoleInputBuffer(rstudio::r::session::RConsoleInput(console));
          return Success();
       }
       else if (request.params[0].type() == json::StringType)
       {
          // get console input to return to R
          std::string text = request.params[0].get_str();
-         addToConsoleInputBuffer(r::session::RConsoleInput(text));
+         addToConsoleInputBuffer(rstudio::r::session::RConsoleInput(text, 
+                  console));
 
          // return success
          return Success();
@@ -1404,17 +1602,17 @@ Error bufferConsoleInput(const core::json::JsonRpcRequest& request,
 }
 
 
-void doSuspendForRestart(const r::session::RSuspendOptions& options)
+void doSuspendForRestart(const rstudio::r::session::RSuspendOptions& options)
 {
    module_context::consoleWriteOutput("\nRestarting R session...\n\n");
 
-   r::session::suspendForRestart(options);
+   rstudio::r::session::suspendForRestart(options);
 }
 
 Error suspendForRestart(const core::json::JsonRpcRequest& request,
                         json::JsonRpcResponse* pResponse)
 {
-   r::session::RSuspendOptions options;
+   rstudio::r::session::RSuspendOptions options;
    Error error = json::readObjectParam(
                                request.params, 0,
                                "save_minimal", &(options.saveMinimal),
@@ -1441,15 +1639,29 @@ Error startHttpConnectionListener()
    return httpConnectionListener().start();
 }
 
+WaitResult startHttpConnectionListenerWithTimeout()
+{
+   Error error = startHttpConnectionListener();
+
+   // When the rsession restarts, it may take a few ms for the port to become
+   // available; therefore, retry connection, but only for address_in_use error
+   if (!error)
+       return WaitResult(WaitSuccess, Success());
+   else if (error.code() != boost::system::errc::address_in_use)
+      return WaitResult(WaitError, error);
+   else
+      return WaitResult(WaitContinue, error);
+}
+
 Error startClientEventService()
 {
-   return clientEventService().start(session::persistentState().activeClientId());
+   return clientEventService().start(rsession::persistentState().activeClientId());
 }
 
 void registerGwtHandlers()
 {
    // alias options
-   session::Options& options = session::options();
+   rsession::Options& options = rsession::options();
 
    // establish logging handler
    module_context::registerUriHandler(
@@ -1473,10 +1685,10 @@ void registerGwtHandlers()
 Error registerSignalHandlers()
 {
    using boost::bind;
-   using namespace core::system;
+   using namespace rstudio::core::system;
 
    // USR1 and USR2: perform suspend in server mode
-   if (session::options().programMode() == kSessionProgramModeServer)
+   if (rsession::options().programMode() == kSessionProgramModeServer)
    {
       ExecBlock registerBlock ;
       registerBlock.addFunctions()
@@ -1499,10 +1711,10 @@ Error registerSignalHandlers()
 Error runPreflightScript()
 {
    // alias options
-   Options& options = session::options();
+   Options& options = rsession::options();
 
    // run the preflight script (if specified)
-   if (session::options().programMode() == kSessionProgramModeServer)
+   if (rsession::options().programMode() == kSessionProgramModeServer)
    {
       FilePath preflightScriptPath = options.preflightScriptPath();
       if (!preflightScriptPath.empty())
@@ -1533,8 +1745,14 @@ Error runPreflightScript()
    // always return success
    return Success();
 }
+
+void exitEarly(int status)
+{
+   FileLock::cleanUp();
+   ::exit(status);
+}
       
-Error rInit(const r::session::RInitInfo& rInitInfo) 
+Error rInit(const rstudio::r::session::RInitInfo& rInitInfo) 
 {
    // save state we need to reference later
    s_rSessionResumed = rInitInfo.resumed;
@@ -1548,8 +1766,8 @@ Error rInit(const r::session::RInitInfo& rInitInfo)
 
    // execute core initialization functions
    using boost::bind;
-   using namespace core::system;
-   using namespace session::module_context;
+   using namespace rstudio::core::system;
+   using namespace rsession::module_context;
    ExecBlock initialize ;
    initialize.addFunctions()
    
@@ -1584,7 +1802,10 @@ Error rInit(const r::session::RInitInfo& rInitInfo)
       (addins::initialize)
 
       // console processes
-       (console_process::initialize)
+      (console_process::initialize)
+         
+      // r utils
+      (r_utils::initialize)
 
       // modules with c++ implementations
       (modules::spelling::initialize)
@@ -1597,6 +1818,9 @@ Error rInit(const r::session::RInitInfo& rInitInfo)
 #ifdef RSTUDIO_SERVER
       (modules::crypto::initialize)
 #endif
+      (modules::code_search::initialize)
+      (modules::clang::initialize)
+      (modules::connections::initialize)
       (modules::files::initialize)
       (modules::find::initialize)
       (modules::environment::initialize)
@@ -1611,6 +1835,7 @@ Error rInit(const r::session::RInitInfo& rInitInfo)
       (modules::profiler::initialize)
       (modules::viewer::initialize)
       (modules::rmarkdown::initialize)
+      (modules::rmarkdown::notebook::initialize)
       (modules::rpubs::initialize)
       (modules::shiny::initialize)
       (modules::source::initialize)
@@ -1618,7 +1843,6 @@ Error rInit(const r::session::RInitInfo& rInitInfo)
       (modules::authoring::initialize)
       (modules::html_preview::initialize)
       (modules::history::initialize)
-      (modules::code_search::initialize)
       (modules::build::initialize)
       (modules::overlay::initialize)
       (modules::breakpoints::initialize)
@@ -1626,19 +1850,26 @@ Error rInit(const r::session::RInitInfo& rInitInfo)
       (modules::updates::initialize)
       (modules::about::initialize)
       (modules::shiny_viewer::initialize)
-      (modules::shiny_apps::initialize)
+      (modules::rsconnect::initialize)
       (modules::packrat::initialize)
       (modules::rhooks::initialize)
+      (modules::r_packages::initialize)
+      (modules::diagnostics::initialize)
+      (modules::markers::initialize)
+      (modules::snippets::initialize)
+      (modules::user_commands::initialize)
+      (modules::r_addins::initialize)
 
       // workers
       (workers::web_request::initialize)
 
       // R code
       (bind(sourceModuleRFile, "SessionCodeTools.R"))
+      (bind(sourceModuleRFile, "SessionCompletionHooks.R"))
    
       // unsupported functions
-      (bind(r::function_hook::registerUnsupported, "bug.report", "utils"))
-      (bind(r::function_hook::registerUnsupported, "help.request", "utils"))
+      (bind(rstudio::r::function_hook::registerUnsupported, "bug.report", "utils"))
+      (bind(rstudio::r::function_hook::registerUnsupported, "help.request", "utils"))
    ;
 
    Error error = initialize.execute();
@@ -1646,10 +1877,10 @@ Error rInit(const r::session::RInitInfo& rInitInfo)
       return error;
    
    // if we are in verify installation mode then we should exit (successfully) now
-   if (session::options().verifyInstallation())
+   if (rsession::options().verifyInstallation())
    {
       // in desktop mode we write a success message and execute diagnostics
-      if (session::options().programMode() == kSessionProgramModeDesktop)
+      if (rsession::options().programMode() == kSessionProgramModeDesktop)
       {
          std::cout << "Successfully initialized R session."
                    << std::endl << std::endl;
@@ -1659,19 +1890,26 @@ Error rInit(const r::session::RInitInfo& rInitInfo)
             std::cout << "Diagnostics report written to: "
                       << diagFile << std::endl << std::endl;
 
-            Error error = r::exec::RFunction(".rs.showDiagnostics").call();
+            Error error = rstudio::r::exec::RFunction(".rs.showDiagnostics").call();
             if (error)
                LOG_ERROR(error);
          }
       }
 
-      session::options().verifyInstallationHomeDir().removeIfExists();
-      ::exit(EXIT_SUCCESS);
+      rsession::options().verifyInstallationHomeDir().removeIfExists();
+      exitEarly(EXIT_SUCCESS);
    }
 
+   // run unit tests
+   if (rsession::options().runTests())
+   {
+      int result = tests::run();
+      exitEarly(result);
+   }
+   
    // register all of the json rpc methods implemented in R
    json::JsonRpcMethods rMethods ;
-   error = r::json::getRpcMethods(&rMethods);
+   error = rstudio::r::json::getRpcMethods(&rMethods);
    if (error)
       return error ;
    BOOST_FOREACH(const json::JsonRpcMethod& method, rMethods)
@@ -1680,34 +1918,34 @@ Error rInit(const r::session::RInitInfo& rInitInfo)
    }
 
    // add gwt handlers if we are running desktop mode
-   if ((session::options().programMode() == kSessionProgramModeDesktop) ||
-       session::options().standalone())
+   if ((rsession::options().programMode() == kSessionProgramModeDesktop) ||
+       rsession::options().standalone())
    {
       registerGwtHandlers();
    }
 
    // enque abend warning event if necessary (but not in standalone
    // mode since those processes are often aborted unceremoniously)
-   using namespace session::client_events;
-   if (session::persistentState().hadAbend() && !options().standalone())
+   using namespace rsession::client_events;
+   if (rsession::persistentState().hadAbend() && !options().standalone())
    {
       LOG_ERROR_MESSAGE("session hadabend");
 
       ClientEvent abendWarningEvent(kAbendWarning);
-      session::clientEventQueue().add(abendWarningEvent);
+      rsession::clientEventQueue().add(abendWarningEvent);
    }
 
    if (s_printCharsetWarning)
-      r::exec::warning("Character set is not UTF-8; please change your locale");
+      rstudio::r::exec::warning("Character set is not UTF-8; please change your locale");
 
    // propagate console history options
-   r::session::consoleHistory().setRemoveDuplicates(
+   rstudio::r::session::consoleHistory().setRemoveDuplicates(
                                  userSettings().removeHistoryDuplicates());
 
 
    // register function editor on windows
 #ifdef _WIN32
-   error = r::exec::RFunction(".rs.registerFunctionEditor").call();
+   error = rstudio::r::exec::RFunction(".rs.registerFunctionEditor").call();
    if (error)
       LOG_ERROR(error);
 #endif
@@ -1715,8 +1953,12 @@ Error rInit(const r::session::RInitInfo& rInitInfo)
    // set flag indicating we had an abnormal end (if this doesn't get
    // unset by the time we launch again then we didn't terminate normally
    // i.e. either the process dying unexpectedly or a call to R_Suicide)
-   session::persistentState().setAbend(true);
-   
+   rsession::persistentState().setAbend(true);
+
+   // begin session
+   using namespace module_context;
+   activeSession().beginSession(rVersion(), rHomeDir());
+
    // setup fork handlers
    setupForkHandlers();
 
@@ -1756,10 +1998,10 @@ void consolePrompt(const std::string& prompt, bool addToHistory)
    json::Object data ;
    data["prompt"] = prompt ;
    data["history"] = addToHistory;
-   bool isDefaultPrompt = prompt == r::options::getOption<std::string>("prompt");
+   bool isDefaultPrompt = prompt == rstudio::r::options::getOption<std::string>("prompt");
    data["default"] = isDefaultPrompt;
    ClientEvent consolePromptEvent(client_events::kConsolePrompt, data);
-   session::clientEventQueue().add(consolePromptEvent);
+   rsession::clientEventQueue().add(consolePromptEvent);
    
    // allow modules to detect changes after execution of previous REPL
    detectChanges(module_context::ChangeSourceREPL);   
@@ -1773,9 +2015,24 @@ void reissueLastConsolePrompt()
    consolePrompt(s_lastPrompt, false);
 }
 
+void setExecuting(bool executing)
+{
+   s_rProcessingInput = executing;
+   module_context::activeSession().setExecuting(executing);
+}
+
+void enqueueConsoleInput(const rstudio::r::session::RConsoleInput& input)
+{
+   json::Object data;
+   data[kConsoleText] = input.text + "\n";
+   data[kConsoleId]   = input.console;
+   ClientEvent inputEvent(kConsoleWriteInput, data);
+   rsession::clientEventQueue().add(inputEvent);
+}
+
 bool rConsoleRead(const std::string& prompt,
                   bool addToHistory,
-                  r::session::RConsoleInput* pConsoleInput)
+                  rstudio::r::session::RConsoleInput* pConsoleInput)
 {
    // this is an invalid state in a forked (multicore) process
    if (s_wasForked)
@@ -1785,7 +2042,7 @@ bool rConsoleRead(const std::string& prompt,
    }
 
    // r is not processing input
-   s_rProcessingInput = false;
+   setExecuting(false);
 
    if (!s_consoleInputBuffer.empty())
    {
@@ -1820,7 +2077,7 @@ bool rConsoleRead(const std::string& prompt,
       if (error)
       {
          LOG_ERROR(error);
-         *pConsoleInput = r::session::RConsoleInput("");
+         *pConsoleInput = rstudio::r::session::RConsoleInput("", "");
       }
       *pConsoleInput = s_consoleInputBuffer.front();
       s_consoleInputBuffer.pop();
@@ -1834,12 +2091,18 @@ bool rConsoleRead(const std::string& prompt,
    }
 
    // we are about to return input to r so set the flag indicating that state
-   s_rProcessingInput = true;
+   setExecuting(true);
+
+   // ensure that output resulting from this input goes to the correct console
+   if (rsession::clientEventQueue().setActiveConsole(pConsoleInput->console))
+   {
+      module_context::events().onActiveConsoleChanged(pConsoleInput->console,
+            pConsoleInput->text);
+   }
 
    ClientEvent promptEvent(kConsoleWritePrompt, prompt);
-   session::clientEventQueue().add(promptEvent);
-   ClientEvent inputEvent(kConsoleWriteInput, pConsoleInput->text + "\n");
-   session::clientEventQueue().add(inputEvent);
+   rsession::clientEventQueue().add(promptEvent);
+   enqueueConsoleInput(*pConsoleInput);
 
    // always return true (returning false causes the process to exit)
    return true;
@@ -1851,16 +2114,19 @@ int rEditFile(const std::string& file)
    // read file contents
    FilePath filePath(file);
    std::string fileContents;
-   Error readError = core::readStringFromFile(filePath, &fileContents);
-   if (readError)
+   if (filePath.exists())
    {
-      LOG_ERROR(readError);
-      return 1; // r will raise/report an error indicating edit failed
+      Error readError = core::readStringFromFile(filePath, &fileContents);
+      if (readError)
+      {
+         LOG_ERROR(readError);
+         return 1; // r will raise/report an error indicating edit failed
+      }
    }
    
    // fire edit event
-   ClientEvent editEvent = session::showEditorEvent(fileContents, true, false);
-   session::clientEventQueue().add(editEvent);
+   ClientEvent editEvent = rsession::showEditorEvent(fileContents, true, false);
+   rsession::clientEventQueue().add(editEvent);
 
    // wait for edit_completed 
    json::JsonRpcRequest request ;
@@ -1909,7 +2175,7 @@ FilePath rChooseFile(bool newFile)
 {
    // fire choose file event
    ClientEvent chooseFileEvent(kChooseFile, newFile);
-   session::clientEventQueue().add(chooseFileEvent);
+   rsession::clientEventQueue().add(chooseFileEvent);
    
    // wait for choose_file_completed 
    json::JsonRpcRequest request ;
@@ -1949,7 +2215,7 @@ void rBusy(bool busy)
       return;
 
    ClientEvent busyEvent(kBusy, busy);
-   session::clientEventQueue().add(busyEvent);
+   rsession::clientEventQueue().add(busyEvent);
 }
       
 void rConsoleWrite(const std::string& output, int otype)   
@@ -1959,7 +2225,7 @@ void rConsoleWrite(const std::string& output, int otype)
 
    int event = otype == 1 ? kConsoleWriteError : kConsoleWriteOutput;
    ClientEvent writeEvent(event, output);
-   session::clientEventQueue().add(writeEvent);
+   rsession::clientEventQueue().add(writeEvent);
 
    // fire event
    module_context::events().onConsoleOutput(
@@ -1972,12 +2238,12 @@ void rConsoleWrite(const std::string& output, int otype)
 void rConsoleHistoryReset()
 {
    json::Array historyJson;
-   r::session::consoleHistory().asJson(&historyJson);
+   rstudio::r::session::consoleHistory().asJson(&historyJson);
    json::Object resetJson;
    resetJson["history"] = historyJson;
    resetJson["preserve_ui_context"] = false;
    ClientEvent event(kConsoleResetHistory, resetJson);
-   session::clientEventQueue().add(event);
+   rsession::clientEventQueue().add(event);
 }
 
 bool rLocator(double* x, double* y)
@@ -1989,7 +2255,7 @@ bool rLocator(double* x, double* y)
    
    // fire locator event
    ClientEvent locatorEvent(kLocator);
-   session::clientEventQueue().add(locatorEvent);
+   rsession::clientEventQueue().add(locatorEvent);
    
    // wait for locator_completed 
    json::JsonRpcRequest request ;
@@ -2025,7 +2291,7 @@ bool rLocator(double* x, double* y)
    
 void rShowFile(const std::string& title, const FilePath& filePath, bool del)
 {
-   if (session::options().programMode() == kSessionProgramModeServer)
+   if (rsession::options().programMode() == kSessionProgramModeServer)
    {
       // for files in the user's home directory and pdfs use an external browser
       if (module_context::isVisibleUserFile(filePath) ||
@@ -2038,7 +2304,7 @@ void rShowFile(const std::string& title, const FilePath& filePath, bool del)
          module_context::showContent(title, filePath);
       }
    }
-   else // (session::options().programMode() == kSessionProgramModeDesktop
+   else // (rsession::options().programMode() == kSessionProgramModeDesktop
    {
 #ifdef _WIN32
     if (!filePath.extension().empty())
@@ -2076,7 +2342,7 @@ void rBrowseURL(const std::string& url)
    }
    
    // raise event to client
-   session::clientEventQueue().add(browseUrlEvent(url));
+   rsession::clientEventQueue().add(browseUrlEvent(url));
 }
    
 void rBrowseFile(const core::FilePath& filePath)
@@ -2095,11 +2361,11 @@ void rBrowseFile(const core::FilePath& filePath)
    // case we can serve it over http)
    if ((filePath.mimeContentType() == "text/html") &&
        filePath.isWithin(module_context::tempDir()) &&
-       r::util::hasRequiredVersion("2.14"))
+       rstudio::r::util::hasRequiredVersion("2.14"))
    {
       std::string path = filePath.relativePath(module_context::tempDir());
       std::string url = module_context::sessionTempDirUrl(path);
-      session::clientEventQueue().add(browseUrlEvent(url));
+      rsession::clientEventQueue().add(browseUrlEvent(url));
    }
    // otherwise just show the file
    else
@@ -2111,13 +2377,13 @@ void rBrowseFile(const core::FilePath& filePath)
 void rShowHelp(const std::string& helpURL)   
 {
    ClientEvent showHelpEvent(kShowHelp, helpURL);
-   session::clientEventQueue().add(showHelpEvent);
+   rsession::clientEventQueue().add(showHelpEvent);
 }
       
 void rShowMessage(const std::string& message)   
 {
    ClientEvent event = showErrorMessageEvent("R Error", message);
-   session::clientEventQueue().add(event);
+   rsession::clientEventQueue().add(event);
 }
 
 void logExitEvent(const monitor::Event& precipitatingEvent)
@@ -2127,13 +2393,13 @@ void logExitEvent(const monitor::Event& precipitatingEvent)
    client().logEvent(Event(kSessionScope, kSessionExitEvent));
 }
    
-void rSuspended(const r::session::RSuspendOptions& options)
+void rSuspended(const rstudio::r::session::RSuspendOptions& options)
 {
    // log to monitor
    using namespace monitor;
    std::string data;
    if (s_suspendedFromTimeout)
-      data = safe_convert::numberToString(session::options().timeoutMinutes());
+      data = safe_convert::numberToString(rsession::options().timeoutMinutes());
    logExitEvent(Event(kSessionScope, kSessionSuspendEvent, data));
 
    // fire event
@@ -2183,10 +2449,25 @@ void rQuit()
    module_context::events().onQuit();
 
    // enque a quit event
-   bool switchProjects =
-         !session::projects::projectContext().nextSessionProject().empty();
-   ClientEvent quitEvent(kQuit, switchProjects);
-   session::clientEventQueue().add(quitEvent);
+   bool switchProjects;
+   if (options().switchProjectsWithUrl())
+   {
+      switchProjects = !s_nextSessionUrl.empty();
+   }
+   else
+   {
+      switchProjects = !projects::ProjectsSettings(options().userScratchPath())
+                              .switchToProjectPath().empty();
+   }
+
+   // if we aren't switching projects then destroy the active session at cleanup
+   s_destroySession = !switchProjects;
+
+   json::Object jsonData;
+   jsonData["switch_projects"] = switchProjects;
+   jsonData["next_session_url"] = s_nextSessionUrl;
+   ClientEvent quitEvent(kQuit, jsonData);
+   rsession::clientEventQueue().add(quitEvent);
 }
    
 // NOTE: this event is never received on windows (because we can't
@@ -2206,7 +2487,7 @@ void rSuicide(const std::string& message)
    
    // enque suicide event so the client knows
    ClientEvent suicideEvent(kSuicide, message);
-   session::clientEventQueue().add(suicideEvent);
+   rsession::clientEventQueue().add(suicideEvent);
 }
 
 // terminate all children of the provided process supervisor
@@ -2237,10 +2518,24 @@ void rCleanup(bool terminatedNormally)
 
       // note that we didn't abend
       if (terminatedNormally)
-         session::persistentState().setAbend(false);
+         rsession::persistentState().setAbend(false);
+
+      // set active session flag indicating we are no longer running
+      module_context::activeSession().endSession();
 
       // fire shutdown event to modules
       module_context::events().onShutdown(terminatedNormally);
+
+      // destroy session if requested
+      if (s_destroySession)
+      {
+         Error error = module_context::activeSession().destroy();
+         if (error)
+            LOG_ERROR(error);
+      }
+      
+      // clean up locks
+      FileLock::cleanUp();
 
       // cause graceful exit of clientEventService (ensures delivery
       // of any pending events prior to process termination). wait a
@@ -2253,7 +2548,7 @@ void rCleanup(bool terminatedNormally)
       // the full 3 seconds to terminate. the cleanup is kind of a nice
       // to have and most important on the server where we delete the
       // unix domain socket file so it is no big deal to bypass it
-      if (session::options().programMode() == kSessionProgramModeServer)
+      if (rsession::options().programMode() == kSessionProgramModeServer)
       {
          clientEventService().stop();
          httpConnectionListener().stop();
@@ -2278,14 +2573,14 @@ void rSerialization(int action, const FilePath& targetPath)
    }
    
    ClientEvent event(kSessionSerialization, serializationActionObject);
-   session::clientEventQueue().add(event);
+   rsession::clientEventQueue().add(event);
 }
 
    
 void ensureRProfile()
 {
    // check if we need to create the proifle (bail if we don't)
-   Options& options = session::options();
+   Options& options = rsession::options();
    if (!options.createProfile())
       return;
 
@@ -2312,7 +2607,7 @@ void ensureRProfile()
 void ensurePublicFolder()
 {
    // check if we need to create the public folder (bail if we don't)
-   Options& options = session::options();
+   Options& options = rsession::options();
    if (!options.createPublicFolder())
       return;
 
@@ -2386,7 +2681,7 @@ void detectParentTermination()
       boost::this_thread::sleep(boost::posix_time::milliseconds(500));
       if (::getppid() == 1)
       {
-         ::exit(EXIT_FAILURE);
+         exitEarly(EXIT_FAILURE);
       }
    }
 }
@@ -2414,16 +2709,16 @@ void detectParentTermination()
 // NOTE: mirrors behavior of WorkbenchContext.getREnvironmentPath on the client
 FilePath rEnvironmentDir()
 {
-   // for projects we always use the project directory
+   // for projects
    if (projects::projectContext().hasProject())
    {
-      return projects::projectContext().directory();
+      return getProjectUserDataDir(ERROR_LOCATION);
    }
 
    // for desktop the current path
-   else if (session::options().programMode() == kSessionProgramModeDesktop)
+   else if (rsession::options().programMode() == kSessionProgramModeDesktop)
    {
-      return FilePath::safeCurrentPath(session::options().userHomePath());
+      return FilePath::safeCurrentPath(rsession::options().userHomePath());
    }
 
    // for server the initial working dir
@@ -2437,9 +2732,9 @@ SA_TYPE saveWorkspaceOption()
 {
    // convert from internal type to R type
    int saveAction = module_context::saveWorkspaceAction();
-   if (saveAction == r::session::kSaveActionSave)
+   if (saveAction == rstudio::r::session::kSaveActionSave)
       return SA_SAVE;
-   else if (saveAction == r::session::kSaveActionNoSave)
+   else if (saveAction == rstudio::r::session::kSaveActionNoSave)
       return SA_NOSAVE;
    else
       return SA_SAVEASK;
@@ -2465,19 +2760,19 @@ bool restoreWorkspaceOption()
 
    // no project override
    return userSettings().loadRData() ||
-          !session::options().initialEnvironmentFileOverride().empty();
+          !rsession::options().initialEnvironmentFileOverride().empty();
 }
 
 FilePath rHistoryDir()
 {
-   // for projects we always use the project directory
+   // for projects
    if (projects::projectContext().hasProject())
    {
-      return projects::projectContext().directory();
+      return getProjectUserDataDir(ERROR_LOCATION);
    }
 
    // for server we use the default working directory
-   else if (session::options().programMode() == kSessionProgramModeServer)
+   else if (rsession::options().programMode() == kSessionProgramModeServer)
    {
       return getDefaultWorkingDirectory();
    }
@@ -2485,7 +2780,7 @@ FilePath rHistoryDir()
    // for desktop we take the current path
    else
    {
-      return FilePath::safeCurrentPath(session::options().userHomePath());
+      return FilePath::safeCurrentPath(rsession::options().userHomePath());
    }
 }
 
@@ -2512,7 +2807,7 @@ bool alwaysSaveHistoryOption()
 
 FilePath getStartupEnvironmentFilePath()
 {
-   FilePath envFile = session::options().initialEnvironmentFileOverride();
+   FilePath envFile = rsession::options().initialEnvironmentFileOverride();
    if (!envFile.empty())
       return envFile;
    else
@@ -2538,7 +2833,8 @@ void waitForMethodInitFunction(const ClientEvent& initEvent)
 } // anonymous namespace
 
 
-// provide definition methods for session::module_context
+// provide definition methods for rsession::module_context
+namespace rstudio {
 namespace session { 
 namespace module_context {
    
@@ -2600,6 +2896,40 @@ Error registerAsyncRpcMethod(const std::string& name,
    return Success();
 }
 
+namespace {
+
+void performIdleOnlyAsyncRpcMethod(
+      const core::json::JsonRpcRequest& request,
+      const core::json::JsonRpcFunctionContinuation& continuation,
+      const core::json::JsonRpcAsyncFunction& function)
+{
+   if (request.isBackgroundConnection)
+   {
+      module_context::scheduleDelayedWork(
+          boost::posix_time::milliseconds(100),
+          boost::bind(function, request, continuation),
+          true);
+   }
+   else
+   {
+      function(request, continuation);
+   }
+}
+
+
+} // anonymous namespace
+
+Error registerIdleOnlyAsyncRpcMethod(
+                             const std::string& name,
+                             const core::json::JsonRpcAsyncFunction& function)
+{
+   return registerAsyncRpcMethod(name,
+                                 boost::bind(performIdleOnlyAsyncRpcMethod,
+                                                _1, _2, function));
+}
+
+
+
 Error registerRpcMethod(const std::string& name,
                         const core::json::JsonRpcFunction& function)
 {
@@ -2621,7 +2951,7 @@ UserPrompt::Response showUserPrompt(const UserPrompt& userPrompt)
    obj["yesIsDefault"] = userPrompt.yesIsDefault;
    obj["includeCancel"] = userPrompt.includeCancel;
    ClientEvent userPromptEvent(client_events::kUserPrompt, obj);
-   session::clientEventQueue().add(userPromptEvent);
+   rsession::clientEventQueue().add(userPromptEvent);
 
    // wait for user_prompt_completed
    json::JsonRpcRequest request ;
@@ -2675,11 +3005,11 @@ int saveWorkspaceAction()
       switch(projContext.config().saveWorkspace)
       {
       case r_util::YesValue:
-         return r::session::kSaveActionSave;
+         return rstudio::r::session::kSaveActionSave;
       case r_util::NoValue:
-         return r::session::kSaveActionNoSave;
+         return rstudio::r::session::kSaveActionNoSave;
       case r_util::AskValue:
-         return r::session::kSaveActionAsk;
+         return rstudio::r::session::kSaveActionAsk;
       default:
          // fall through
          break;
@@ -2692,7 +3022,7 @@ int saveWorkspaceAction()
 
 void syncRSaveAction()
 {
-   r::session::setSaveAction(saveWorkspaceOption());
+   rstudio::r::session::setSaveAction(saveWorkspaceOption());
 }
 
 
@@ -2722,6 +3052,7 @@ WaitForMethodFunction registerWaitForMethod(const std::string& methodName)
 
 } // namespace module_context
 } // namespace session
+} // namespace rstudio
 
 
 namespace {
@@ -2735,45 +3066,6 @@ int sessionExitFailure(const core::Error& error,
    return EXIT_FAILURE;
 }
 
-/*
-We've observed that Ubuntu 14.10 no longer passes the LANG environment
-variable to daemon processes so we lose the automatic inheritence of
-LANG from the system default. For this case we'll do automatic detection
-and setting of LANG.
-*/
-void ensureLang()
-{
-#if !defined(_WIN32) && !defined(__APPLE__) && !defined(__FreeBSD__)
-   // if no LANG environment variable is already defined
-   if (core::system::getenv("LANG").empty())
-   {
-      // try to read the LANG from the various places it might be defined
-      std::vector<std::pair<std::string,std::string> > langDefs;
-      langDefs.push_back(std::make_pair("LANG", "/etc/default/locale"));
-      langDefs.push_back(std::make_pair("LANG", "/etc/sysconfig/i18n"));
-      langDefs.push_back(std::make_pair("LANG", "/etc/locale.conf"));
-      langDefs.push_back(std::make_pair("RC_LANG", "/etc/sysconfig/language"));
-      for (size_t i = 0; i<langDefs.size(); i++)
-      {
-         std::string var = langDefs[i].first;
-         std::string file = langDefs[i].second;
-         std::map<std::string,std::string> vars;
-         Error error = config_utils::extractVariables(FilePath(file), &vars);
-         if (error)
-         {
-            LOG_ERROR(error);
-            continue;
-         }
-         std::string value = vars[var];
-         if (!value.empty())
-         {
-            core::system::setenv("LANG", value);
-            break;
-         }
-      }
-   }
-#endif
-}
 
 std::string ctypeEnvName()
 {
@@ -2874,14 +3166,17 @@ int main (int argc, char * const argv[])
       s_mainThreadId = boost::this_thread::get_id();
 
       // ensure LANG and UTF-8 character set
-      ensureLang();
+#ifndef _WIN32
+      r_util::ensureLang();
+#endif
       s_printCharsetWarning = !ensureUtf8Charset();
-
+      
       // read program options
-      Options& options = session::options();
+      Options& options = rsession::options();
       ProgramStatus status = options.read(argc, argv) ;
       if (status.exit())
          return status.exitCode() ;
+
 
       // reflect stderr logging
       core::system::setLogToStderr(options.logStderr());
@@ -2896,6 +3191,9 @@ int main (int argc, char * const argv[])
          core::system::addLogWriter(monitor::client().createLogWriter(
                                                 options.programIdentity()));
       }
+
+      // initialize file lock config
+      FileLock::initialize();
 
       // convenience flags for server and desktop mode
       bool desktopMode = options.programMode() == kSessionProgramModeDesktop;
@@ -2918,12 +3216,9 @@ int main (int argc, char * const argv[])
       }
 
       // initialize overlay
-      error = session::overlay::initialize();
+      error = rsession::overlay::initialize();
       if (error)
          return sessionExitFailure(error, ERROR_LOCATION);
-
-      // set version
-      s_version = installedVersion();
 
       // set the rstudio environment variable so code can check for
       // whether rstudio is running
@@ -2939,6 +3234,14 @@ int main (int argc, char * const argv[])
          core::system::setenv(kRSessionPortNumber, options.wwwPort());
       }
 
+      // provide session stream for postback in server mode
+      if (serverMode)
+      {
+         r_util::SessionContext context = options.sessionContext();
+         std::string stream = r_util::sessionContextFile(context);
+         core::system::setenv(kRStudioSessionStream, stream);
+      }
+
       // set the standalone port if we are running in standalone mode
       if (options.standalone())
       {
@@ -2947,10 +3250,18 @@ int main (int argc, char * const argv[])
            
       // ensure we aren't being started as a low (priviliged) account
       if (serverMode &&
-          core::system::currentUserIsPrivilleged(options.minimumUserId()))
+          !options.verifyInstallation() &&
+          core::system::currentUserIsPrivilleged(options.authMinimumUserId()))
       {
          Error error = systemError(boost::system::errc::permission_denied,
                                    ERROR_LOCATION);
+         boost::format fmt("User '%1%' has id %2%, which is lower than the "
+                           "minimum user id of %3% (this is controlled by "
+                           "the the auth-minimum-user-id rserver option)");
+         std::string msg = boost::str(fmt % core::system::username()
+                                          % core::system::effectiveUserId()
+                                          % options.authMinimumUserId());
+         error.addProperty("message", msg);
          return sessionExitFailure(error, ERROR_LOCATION);
       }
 
@@ -2969,7 +3280,7 @@ int main (int argc, char * const argv[])
       // initialize client event queue. this must be done very early
       // in main so that any other code which needs to enque an event
       // has access to the queue
-      session::initializeClientEventQueue();
+      rsession::initializeClientEventQueue();
 
       // detect parent termination
       if (desktopMode)
@@ -2999,7 +3310,7 @@ int main (int argc, char * const argv[])
       projects::startup();
 
       // initialize persistent state
-      error = session::persistentState().initialize();
+      error = rsession::persistentState().initialize();
       if (error)
          return sessionExitFailure(error, ERROR_LOCATION) ;
 
@@ -3008,9 +3319,9 @@ int main (int argc, char * const argv[])
       error = workingDir.makeCurrentPath();
       if (error)
          return sessionExitFailure(error, ERROR_LOCATION);
-      
+         
       // start http connection listener
-      error = startHttpConnectionListener();
+      error = waitWithTimeout(startHttpConnectionListenerWithTimeout, 0, 100, 1);
       if (error)
          return sessionExitFailure(error, ERROR_LOCATION);
 
@@ -3037,8 +3348,7 @@ int main (int argc, char * const argv[])
       // we've gotten through startup so let's log a start event
       using namespace monitor;
       client().logEvent(Event(kSessionScope, kSessionStartEvent));
-
-
+      
       // install home and doc dir overrides if requested (for debugger mode)
       if (!options.rHomeDirOverride().empty())
          core::system::setenv("R_HOME", options.rHomeDirOverride());
@@ -3046,15 +3356,14 @@ int main (int argc, char * const argv[])
          core::system::setenv("R_DOC_DIR", options.rDocDirOverride());
 
       // r options
-      r::session::ROptions rOptions ;
+      rstudio::r::session::ROptions rOptions ;
       rOptions.userHomePath = options.userHomePath();
       rOptions.userScratchPath = userScratchPath;
       rOptions.scopedScratchPath = module_context::scopedScratchPath();
+      rOptions.sessionScratchPath = module_context::sessionScratchPath();
       rOptions.logPath = options.userLogPath();
       rOptions.sessionPort = options.wwwPort();
       rOptions.startupEnvironmentFilePath = getStartupEnvironmentFilePath();
-      rOptions.persistentState = boost::bind(&PersistentState::settings,
-                                             &(persistentState()));
       rOptions.rEnvironmentDir = boost::bind(rEnvironmentDir);
       rOptions.rHistoryDir = boost::bind(rHistoryDir);
       rOptions.alwaysSaveHistory = boost::bind(alwaysSaveHistoryOption);
@@ -3075,9 +3384,10 @@ int main (int argc, char * const argv[])
       rOptions.saveWorkspace = saveWorkspaceOption();
       rOptions.rProfileOnResume = serverMode &&
                                   userSettings().rProfileOnResume();
+      rOptions.sessionScope = options.sessionScope();
       
       // r callbacks
-      r::session::RCallbacks rCallbacks;
+      rstudio::r::session::RCallbacks rCallbacks;
       rCallbacks.init = rInit;
       rCallbacks.consoleRead = rConsoleRead;
       rCallbacks.editFile = rEditFile;
@@ -3101,7 +3411,7 @@ int main (int argc, char * const argv[])
       rCallbacks.serialization = rSerialization;
       
       // run r (does not return, terminates process using exit)
-      error = r::session::run(rOptions, rCallbacks) ;
+      error = rstudio::r::session::run(rOptions, rCallbacks) ;
       if (error)
       {
           // this is logically equivilant to R_Suicide

@@ -23,15 +23,18 @@
 
 #include <boost/foreach.hpp>
 
-#include <QtGui/QFileDialog>
 #include <QFileDialog>
 #include <QMessageBox>
+#include <QApplication>
+#include <QAbstractButton>
+#include <QWebFrame>
 
 #include <core/FilePath.hpp>
 #include <core/DateTime.hpp>
 #include <core/SafeConvert.hpp>
 #include <core/system/System.hpp>
 #include <core/system/Environment.hpp>
+#include <core/r_util/RUserData.hpp>
 
 #include "DesktopAboutDialog.hpp"
 #include "DesktopOptions.hpp"
@@ -48,8 +51,9 @@
 #include <Carbon/Carbon.h>
 #endif
 
-using namespace core;
+using namespace rstudio::core;
 
+namespace rstudio {
 namespace desktop {
 
 namespace {
@@ -81,32 +85,32 @@ bool GwtCallback::isCocoa()
 
 void GwtCallback::browseUrl(QString url)
 {
-   QUrl qurl = QUrl::fromEncoded(url.toAscii());
+   QUrl qurl = QUrl::fromEncoded(url.toUtf8());
 
-#ifdef Q_WS_MAC
-   if (qurl.scheme() == QString::fromAscii("file"))
+#ifdef Q_OS_MAC
+   if (qurl.scheme() == QString::fromUtf8("file"))
    {
       QProcess open;
       QStringList args;
       // force use of Preview for PDFs (Adobe Reader 10.01 crashes)
-      if (url.toLower().endsWith(QString::fromAscii(".pdf")))
+      if (url.toLower().endsWith(QString::fromUtf8(".pdf")))
       {
-         args.append(QString::fromAscii("-a"));
-         args.append(QString::fromAscii("Preview"));
+         args.append(QString::fromUtf8("-a"));
+         args.append(QString::fromUtf8("Preview"));
          args.append(url);
       }
       else
       {
          args.append(url);
       }
-      open.start(QString::fromAscii("open"), args);
+      open.start(QString::fromUtf8("open"), args);
       open.waitForFinished(5000);
       if (open.exitCode() != 0)
       {
          // Probably means that the file doesn't have a registered
          // application or something.
          QProcess reveal;
-         reveal.startDetached(QString::fromAscii("open"), QStringList() << QString::fromAscii("-R") << url);
+         reveal.startDetached(QString::fromUtf8("open"), QStringList() << QString::fromUtf8("-R") << url);
       }
       return;
    }
@@ -212,7 +216,7 @@ QString GwtCallback::getExistingDirectory(const QString& caption,
       // Bug
       wchar_t szDir[MAX_PATH];
       BROWSEINFOW bi;
-      bi.hwndOwner = pOwner_->asWidget()->winId();
+      bi.hwndOwner = (HWND)(pOwner_->asWidget()->winId());
       bi.pidlRoot = NULL;
       bi.pszDisplayName = szDir;
       bi.lpszTitle = L"Select a folder:";
@@ -240,15 +244,9 @@ QString GwtCallback::getExistingDirectory(const QString& caption,
    return createAliasedPath(result);
 }
 
-void GwtCallback::doAction(QKeySequence::StandardKey key)
+void GwtCallback::doAction(const QKeySequence& keys)
 {
-   QList<QKeySequence> bindings = QKeySequence::keyBindings(key);
-   if (bindings.size() == 0)
-      return;
-
-   QKeySequence seq = bindings.first();
-
-   int keyCode = seq[0];
+   int keyCode = keys[0];
    Qt::KeyboardModifier modifiers = static_cast<Qt::KeyboardModifier>(keyCode & Qt::KeyboardModifierMask);
    keyCode &= ~Qt::KeyboardModifierMask;
 
@@ -256,14 +254,30 @@ void GwtCallback::doAction(QKeySequence::StandardKey key)
    pOwner_->postWebViewEvent(keyEvent);
 }
 
-void GwtCallback::undo()
+void GwtCallback::doAction(QKeySequence::StandardKey key)
+{
+   QList<QKeySequence> bindings = QKeySequence::keyBindings(key);
+   if (bindings.size() == 0)
+      return;
+
+   doAction(bindings.first());
+}
+
+void GwtCallback::undo(bool forAce)
 {
    doAction(QKeySequence::Undo);
 }
 
-void GwtCallback::redo()
+void GwtCallback::redo(bool forAce)
 {
-   doAction(QKeySequence::Redo);
+   // NOTE: On Windows, the default redo key sequence is 'Ctrl+Y';
+   // however, we bind this to 'yank' and so 'redo' actions executed
+   // from the menu will fail. We instead use 'Ctrl+Shift+Z' which is
+   // supported across all platforms using Qt.
+   static const QKeySequence keys =
+         QKeySequence::fromString(QString::fromUtf8("Ctrl+Shift+Z"));
+
+   doAction(keys);
 }
 
 void GwtCallback::clipboardCut()
@@ -396,9 +410,9 @@ bool GwtCallback::canChooseRVersion()
 #endif
 }
 
-bool GwtCallback::isRetina()
+double GwtCallback::devicePixelRatio()
 {
-   return desktop::isRetina(pMainWindow_);
+   return desktop::devicePixelRatio(pMainWindow_);
 }
 
 void GwtCallback::openMinimalWindow(QString name,
@@ -406,7 +420,7 @@ void GwtCallback::openMinimalWindow(QString name,
                                     int width,
                                     int height)
 {
-   bool named = !name.isEmpty() && name != QString::fromAscii("_blank");
+   bool named = !name.isEmpty() && name != QString::fromUtf8("_blank");
 
    BrowserWindow* browser = NULL;
    if (named)
@@ -415,9 +429,9 @@ void GwtCallback::openMinimalWindow(QString name,
    if (!browser)
    {
       bool isViewerZoomWindow =
-          (name == QString::fromAscii("_rstudio_viewer_zoom"));
+          (name == QString::fromUtf8("_rstudio_viewer_zoom"));
 
-      browser = new BrowserWindow(false, !isViewerZoomWindow);
+      browser = new BrowserWindow(false, !isViewerZoomWindow, name);
       browser->setAttribute(Qt::WA_DeleteOnClose);
       browser->setAttribute(Qt::WA_QuitOnClose, false);
       browser->connect(browser->webView(), SIGNAL(onCloseWindowShortcut()),
@@ -427,7 +441,7 @@ void GwtCallback::openMinimalWindow(QString name,
 
       // set title for viewer zoom
       if (isViewerZoomWindow)
-         browser->setWindowTitle(QString::fromAscii("Viewer Zoom"));
+         browser->setWindowTitle(QString::fromUtf8("Viewer Zoom"));
    }
 
    browser->webView()->load(QUrl(url));
@@ -438,26 +452,45 @@ void GwtCallback::openMinimalWindow(QString name,
 
 void GwtCallback::activateMinimalWindow(QString name)
 {
-   // We currently only activate minimal windows on Cocoa, so this isn't
-   // implemented on Qt desktop, and we don't expect it to be called.
-   std::string message = "Could not activate window '" + name.toStdString() +
-                          "'.";
-   QMessageBox::warning(pOwner_->asWidget(),
-                        QString::fromUtf8("Window Activation Failed"),
-                        QString::fromUtf8(message.c_str()));
+   // we can only activate named windows
+   bool named = !name.isEmpty() && name != QString::fromUtf8("_blank");
+   if (!named)
+      return;
+
+   pOwner_->webPage()->activateWindow(name);
 }
 
 void GwtCallback::prepareForSatelliteWindow(QString name,
+                                            int x,
+                                            int y,
                                             int width,
                                             int height)
 {
-   pOwner_->webPage()->prepareForSatelliteWindow(
-                PendingSatelliteWindow(name, pMainWindow_, width, height));
+   pOwner_->webPage()->prepareForWindow(
+                PendingWindow(name, pMainWindow_, x, y, width, height));
+}
+
+void GwtCallback::prepareForNamedWindow(QString name,
+                                        bool allowExternalNavigate,
+                                        bool showDesktopToolbar)
+{
+   pOwner_->webPage()->prepareForWindow(
+                PendingWindow(name, allowExternalNavigate, showDesktopToolbar));
+}
+
+void GwtCallback::closeNamedWindow(QString name)
+{
+   // close the requested window
+   pOwner_->webPage()->closeWindow(name);
+
+   // bring the main window to the front (so we don't lose RStudio context
+   // entirely)
+   desktop::raiseAndActivateWindow(pMainWindow_);
 }
 
 void GwtCallback::activateSatelliteWindow(QString name)
 {
-   pOwner_->webPage()->activateSatelliteWindow(name);
+   pOwner_->webPage()->activateWindow(name);
 }
 
 void GwtCallback::copyImageToClipboard(int left, int top, int width, int height)
@@ -512,17 +545,17 @@ bool GwtCallback::supportsClipboardMetafile()
 namespace {
    QMessageBox::ButtonRole captionToRole(QString caption)
    {
-      if (caption == QString::fromAscii("OK"))
+      if (caption == QString::fromUtf8("OK"))
          return QMessageBox::AcceptRole;
-      else if (caption == QString::fromAscii("Cancel"))
+      else if (caption == QString::fromUtf8("Cancel"))
          return QMessageBox::RejectRole;
-      else if (caption == QString::fromAscii("Yes"))
+      else if (caption == QString::fromUtf8("Yes"))
          return QMessageBox::YesRole;
-      else if (caption == QString::fromAscii("No"))
+      else if (caption == QString::fromUtf8("No"))
          return QMessageBox::NoRole;
-      else if (caption == QString::fromAscii("Save"))
+      else if (caption == QString::fromUtf8("Save"))
          return QMessageBox::AcceptRole;
-      else if (caption == QString::fromAscii("Don't Save"))
+      else if (caption == QString::fromUtf8("Don't Save"))
          return QMessageBox::DestructiveRole;
       else
          return QMessageBox::ActionRole;
@@ -551,7 +584,7 @@ int GwtCallback::showMessageBox(int type,
    msgBox.setWindowModality(Qt::WindowModal);
    msgBox.setTextFormat(Qt::PlainText);
 
-   QStringList buttonList = buttons.split(QChar::fromAscii('|'));
+   QStringList buttonList = buttons.split(QChar::fromLatin1('|'));
 
    for (int i = 0; i != buttonList.size(); i++)
    {
@@ -627,8 +660,8 @@ QString GwtCallback::promptForText(QString title,
       bool extraOption = dialog.extraOption();
       QString values;
       values += value;
-      values += QString::fromAscii("\n");
-      values += extraOption ? QString::fromAscii("1") : QString::fromAscii("0");
+      values += QString::fromUtf8("\n");
+      values += extraOption ? QString::fromUtf8("1") : QString::fromUtf8("0");
       return values;
    }
    else
@@ -664,6 +697,11 @@ void GwtCallback::showAboutDialog()
 void GwtCallback::bringMainFrameToFront()
 {
    desktop::raiseAndActivateWindow(pMainWindow_);
+}
+
+void GwtCallback::bringMainFrameBehindActive()
+{
+   desktop::moveWindowBeneath(QApplication::activeWindow(), pMainWindow_);
 }
 
 QString GwtCallback::filterText(QString text)
@@ -831,7 +869,17 @@ int GwtCallback::collectPendingQuitRequest()
 
 void GwtCallback::openProjectInNewWindow(QString projectFilePath)
 {
-   launchProjectInNewInstance(resolveAliasedPath(projectFilePath));
+   std::vector<std::string> args;
+   args.push_back(resolveAliasedPath(projectFilePath).toStdString());
+   launchRStudio(args);
+}
+
+void GwtCallback::openSessionInNewWindow(QString workingDirectoryPath)
+{
+   workingDirectoryPath = resolveAliasedPath(workingDirectoryPath);
+   core::system::setenv(kRStudioInitialWorkingDir,
+                        workingDirectoryPath.toStdString());
+   launchRStudio();
 }
 
 void GwtCallback::openTerminal(QString terminalPath,
@@ -844,7 +892,7 @@ void GwtCallback::openTerminal(QString terminalPath,
    core::system::addToPath(&path, extraPathEntries.toStdString());
    core::system::setenv("PATH", path);
 
-#if defined(Q_WS_MACX)
+#if defined(Q_OS_MAC)
 
    // call Terminal.app with an applescript that navigates it
    // to the specified directory. note we don't reference the
@@ -858,14 +906,14 @@ void GwtCallback::openTerminal(QString terminalPath,
    args.append(resolveAliasedPath(workingDirectory));
    QProcess::startDetached(macTermScriptPath, args);
 
-#elif defined(Q_WS_WIN)
+#elif defined(Q_OS_WIN)
 
    // git bash
    if (terminalPath.length() > 0)
    {
       QStringList args;
-      args.append(QString::fromAscii("--login"));
-      args.append(QString::fromAscii("-i"));
+      args.append(QString::fromUtf8("--login"));
+      args.append(QString::fromUtf8("-i"));
       QProcess::startDetached(terminalPath,
                               args,
                               resolveAliasedPath(workingDirectory));
@@ -878,7 +926,7 @@ void GwtCallback::openTerminal(QString terminalPath,
       core::system::setenv("HOME", userProfile);
 
       // run the process
-      QProcess::startDetached(QString::fromAscii("cmd.exe"),
+      QProcess::startDetached(QString::fromUtf8("cmd.exe"),
                               QStringList(),
                               resolveAliasedPath(workingDirectory));
 
@@ -887,7 +935,7 @@ void GwtCallback::openTerminal(QString terminalPath,
    }
 
 
-#elif defined(Q_WS_X11)
+#elif defined(Q_OS_LINUX)
 
    // start the auto-detected terminal (or user-specified override)
    if (!terminalPath.length() == 0)
@@ -901,8 +949,8 @@ void GwtCallback::openTerminal(QString terminalPath,
    {
       desktop::showWarning(
          NULL,
-         QString::fromAscii("Terminal Not Found"),
-         QString::fromAscii(
+         QString::fromUtf8("Terminal Not Found"),
+         QString::fromUtf8(
                   "Unable to find a compatible terminal program to launch"));
    }
 
@@ -927,7 +975,7 @@ QString GwtCallback::getFixedWidthFontList()
             families.begin(), families.end(), isProportionalFont);
    families.erase(it, families.end());
 
-   return families.join(QString::fromAscii("\n"));
+   return families.join(QString::fromUtf8("\n"));
 }
 
 QString GwtCallback::getFixedWidthFont()
@@ -948,7 +996,7 @@ QString GwtCallback::getZoomLevels()
       zoomLevels.append(QString::fromStdString(
                            safe_convert::numberToString(zoomLevel)));
    }
-   return zoomLevels.join(QString::fromAscii("\n"));
+   return zoomLevels.join(QString::fromUtf8("\n"));
 }
 
 double GwtCallback::getZoomLevel()
@@ -1009,7 +1057,7 @@ void GwtCallback::activateAndFocusOwner()
 void GwtCallback::reloadZoomWindow()
 {
    BrowserWindow* pBrowser = s_windowTracker.getWindow(
-                     QString::fromAscii("_rstudio_zoom"));
+                     QString::fromUtf8("_rstudio_zoom"));
    if (pBrowser)
       pBrowser->webView()->reload();
 }
@@ -1019,36 +1067,43 @@ void GwtCallback::setViewerUrl(QString url)
    pOwner_->webPage()->setViewerUrl(url);
 }
 
+void GwtCallback::setShinyDialogUrl(QString url)
+{
+   pOwner_->webPage()->setShinyDialogUrl(url);
+}
+
 void GwtCallback::reloadViewerZoomWindow(QString url)
 {
    BrowserWindow* pBrowser = s_windowTracker.getWindow(
-                     QString::fromAscii("_rstudio_viewer_zoom"));
+                     QString::fromUtf8("_rstudio_viewer_zoom"));
    if (pBrowser)
       pBrowser->webView()->setUrl(url);
 }
-
-
-
 
 bool GwtCallback::isOSXMavericks()
 {
    return desktop::isOSXMavericks();
 }
 
+bool GwtCallback::isCentOS()
+{
+   return desktop::isCentOS();
+}
+
 QString GwtCallback::getScrollingCompensationType()
 {
-#if defined(Q_WS_MACX)
-   return QString::fromAscii("Mac");
-#elif defined(Q_WS_WIN)
-   return QString::fromAscii("Win");
+#if defined(Q_OS_MAC)
+   return QString::fromUtf8("Mac");
+#elif defined(Q_OS_WIN)
+   return QString::fromUtf8("Win");
 #else
-   return QString::fromAscii("None");
+   return QString::fromUtf8("None");
 #endif
 }
 
 void GwtCallback::setBusy(bool)
 {
-#if defined(Q_WS_MACX)
+#if defined(Q_OS_MAC)
    // call AppNap apis for Mac (we use Cocoa on the Mac though so
    // this codepath will never be hit)
 #endif
@@ -1059,13 +1114,13 @@ void GwtCallback::setWindowTitle(QString title)
    pMainWindow_->setWindowTitle(title + QString::fromUtf8(" - RStudio"));
 }
 
-#ifdef Q_WS_WIN
+#ifdef Q_OS_WIN
 void GwtCallback::installRtools(QString version, QString installerPath)
 {
    // silent install
    QStringList args;
-   args.push_back(QString::fromAscii("/SP-"));
-   args.push_back(QString::fromAscii("/SILENT"));
+   args.push_back(QString::fromUtf8("/SP-"));
+   args.push_back(QString::fromUtf8("/SILENT"));
 
    // custom install directory
    std::string systemDrive = core::system::getenv("SYSTEMDRIVE");
@@ -1085,7 +1140,10 @@ void GwtCallback::installRtools(QString version, QString installerPath)
 }
 #endif
 
-
-
+int GwtCallback::getDisplayDpi()
+{
+   return getDpi();
+}
 
 } // namespace desktop
+} // namespace rstudio

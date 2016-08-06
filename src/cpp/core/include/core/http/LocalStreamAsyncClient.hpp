@@ -16,16 +16,22 @@
 #ifndef CORE_HTTP_LOCAL_STREAM_ASYNC_CLIENT_HPP
 #define CORE_HTTP_LOCAL_STREAM_ASYNC_CLIENT_HPP
 
+#include <sys/stat.h>
+
 #include <boost/function.hpp>
+#include <boost/optional.hpp>
 
 #include <boost/asio/local/stream_protocol.hpp>
 
 #include <core/Error.hpp>
 #include <core/FilePath.hpp>
 
+#include <core/system/PosixUser.hpp>
+
 #include <core/http/AsyncClient.hpp>
 #include <core/http/LocalStreamSocketUtils.hpp>
 
+namespace rstudio {
 namespace core {
 namespace http {  
 
@@ -36,12 +42,14 @@ public:
    LocalStreamAsyncClient(boost::asio::io_service& ioService,
                           const FilePath localStreamPath,
                           bool logToStderr = false,
+                          boost::optional<UidType> validateUid = boost::none,
                           const http::ConnectionRetryProfile& retryProfile =
                                                 http::ConnectionRetryProfile())
      : AsyncClient<boost::asio::local::stream_protocol::socket>(ioService,
                                                                 logToStderr),
        socket_(ioService),
-       localStreamPath_(localStreamPath)
+       localStreamPath_(localStreamPath),
+       validateUid_(validateUid)
    {
       setConnectionRetryProfile(retryProfile);
    }
@@ -57,6 +65,34 @@ private:
 
    virtual void connectAndWriteRequest()
    {
+      // validate if requested
+      if (validateUid_.is_initialized() && localStreamPath_.exists())
+      {
+         struct stat st;
+         if (::stat(localStreamPath_.absolutePath().c_str(), &st) == 0)
+         {
+            if (st.st_uid != validateUid_.get())
+            {
+                Error error = systemError(boost::system::errc::permission_denied,
+                                          ERROR_LOCATION);
+                error.addProperty("path", localStreamPath_);
+                error.addProperty("user-id", validateUid_.get());
+                error.addProperty("stream-user-id", st.st_uid);
+                handleConnectionError(error);
+                return;
+            }
+         }
+         else
+         {
+            Error error = systemError(boost::system::errc::permission_denied, ERROR_LOCATION);
+            error.addProperty("errno", errno);
+            error.addProperty("path", localStreamPath_);
+            handleConnectionError(error);
+            return;
+         }
+
+      }
+
       // establish endpoint
       using boost::asio::local::stream_protocol;
       stream_protocol::endpoint endpoint(localStreamPath_.absolutePath());
@@ -98,10 +134,12 @@ private:
 private:
    boost::asio::local::stream_protocol::socket socket_;
    core::FilePath localStreamPath_;
+   boost::optional<UidType> validateUid_;
 };
    
    
 } // namespace http
 } // namespace core
+} // namespace rstudio
 
 #endif // CORE_HTTP_LOCAL_STREAM_ASYNC_CLIENT_HPP

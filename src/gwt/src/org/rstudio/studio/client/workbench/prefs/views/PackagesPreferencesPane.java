@@ -23,11 +23,10 @@ import com.google.gwt.event.logical.shared.ValueChangeEvent;
 import com.google.gwt.event.logical.shared.ValueChangeHandler;
 import com.google.gwt.resources.client.ImageResource;
 import com.google.gwt.user.client.ui.CheckBox;
-import com.google.gwt.user.client.ui.Label;
+import com.google.gwt.user.client.ui.HorizontalPanel;
 import com.google.inject.Inject;
 
 import org.rstudio.core.client.BrowseCap;
-import org.rstudio.core.client.prefs.PreferencesDialogBaseResources;
 import org.rstudio.core.client.widget.MessageDialog;
 import org.rstudio.core.client.widget.OperationWithInput;
 import org.rstudio.core.client.widget.TextBoxWithButton;
@@ -52,12 +51,8 @@ public class PackagesPreferencesPane extends PreferencesPane
    {
       res_ = res;
       globalDisplay_ = globalDisplay;
-      PreferencesDialogBaseResources baseRes = PreferencesDialogBaseResources.INSTANCE;
-
-      Label installationLabel = new Label("Package management");
-      installationLabel.addStyleName(baseRes.styles().headerLabel());
-      nudgeRight(installationLabel);
-      add(installationLabel);
+    
+      add(headerLabel("Package management"));
       
       cranMirrorTextBox_ = new TextBoxWithButton(
             "CRAN mirror:",
@@ -96,8 +91,17 @@ public class PackagesPreferencesPane extends PreferencesPane
          }
       });
       if (!session.getSessionInfo().getDisablePackages())
+      {
+         lessSpaced(chkEnablePackages);
          add(chkEnablePackages);
-
+      }
+      
+      useSecurePackageDownload_ = new CheckBox(
+            "Use secure download method for HTTP");
+      HorizontalPanel secureDownloadPanel = checkBoxWithHelp(
+                        useSecurePackageDownload_, "secure_download");
+      lessSpaced(secureDownloadPanel);
+      add(secureDownloadPanel);
       
       useInternet2_ = new CheckBox(
                         "Use Internet Explorer library/proxy for HTTP",
@@ -110,14 +114,11 @@ public class PackagesPreferencesPane extends PreferencesPane
       }
       else
       {
-         spaced(chkEnablePackages);
-         chkEnablePackages.getElement().getStyle().setMarginBottom(12, Unit.PX);
+         spaced(useSecurePackageDownload_);
+         useSecurePackageDownload_.getElement().getStyle().setMarginBottom(12, Unit.PX);
       }
       
-      Label developmentLabel = new Label("Package development");
-      developmentLabel.addStyleName(baseRes.styles().headerLabel());
-      nudgeRight(developmentLabel);
-      add(developmentLabel);
+      add(headerLabel("Package development"));
       
       useDevtools_ = new CheckBox("Use devtools package functions if available");
       lessSpaced(useDevtools_);
@@ -140,6 +141,10 @@ public class PackagesPreferencesPane extends PreferencesPane
       
       add(checkboxPref("Use Rcpp template when creating C++ files", uiPrefs.useRcppTemplate()));
       
+      useNewlineInMakefiles_ = new CheckBox("Always use LF line-endings in Unix Makefiles");
+      lessSpaced(useNewlineInMakefiles_);
+      add(useNewlineInMakefiles_);
+      
       HelpLink packagesHelpLink = new PackagesHelpLink();
       packagesHelpLink.getElement().getStyle().setMarginTop(12, Unit.PX);
       nudgeRight(packagesHelpLink); 
@@ -151,6 +156,7 @@ public class PackagesPreferencesPane extends PreferencesPane
       viewDirAfterCheckFailure_.setEnabled(false); 
       hideObjectFiles_.setEnabled(false);
       useDevtools_.setEnabled(false);
+      useSecurePackageDownload_.setEnabled(false);
    }
 
 
@@ -210,6 +216,12 @@ public class PackagesPreferencesPane extends PreferencesPane
       
       useDevtools_.setEnabled(true);
       useDevtools_.setValue(packagesPrefs.getUseDevtools());
+      
+      useSecurePackageDownload_.setEnabled(true);
+      useSecurePackageDownload_.setValue(packagesPrefs.getUseSecureDownload());
+      
+      useNewlineInMakefiles_.setEnabled(true);
+      useNewlineInMakefiles_.setValue(packagesPrefs.getUseNewlineInMakefiles());
    }
 
    @Override
@@ -225,7 +237,9 @@ public class PackagesPreferencesPane extends PreferencesPane
                                               cleanupAfterCheckSuccess_.getValue(),
                                               viewDirAfterCheckFailure_.getValue(),
                                               hideObjectFiles_.getValue(),
-                                              useDevtools_.getValue());
+                                              useDevtools_.getValue(),
+                                              useSecurePackageDownload_.getValue(),
+                                              useNewlineInMakefiles_.getValue());
       rPrefs.setPackagesPrefs(packagesPrefs);
       
       return reload || reloadRequired_;
@@ -242,5 +256,7 @@ public class PackagesPreferencesPane extends PreferencesPane
    private CheckBox viewDirAfterCheckFailure_;
    private CheckBox hideObjectFiles_;
    private CheckBox useDevtools_;
+   private CheckBox useSecurePackageDownload_;
+   private CheckBox useNewlineInMakefiles_;
    private boolean reloadRequired_ = false;
 }

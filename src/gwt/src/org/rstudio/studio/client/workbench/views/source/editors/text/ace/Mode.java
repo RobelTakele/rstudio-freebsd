@@ -33,14 +33,34 @@ public class Mode extends JavaScriptObject
       public native final Position getCursorPosition() /*-{
          return this.position || {row: 0, column: 0};
       }-*/;
+      
+      /**
+       * @return Position of content, relative to the beginning of the value.
+       */
+      public native final Position getContentPosition() /*-{
+         return this.content_position || {row: 0, column: 0};
+      }-*/;
+      
+      
    }
 
    protected Mode()
    {
    }
+   
+   public native final boolean hasCodeModel() /*-{
+      return typeof this.codeModel !== "undefined";
+   }-*/;
 
    public native final CodeModel getCodeModel() /*-{
       return this.codeModel || {};
+   }-*/;
+   
+   public native final CodeModel getRCodeModel() /*-{
+      if (typeof this.r_codeModel !== "undefined")
+         return this.r_codeModel;
+      else
+         return this.codeModel || {};
    }-*/;
 
    public native final String getLanguageMode(Position position) /*-{
@@ -56,4 +76,28 @@ public class Mode extends JavaScriptObject
    public native final InsertChunkInfo getInsertChunkInfo() /*-{
       return this.insertChunkInfo || null;
    }-*/;
+   
+   public native final String getNextLineIndent(
+         String state,
+         String line,
+         String tab,
+         int tabSize,
+         int row) /*-{
+      return this.getNextLineIndent(state, line, tab, tabSize, row);
+   }-*/;
+   
+   public native final Tokenizer getTokenizer() /*-{
+      return this.$tokenizer;
+   }-*/;
+   
+   public native final String getId() /*-{ return this.$id; }-*/;
+   
+   public native final void setHighlightRFunctionCalls(boolean show) /*-{
+      this.setHighlightRFunctionCalls && this.setHighlightRFunctionCalls(show);
+   }-*/;
+   
+   public native final void setInsertMatching(boolean value) /*-{
+      this.insertMatching = value;
+   }-*/;
+   
 }

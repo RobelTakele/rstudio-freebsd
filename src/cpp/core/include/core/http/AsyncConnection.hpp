@@ -19,8 +19,10 @@
 #include <boost/shared_ptr.hpp>
 #include <boost/asio/io_service.hpp>
 
+#include <core/http/Response.hpp>
 #include <core/http/Socket.hpp>
 
+namespace rstudio {
 namespace core {
 
 class Error;
@@ -29,6 +31,16 @@ namespace http {
 
 class Request;
 class Response;
+
+class AsyncConnection;
+
+typedef boost::function<void(boost::shared_ptr<Response>)> RequestFilterContinuation;
+
+typedef boost::function<void(boost::asio::io_service&,
+                             Request*,
+                             RequestFilterContinuation)> RequestFilter;
+
+typedef boost::function<void(const std::string&,Response*)> ResponseFilter;
 
 // abstract base (insulate clients from knowledge of protocol-specifics)
 class AsyncConnection : public Socket
@@ -54,5 +66,6 @@ public:
 
 } // namespace http
 } // namespace core
+} // namespace rstudio
 
 #endif // CORE_HTTP_ASYNC_CONNECTION_HPP

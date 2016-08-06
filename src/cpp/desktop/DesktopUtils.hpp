@@ -21,21 +21,31 @@
 #include <QMainWindow>
 #include <QFileDialog>
 
+#include <core/system/Process.hpp>
+
+namespace rstudio {
 namespace core {
    class FilePath;
 }
+}
 
+namespace rstudio {
 namespace desktop {
 
 void reattachConsoleIfNecessary();
 
 core::FilePath userLogPath();
 
-bool isRetina(QMainWindow* pMainWindow);
+double devicePixelRatio(QMainWindow* pMainWindow);
 
 bool isOSXMavericks();
+bool isCentOS();
 
 void raiseAndActivateWindow(QWidget* pWindow);
+
+void moveWindowBeneath(QWidget* pTop, QWidget* pBottom);
+
+void closeWindow(QWidget* pWindow);
 
 QMessageBox::Icon safeMessageBoxIcon(QMessageBox::Icon icon);
 
@@ -57,7 +67,7 @@ void showFileError(const QString& action,
                    const QString& file,
                    const QString& error);
 
-void launchProjectInNewInstance(QString projectFilename);
+void launchRStudio(const std::vector<std::string>& args = std::vector<std::string>());
 
 bool isFixedWidthFont(const QFont& font);
 
@@ -70,9 +80,11 @@ bool supportsFullscreenMode(QMainWindow* pMainWindow);
 void initializeLang();
 
 double getDpiZoomScaling();
+int getDpi();
 
 QFileDialog::Options standardFileDialogOptions();
 
 } // namespace desktop
+} // namespace rstudio
 
 #endif // DESKTOP_UTILS_HPP

@@ -185,11 +185,16 @@ public class Toolbar extends Composite
    {
       return addToolbarPopupMenu(label, menu, false);
    }
+   
+   public static Widget getSeparator()
+   {
+      Image sep = new Image(ThemeResources.INSTANCE.toolbarSeparator());
+      return sep;
+   }
 
    public Widget addLeftSeparator()
    {
-      Image sep = new Image(ThemeResources.INSTANCE.toolbarSeparator());
-      sep.setStylePrimaryName(styles_.toolbarSeparator());
+      Image sep = new ToolbarSeparator();
       leftToolbarPanel_.add(sep);
       invalidateSeparators();
       return sep;
@@ -197,8 +202,7 @@ public class Toolbar extends Composite
    
    public Widget addRightSeparator()
    {
-      Image sep = new Image(ThemeResources.INSTANCE.toolbarSeparator());
-      sep.setStylePrimaryName(styles_.toolbarSeparator());
+      Image sep = new ToolbarSeparator();
       rightToolbarPanel_.add(sep);
       invalidateSeparators();
       return sep;

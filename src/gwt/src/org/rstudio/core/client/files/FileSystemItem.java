@@ -89,6 +89,9 @@ public class FileSystemItem extends JavaScriptObject
    public static String getExtensionFromPath(String path)
    {
       String filename = getNameFromPath(path);
+      if (filename.endsWith(".nb.html"))
+         return ".nb.html";
+      
       int lastDotIndex = filename.lastIndexOf('.');
       if (lastDotIndex != -1)
          return filename.substring(lastDotIndex);
@@ -302,7 +305,7 @@ public class FileSystemItem extends JavaScriptObject
       return this.length;
    }-*/;
 
-   private final native double getLastModifiedNative() /*-{
+   public final native double getLastModifiedNative() /*-{
       return this.lastModified;
    }-*/;
 
@@ -341,12 +344,16 @@ public class FileSystemItem extends JavaScriptObject
       MIME_TYPES.put( "md",       "text/x-markdown" );
       MIME_TYPES.put( "mdtxt",    "text/x-markdown" );
       MIME_TYPES.put( "markdown", "text/x-markdown" );
+      MIME_TYPES.put( "yaml",     "text/x-yaml" );
+      MIME_TYPES.put( "yml",      "text/x-yaml" );
 
       // programming languages
       MIME_TYPES.put( "f",         "text/x-fortran" );
       MIME_TYPES.put( "py",        "text/x-python" );
       MIME_TYPES.put( "sh",        "text/x-shell" );
       MIME_TYPES.put( "sql",       "text/x-sql" );
+      MIME_TYPES.put( "stan",      "text/x-stan" );
+      MIME_TYPES.put( "clj",       "text/x-clojure");
 
       // other types we are likely to serve
       MIME_TYPES.put( "xml",   "text/xml" );
@@ -357,6 +364,7 @@ public class FileSystemItem extends JavaScriptObject
       MIME_TYPES.put( "bz2",   "application/x-bzip2");
       MIME_TYPES.put( "gz",    "application/x-gzip");
       MIME_TYPES.put( "tar",   "application/x-tar");
+      MIME_TYPES.put( "json",  "application/json");
 
       // yet more types...
 
@@ -370,6 +378,8 @@ public class FileSystemItem extends JavaScriptObject
       MIME_TYPES.put( "out",   "text/plain");
       MIME_TYPES.put( "csl",   "text/x-csl");
       MIME_TYPES.put( "r",     "text/x-r-source");
+      MIME_TYPES.put( "s",     "text/x-r-source");
+      MIME_TYPES.put( "q",     "text/x-r-source");
       MIME_TYPES.put( "rd",    "text/x-r-doc");
       MIME_TYPES.put( "rnw",   "text/x-r-sweave");
       MIME_TYPES.put( "rmd",   "text/x-r-markdown");
@@ -381,6 +391,7 @@ public class FileSystemItem extends JavaScriptObject
       MIME_TYPES.put( "gitignore",   "text/plain");
       MIME_TYPES.put( "rbuildignore","text/plain");
       MIME_TYPES.put( "rprofile", "text/x-r-source");
+      MIME_TYPES.put( "rprofvis", "text/x-r-profile");
 
       MIME_TYPES.put( "tif",   "image/tiff" );
       MIME_TYPES.put( "tiff",  "image/tiff" );

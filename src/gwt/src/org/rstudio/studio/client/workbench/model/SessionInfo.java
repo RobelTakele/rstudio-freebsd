@@ -18,13 +18,19 @@ import org.rstudio.core.client.StringUtil;
 import org.rstudio.core.client.files.FileSystemItem;
 import org.rstudio.core.client.js.JsObject;
 import org.rstudio.core.client.jsonrpc.RpcObjectList;
+import org.rstudio.studio.client.application.ApplicationUtils;
+import org.rstudio.studio.client.application.model.RVersionsInfo;
 import org.rstudio.studio.client.common.compilepdf.model.CompilePdfState;
 import org.rstudio.studio.client.common.console.ConsoleProcessInfo;
 import org.rstudio.studio.client.common.debugging.model.ErrorManagerState;
 import org.rstudio.studio.client.common.rnw.RnwWeave;
+import org.rstudio.studio.client.workbench.addins.Addins.RAddins;
 import org.rstudio.studio.client.workbench.views.buildtools.model.BuildState;
+import org.rstudio.studio.client.workbench.views.connections.model.Connection;
+import org.rstudio.studio.client.workbench.views.connections.model.ConnectionId;
 import org.rstudio.studio.client.workbench.views.environment.model.EnvironmentContextData;
 import org.rstudio.studio.client.workbench.views.output.find.model.FindInFilesState;
+import org.rstudio.studio.client.workbench.views.output.markers.model.MarkersState;
 import org.rstudio.studio.client.workbench.views.presentation.model.PresentationState;
 import org.rstudio.studio.client.workbench.views.source.model.SourceDocument;
 
@@ -42,12 +48,16 @@ public class SessionInfo extends JavaScriptObject
       return this.clientId;
    }-*/;
    
-   public final native double getClientVersion() /*-{
-      return this.version;
+   public final native String getClientVersion() /*-{
+      return this.client_version;
    }-*/;
 
    public final native String getUserIdentity() /*-{
       return this.userIdentity;
+   }-*/;
+
+   public final native String getSessionId() /*-{
+      return this.session_id;
    }-*/;
 
    public final native JsArray<RnwWeave> getRnwWeaveTypes() /*-{
@@ -68,6 +78,10 @@ public class SessionInfo extends JavaScriptObject
 
    public final native FindInFilesState getFindInFilesState() /*-{
       return this.find_in_files_state;
+   }-*/;
+   
+   public final native MarkersState getMarkersState() /*-{
+      return this.markers_state;
    }-*/;
 
    public final native String getLogDir() /*-{
@@ -125,6 +139,10 @@ public class SessionInfo extends JavaScriptObject
    
    public final native JsArray<SourceDocument> getSourceDocuments() /*-{
       return this.source_documents;
+   }-*/;
+   
+   public final native void setSourceDocuments(JsArray<SourceDocument> docs) /*-{
+      this.source_documents = docs;
    }-*/;
    
    public final native WorkbenchLists getLists() /*-{
@@ -199,7 +217,15 @@ public class SessionInfo extends JavaScriptObject
          this.initial_working_dir = "~/";
       return this.initial_working_dir;
    }-*/;
-    
+   
+   public final native String getDefaultWorkingDir() /*-{
+      return this.default_working_dir;
+   }-*/;
+   
+   public final native String getDefaultProjectDir() /*-{
+      return this.default_project_dir;
+   }-*/;
+
    public final native String getActiveProjectFile() /*-{
       return this.active_project_file;
    }-*/;
@@ -228,6 +254,18 @@ public class SessionInfo extends JavaScriptObject
          this.project_open_docs = {};
       return this.project_open_docs;
    }-*/;
+   
+   public final native boolean projectSupportsSharing() /*-{
+      return !!this.project_supports_sharing;
+   }-*/;
+   
+   public final native boolean projectParentBrowseable() /*-{
+      return !!this.project_parent_browseable;
+   }-*/;
+   
+   public final native String getProjectUserDataDir() /*-{
+      return this.project_user_data_directory;
+   }-*/;
 
    public final native JsArray<ConsoleProcessInfo> getConsoleProcesses() /*-{
       return this.console_processes;
@@ -244,10 +282,15 @@ public class SessionInfo extends JavaScriptObject
    public final static String BUILD_TOOLS_NONE = "None";
    public final static String BUILD_TOOLS_PACKAGE = "Package";
    public final static String BUILD_TOOLS_MAKEFILE = "Makefile";
+   public final static String BUILD_TOOLS_WEBSITE = "Website";
    public final static String BUILD_TOOLS_CUSTOM = "Custom";
    
    public final native String getBuildToolsType() /*-{
       return this.build_tools_type;
+   }-*/;
+  
+   public final native boolean getBuildToolsBookdownWebsite() /*-{
+      return this.build_tools_bookdown_website;
    }-*/;
    
    public final native String getBuildTargetDir() /*-{
@@ -315,14 +358,18 @@ public class SessionInfo extends JavaScriptObject
       return this.allow_remove_public_folder;
    }-*/;
    
-   public final native boolean getAllowRpubsPublish() /*-{
-      return this.allow_rpubs_publish;
+   public final native boolean getAllowExternalPublish() /*-{
+      return this.allow_external_publish;
    }-*/;
    
-   public final native String getSwitchToProject() /*-{
-      return this.switch_to_project;
+   public final native boolean getAllowPublish() /*-{
+      return this.allow_publish;
    }-*/;
-
+   
+   public final native boolean getAllowOpenSharedProjects() /*-{
+      return this.allow_open_shared_projects;
+   }-*/;
+   
    public final native EnvironmentContextData getEnvironmentState() /*-{
       return this.environment_state;
    }-*/;
@@ -351,11 +398,83 @@ public class SessionInfo extends JavaScriptObject
       return this.have_advanced_step_commands;
    }-*/;
    
-   public final native boolean getShinyappsAvailable() /*-{
-      return this.shinyapps_available;
-   }-*/;
-   
    public final native boolean getRMarkdownPackageAvailable() /*-{
       return this.rmarkdown_available;
+   }-*/;
+   
+   public final native boolean getKnitParamsAvailable()  /*-{
+      return this.knit_params_available;
+   }-*/;
+   
+   public final native boolean getClangAvailable() /*-{
+      return this.clang_available;
+   }-*/;
+   
+   public final native boolean getConnectionsEnabled() /*-{
+      return this.connections_enabled;
+   }-*/;
+   
+   public final native boolean getActivateConnections() /*-{
+      return this.activate_connections;
+   }-*/;
+   
+   public final native JsArray<Connection> getConnectionList() /*-{
+      return this.connection_list;
+   }-*/;
+
+   public final native JsArray<ConnectionId> getActiveConnections() /*-{
+      return this.active_connections;
+   }-*/;
+   
+   public final native boolean getShowHelpHome() /*-{
+      return this.show_help_home;
+   }-*/;
+   
+   public final native boolean getMultiSession() /*-{
+      return this.multi_session;
+   }-*/;
+   
+   public final native int getActiveSessionCount() /*-{
+      return this.active_session_count;
+   }-*/;
+   
+   public final native RVersionsInfo getRVersionsInfo() /*-{
+      return this.r_versions_info;
+   }-*/;
+   
+   public final native boolean getPresentationCommands() /*-{
+      return this.presentation_commands;
+   }-*/;
+   
+   public final native boolean getTutorialApiAvailable() /*-{
+      return this.tutorial_api_available;
+   }-*/;
+   
+   public final native String getTutorialApiClientOrigin() /*-{
+      return this.tutorial_api_client_origin;
+   }-*/;
+   
+   public final native boolean getPackratAvailable() /*-{
+      return this.packrat_available;
+   }-*/;
+   
+   public final native boolean getShowUserHomePage() /*-{
+      return this.show_user_home_page;
+   }-*/;
+   
+   public final String getUserHomePageUrl()
+   {
+      String url = getUserHomePageUrlNative();
+      if (url != null)
+         url = ApplicationUtils.getHostPageBaseURLWithoutContext(false) + url;
+      return url;
+   }
+   
+   private final native String getUserHomePageUrlNative() /*-{
+      return this.user_home_page_url;
+   }-*/;
+   
+   public final native RAddins getAddins() /*-{
+      return this.r_addins;
    }-*/;
 }

@@ -31,6 +31,7 @@
 
 #include <core/FileSerializer.hpp>
 
+namespace rstudio {
 namespace core {
 namespace http {
 
@@ -106,10 +107,13 @@ void Response::setNoCacheHeaders()
              "no-cache, no-store, max-age=0, must-revalidate");
 }
 
-void Response::setChromeFrameCompatible(const Request& request)
+// mark this request's user agent compatibility
+void Response::setBrowserCompatible(const Request& request)
 {
-    if (boost::algorithm::contains(request.userAgent(), "chromeframe"))
-         setHeader("X-UA-Compatible", "chrome=1");
+   if (boost::algorithm::contains(request.userAgent(), "chromeframe"))
+      setHeader("X-UA-Compatible", "chrome=1");
+   else if (boost::algorithm::contains(request.userAgent(), "Trident"))
+      setHeader("X-UA-Compatible", "IE=edge");
 }
 
 void Response::addCookie(const Cookie& cookie) 
@@ -455,4 +459,5 @@ std::ostream& operator << (std::ostream& stream, const Response& r)
 
 } // namespacc http
 } // namespace core
+} // namespace rstudio
 

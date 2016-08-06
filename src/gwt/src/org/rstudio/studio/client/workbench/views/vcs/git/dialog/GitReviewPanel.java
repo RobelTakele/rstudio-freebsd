@@ -39,9 +39,11 @@ import com.google.gwt.user.client.ui.*;
 import com.google.gwt.user.client.ui.PopupPanel.PositionCallback;
 import com.google.inject.Inject;
 
+import org.rstudio.core.client.BrowseCap;
 import org.rstudio.core.client.WidgetHandlerRegistration;
 import org.rstudio.core.client.command.AppCommand;
 import org.rstudio.core.client.command.KeyboardShortcut;
+import org.rstudio.core.client.dom.DomUtils;
 import org.rstudio.core.client.widget.*;
 import org.rstudio.studio.client.common.filetypes.FileTypeRegistry;
 import org.rstudio.studio.client.common.vcs.GitServerOperations.PatchMode;
@@ -231,6 +233,21 @@ public class GitReviewPanel extends ResizeComposite implements Display
       topToolbar_.addLeftWidget(switchViewButton_);
 
       topToolbar_.addLeftWidget(branchToolbarButton);
+      
+      topToolbar_.addLeftSeparator();
+      
+      topToolbar_.addLeftWidget(new ToolbarButton(
+            null, commands.vcsRefresh().getImageResource(),
+            new ClickHandler() {
+               @Override
+               public void onClick(ClickEvent event)
+               {
+                  changelist_.showProgress();
+                  commands.vcsRefresh().execute();
+               }
+            }));
+      
+      topToolbar_.addLeftSeparator();
 
       stageFilesButton_ = topToolbar_.addLeftWidget(new ToolbarButton(
             "Stage",
@@ -247,26 +264,13 @@ public class GitReviewPanel extends ResizeComposite implements Display
       ignoreButton_ = topToolbar_.addLeftWidget(new ToolbarButton(
             "Ignore", RES.ignore(), (ClickHandler) null));
 
-      topToolbar_.addRightWidget(new ToolbarButton(
-            "Refresh", commands.vcsRefresh().getImageResource(),
-            new ClickHandler() {
-               @Override
-               public void onClick(ClickEvent event)
-               {
-                  changelist_.showProgress();
-                  commands.vcsRefresh().execute();
-               }
-            }));
-
-      topToolbar_.addRightSeparator();
-
       
       topToolbar_.addRightWidget(commands.vcsPull().createToolbarButton());
 
       topToolbar_.addRightSeparator();
 
       topToolbar_.addRightWidget(commands.vcsPush().createToolbarButton());
-
+  
       diffToolbar_.addStyleName(RES.styles().toolbar());
       diffToolbar_.addStyleName(RES.styles().diffToolbar());
 
@@ -308,7 +312,6 @@ public class GitReviewPanel extends ResizeComposite implements Display
       listBoxAdapter_ = new ListBoxAdapter(contextLines_);
 
       FontSizer.applyNormalFontSize(commitMessage_);
-
       new WidgetHandlerRegistration(this)
       {
          @Override
@@ -320,10 +323,11 @@ public class GitReviewPanel extends ResizeComposite implements Display
                public void onPreviewNativeEvent(NativePreviewEvent event)
                {
                   NativeEvent nativeEvent = event.getNativeEvent();
-                  if (event.getTypeInt() == Event.ONKEYDOWN
-                      && KeyboardShortcut.getModifierValue(nativeEvent) == KeyboardShortcut.CTRL)
+                  int keyCode = nativeEvent.getKeyCode();
+                  int modifier = KeyboardShortcut.getModifierValue(nativeEvent);
+                  if (event.getTypeInt() == Event.ONKEYDOWN && isCtrlOrMeta(modifier))
                   {
-                     switch (nativeEvent.getKeyCode())
+                     switch (keyCode)
                      {
                         case KeyCodes.KEY_DOWN:
                            nativeEvent.preventDefault();
@@ -341,12 +345,26 @@ public class GitReviewPanel extends ResizeComposite implements Display
                            nativeEvent.preventDefault();
                            scrollBy(diffScroll_, -getPageScroll(diffScroll_), 0);
                            break;
+                        case KeyCodes.KEY_ENTER:
+                           if (DomUtils.getActiveElement() == commitMessage_.getElement())
+                           {
+                              nativeEvent.preventDefault();
+                              commitButton_.click();
+                           }
+                           break;
                      }
                   }
                }
             });
          }
       };
+   }
+   
+   private boolean isCtrlOrMeta(int modifier)
+   {
+      return BrowseCap.isMacintosh()
+            ? (modifier == KeyboardShortcut.CTRL || modifier == KeyboardShortcut.META)
+            : modifier == KeyboardShortcut.CTRL;
    }
 
    private void scrollBy(ScrollPanel scrollPanel, int vscroll, int hscroll)

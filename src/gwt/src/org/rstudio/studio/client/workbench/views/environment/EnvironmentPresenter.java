@@ -38,7 +38,7 @@ import org.rstudio.studio.client.common.filetypes.FileTypeRegistry;
 import org.rstudio.studio.client.common.filetypes.events.OpenDataFileEvent;
 import org.rstudio.studio.client.common.filetypes.events.OpenDataFileHandler;
 import org.rstudio.studio.client.common.filetypes.events.OpenSourceFileEvent;
-import org.rstudio.studio.client.common.filetypes.events.OpenSourceFileEvent.NavigationMethod;
+import org.rstudio.studio.client.common.filetypes.model.NavigationMethods;
 import org.rstudio.studio.client.server.ServerError;
 import org.rstudio.studio.client.server.ServerRequestCallback;
 import org.rstudio.studio.client.server.Void;
@@ -63,6 +63,7 @@ import com.google.gwt.core.client.JsArray;
 import com.google.gwt.user.client.Timer;
 import com.google.inject.Inject;
 
+import org.rstudio.studio.client.workbench.views.environment.dataimport.DataImportPresenter;
 import org.rstudio.studio.client.workbench.views.environment.dataimport.ImportFileSettings;
 import org.rstudio.studio.client.workbench.views.environment.dataimport.ImportFileSettingsDialog;
 import org.rstudio.studio.client.workbench.views.environment.dataimport.ImportFileSettingsDialogResult;
@@ -71,16 +72,19 @@ import org.rstudio.studio.client.workbench.views.environment.events.ContextDepth
 import org.rstudio.studio.client.workbench.views.environment.events.EnvironmentObjectAssignedEvent;
 import org.rstudio.studio.client.workbench.views.environment.events.EnvironmentObjectRemovedEvent;
 import org.rstudio.studio.client.workbench.views.environment.events.EnvironmentRefreshEvent;
+import org.rstudio.studio.client.workbench.views.environment.events.JumpToFunctionEvent;
 import org.rstudio.studio.client.workbench.views.environment.model.CallFrame;
 import org.rstudio.studio.client.workbench.views.environment.model.DownloadInfo;
 import org.rstudio.studio.client.workbench.views.environment.model.EnvironmentContextData;
 import org.rstudio.studio.client.workbench.views.environment.model.EnvironmentServerOperations;
 import org.rstudio.studio.client.workbench.views.environment.model.RObject;
 import org.rstudio.studio.client.workbench.views.environment.view.EnvironmentClientState;
+import org.rstudio.studio.client.workbench.views.source.Source;
 import org.rstudio.studio.client.workbench.views.source.SourceShim;
 import org.rstudio.studio.client.workbench.views.source.events.CodeBrowserFinishedEvent;
 import org.rstudio.studio.client.workbench.views.source.events.CodeBrowserHighlightEvent;
 import org.rstudio.studio.client.workbench.views.source.events.CodeBrowserNavigationEvent;
+import org.rstudio.studio.client.workbench.views.source.model.SourceServerOperations;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -121,6 +125,7 @@ public class EnvironmentPresenter extends BasePresenter
    @Inject
    public EnvironmentPresenter(Display view,
                                EnvironmentServerOperations server,
+                               SourceServerOperations sourceServer,
                                Binder binder,
                                Commands commands,
                                GlobalDisplay globalDisplay,
@@ -131,13 +136,16 @@ public class EnvironmentPresenter extends BasePresenter
                                RemoteFileSystemContext fsContext,
                                Session session,
                                SourceShim sourceShim,
-                               DebugCommander debugCommander)
+                               DebugCommander debugCommander,
+                               FileTypeRegistry fileTypeRegistry,
+                               DataImportPresenter dataImportPresenter)
    {
       super(view);
       binder.bind(commands, this);
       
       view_ = view;
       server_ = server;
+      sourceServer_ = sourceServer;
       globalDisplay_ = globalDisplay;
       consoleDispatcher_ = consoleDispatcher;
       fsContext_ = fsContext;
@@ -151,6 +159,9 @@ public class EnvironmentPresenter extends BasePresenter
       sourceShim_ = sourceShim;
       debugCommander_ = debugCommander;
       session_ = session;
+      fileTypeRegistry_ = fileTypeRegistry;
+      dataImportPresenter_ = dataImportPresenter;
+      
       requeryContextTimer_ = new Timer()
       {
          @Override
@@ -197,6 +208,7 @@ public class EnvironmentPresenter extends BasePresenter
          {
             loadNewContextState(event.getContextDepth(), 
                   event.getEnvironmentName(),
+                  event.getFunctionEnvName(),
                   event.environmentIsLocal(),
                   event.getCallFrames(),
                   event.useProvidedSource(),
@@ -260,6 +272,25 @@ public class EnvironmentPresenter extends BasePresenter
                requeryContextTimer_.schedule(500);
             }
          }
+      });
+      
+      
+      eventBus.addHandler(JumpToFunctionEvent.TYPE, 
+            new JumpToFunctionEvent.Handler()
+      {
+         @Override
+         public void onJumpToFunction(JumpToFunctionEvent event)
+         {
+            FilePosition pos = FilePosition.create(event.getLineNumber(), 
+                  event.getColumnNumber());
+            FileSystemItem destFile = FileSystemItem.createFile(
+                  event.getFileName());
+            eventBus_.fireEvent(new OpenSourceFileEvent(
+                  destFile,
+                  pos,
+                  fileTypeRegistry_.getTextTypeForFile(destFile),
+                  NavigationMethods.DEFAULT));
+            }
       });
       
       new JSObjectStateValue(
@@ -449,6 +480,66 @@ public class EnvironmentPresenter extends BasePresenter
               });
    }
 
+   void onImportDatasetFromCSV()
+   {
+      view_.bringToFront();
+      dataImportPresenter_.openImportDatasetFromCSV("");
+   }
+   
+   void onImportDatasetFromSAV()
+   {
+      view_.bringToFront();
+      dataImportPresenter_.openImportDatasetFromSAV("");
+   }
+
+   void onImportDatasetFromSAS()
+   {
+      view_.bringToFront();
+      dataImportPresenter_.openImportDatasetFromSAS("");
+   }
+
+   void onImportDatasetFromStata()
+   {
+      view_.bringToFront();
+      dataImportPresenter_.openImportDatasetFromStata("");
+   }
+
+   void onImportDatasetFromXLS()
+   {
+      view_.bringToFront();
+      dataImportPresenter_.openImportDatasetFromXLS("");
+   }
+
+   void onImportDatasetFromXML()
+   {
+      view_.bringToFront();
+      dataImportPresenter_.openImportDatasetFromXML("");
+   }
+
+   void onImportDatasetFromJSON()
+   {
+      view_.bringToFront();
+      dataImportPresenter_.openImportDatasetFromJSON("");
+   }
+
+   void onImportDatasetFromJDBC()
+   {
+      view_.bringToFront();
+      dataImportPresenter_.openImportDatasetFromJDBC("");
+   }
+
+   void onImportDatasetFromODBC()
+   {
+      view_.bringToFront();
+      dataImportPresenter_.openImportDatasetFromODBC("");
+   }
+
+   void onImportDatasetFromMongo()
+   {
+      view_.bringToFront();
+      dataImportPresenter_.openImportDatasetFromMongo("");
+   }
+
    public void onOpenDataFile(OpenDataFileEvent event)
    {
       final String dataFilePath = event.getFile().getPath();
@@ -519,6 +610,7 @@ public class EnvironmentPresenter extends BasePresenter
    {
       loadNewContextState(environmentState.contextDepth(),
             environmentState.environmentName(),
+            environmentState.functionEnvName(),
             environmentState.environmentIsLocal(),
             environmentState.callFrames(),
             environmentState.useProvidedSource(),
@@ -557,6 +649,7 @@ public class EnvironmentPresenter extends BasePresenter
 
    private void loadNewContextState(int contextDepth, 
          String environmentName,
+         String functionEnvName,
          boolean isLocalEvironment, 
          JsArray<CallFrame> callFrames,
          boolean useBrowseSources,
@@ -564,6 +657,7 @@ public class EnvironmentPresenter extends BasePresenter
    {
       boolean enteringDebugMode = setContextDepth(contextDepth);
       environmentName_ = environmentName;
+      functionEnvName_ = functionEnvName;
       view_.setEnvironmentName(environmentName_, isLocalEvironment);
       if (callFrames != null && 
           callFrames.length() > 0 &&
@@ -625,7 +719,7 @@ public class EnvironmentPresenter extends BasePresenter
    private boolean fileContainsUnsavedChanges(String path)
    {
       ArrayList<UnsavedChangesTarget> unsavedSourceDocs = 
-         sourceShim_.getUnsavedChanges();
+         sourceShim_.getUnsavedChanges(Source.TYPE_FILE_BACKED);
       
       for (UnsavedChangesTarget target: unsavedSourceDocs)
       {
@@ -661,11 +755,8 @@ public class EnvironmentPresenter extends BasePresenter
                                 (FilePosition) currentBrowsePosition_.cast(),
                                 FileTypeRegistry.R,
                                 debugging ? 
-                                      (contextDepth_ == 1 ?
-                                         NavigationMethod.DebugStep :
-                                         NavigationMethod.DebugFrame)
-                                      :
-                                      NavigationMethod.DebugEnd));
+                                      NavigationMethods.DEBUG_STEP :
+                                      NavigationMethods.DEBUG_END));
       }
 
       // otherwise, if we have a copy of the source from the server, load
@@ -675,40 +766,57 @@ public class EnvironmentPresenter extends BasePresenter
       {
          if (debugging)
          {
+            // create the function name for the code browser by removing the
+            // () indicator supplied by the server
+            String functionName = environmentName_;
+            int idx = functionName.indexOf('(');
+            if (idx > 0)
+            {
+               functionName = functionName.substring(0, idx);
+            }
+            
+            // omit qualifiers
+            idx = functionName.indexOf("::");
+            if (idx > 0)
+            {
+               functionName = functionName.substring(idx + 1);
+               // :::, too
+               if (functionName.startsWith(":"))
+                  functionName = functionName.substring(1);
+            }
+               
+            // create the function definition
+            searchFunction_ = 
+                  SearchPathFunctionDefinition.create(
+                     functionName, 
+                     StringUtil.isNullOrEmpty(functionEnvName_) ? 
+                           "debugging" : functionEnvName_, 
+                     currentBrowseSource_,
+                     true);
+
             if (sourceChanged)
             {
-               // create the function name for the code browser by removing the
-               // () indicator supplied by the server
-               String functionName = environmentName_;
-               int idx = functionName.indexOf('(');
-               if (idx > 0)
-               {
-                  functionName = functionName.substring(0, idx);
-               }
                // if this is a different source file than we already have open,
                // open it 
                eventBus_.fireEvent(new CodeBrowserNavigationEvent(
-                     SearchPathFunctionDefinition.create(
-                           functionName, 
-                           "debugging", 
-                           currentBrowseSource_,
-                           true),
+                     searchFunction_,
                      currentBrowsePosition_.functionRelativePosition(
                            currentFunctionLineNumber_),
-                     contextDepth_ == 1));
+                     contextDepth_ == 1, false));
             }
             else if (currentBrowsePosition_.getLine() > 0)
             {
                // if this is the same one currently open, just move the 
                // highlight
                eventBus_.fireEvent(new CodeBrowserHighlightEvent(
+                     searchFunction_,
                      currentBrowsePosition_.functionRelativePosition(
                            currentFunctionLineNumber_)));
             }
          }
          else
          {
-            eventBus_.fireEvent(new CodeBrowserFinishedEvent());
+            eventBus_.fireEvent(new CodeBrowserFinishedEvent(searchFunction_));
          }
       }
    }
@@ -746,7 +854,8 @@ public class EnvironmentPresenter extends BasePresenter
          @Override
          public void onError(ServerError error)
          {
-            if (!workbenchContext_.isRestartInProgress())
+            if (!workbenchContext_.isRestartInProgress() &&
+                (error.getCode() != ServerError.TRANSMISSION))
             {
                globalDisplay_.showErrorMessage("Error Listing Objects",
                                                error.getUserMessage());
@@ -761,6 +870,7 @@ public class EnvironmentPresenter extends BasePresenter
    {
       ImportFileSettingsDialog dialog = new ImportFileSettingsDialog(
               server_,
+              sourceServer_,
               input,
               varname,
               "Import Dataset",
@@ -791,20 +901,20 @@ public class EnvironmentPresenter extends BasePresenter
               new HashMap<String, ImportFileSettings>();
 
       commandDefaults_.put("read.table", new ImportFileSettings(
-              null, null, false, "", ".", "\"'", "NA", defaultStringsAsFactors));
+              null, null, "unknown", false, null, "", ".", "\"'", "#", "NA", defaultStringsAsFactors));
       commandDefaults_.put("read.csv", new ImportFileSettings(
-              null, null, true, ",", ".", "\"", "NA", defaultStringsAsFactors));
+              null, null, "unknown", true, null, ",", ".", "\"", "", "NA", defaultStringsAsFactors));
       commandDefaults_.put("read.delim", new ImportFileSettings(
-              null, null, true, "\t", ".", "\"", "NA", defaultStringsAsFactors));
+              null, null, "unknown", true, null, "\t", ".", "\"", "", "NA", defaultStringsAsFactors));
       commandDefaults_.put("read.csv2", new ImportFileSettings(
-              null, null, true, ";", ",", "\"", "NA", defaultStringsAsFactors));
+              null, null, "unknown", true, null, ";", ",", "\"", "", "NA", defaultStringsAsFactors));
       commandDefaults_.put("read.delim2", new ImportFileSettings(
-              null, null, true, "\t", ",", "\"", "NA", defaultStringsAsFactors));
+              null, null, "unknown", true, null, "\t", ",", "\"", "", "NA", defaultStringsAsFactors));
 
       String command = "read.table";
       ImportFileSettings settings = commandDefaults_.get("read.table");
       int score = settings.calculateSimilarity(input);
-      for (String cmd : new String[] {"read.csv", "read.delim"})
+      for (String cmd : new String[] {"read.csv", "read.delim", "read.csv2", "read.delim2"})
       {
          ImportFileSettings theseSettings = commandDefaults_.get(cmd);
          int thisScore = theseSettings.calculateSimilarity(input);
@@ -819,14 +929,23 @@ public class EnvironmentPresenter extends BasePresenter
       StringBuilder code = new StringBuilder(command);
       code.append("(");
       code.append(StringUtil.textToRLiteral(input.getFile().getPath()));
+      if (!input.getEncoding().equals(settings.getEncoding()))
+         code.append(", encoding=" + StringUtil.textToRLiteral(input.getEncoding()));
       if (input.isHeader() != settings.isHeader())
          code.append(", header=" + (input.isHeader() ? "TRUE" : "FALSE"));
+      if (!input.getRowNames().equals(settings.getRowNames()))
+      {
+         // appended literally, since it's the string "1" or the string "NULL"
+         code.append(", row.names=" + input.getRowNames());
+      }
       if (!input.getSep().equals(settings.getSep()))
          code.append(", sep=" + StringUtil.textToRLiteral(input.getSep()));
       if (!input.getDec().equals(settings.getDec()))
          code.append(", dec=" + StringUtil.textToRLiteral(input.getDec()));
       if (!input.getQuote().equals(settings.getQuote()))
          code.append(", quote=" + StringUtil.textToRLiteral(input.getQuote()));
+      if (!input.getComment().equals(settings.getComment()))
+         code.append(", comment.char=" + StringUtil.textToRLiteral(input.getComment()));
       if (!input.getNAStrings().equals(settings.getNAStrings()))
          code.append(", na.strings=" + StringUtil.textToRLiteral(input.getNAStrings()));
       if (input.getStringsAsFactors() != settings.getStringsAsFactors())
@@ -839,6 +958,7 @@ public class EnvironmentPresenter extends BasePresenter
 
    private final Display view_;
    private final EnvironmentServerOperations server_;
+   private final SourceServerOperations sourceServer_;
    private final GlobalDisplay globalDisplay_;
    private final ConsoleDispatcher consoleDispatcher_;
    private final RemoteFileSystemContext fsContext_;
@@ -848,6 +968,8 @@ public class EnvironmentPresenter extends BasePresenter
    private final SourceShim sourceShim_;
    private final DebugCommander debugCommander_;
    private final Session session_;
+   private final FileTypeRegistry fileTypeRegistry_;
+   private final DataImportPresenter dataImportPresenter_;
    
    private int contextDepth_;
    private boolean refreshingView_;
@@ -858,5 +980,9 @@ public class EnvironmentPresenter extends BasePresenter
    private boolean useCurrentBrowseSource_;
    private String currentBrowseSource_;
    private String environmentName_;
+   private String functionEnvName_;
    private Timer requeryContextTimer_;
+   private SearchPathFunctionDefinition searchFunction_;
+   
+   final String dataImportDependecyUserAction_ = "Preparing data import";
 }

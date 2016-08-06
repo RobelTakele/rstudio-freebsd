@@ -15,12 +15,13 @@
 
 #include <r/RErrorCategory.hpp>
 
+namespace rstudio {
 namespace r {
 
 class RErrorCategory : public boost::system::error_category
 {
 public:
-   virtual const char * name() const;
+   virtual const char * name() const BOOST_NOEXCEPT;
    virtual std::string message( int ev ) const;
 };
 
@@ -30,7 +31,7 @@ const boost::system::error_category& rCategory()
 	return rErrorCategoryConst ;
 }
 
-const char * RErrorCategory::name() const
+const char * RErrorCategory::name() const BOOST_NOEXCEPT
 {
 	return "r" ;
 }
@@ -115,3 +116,4 @@ std::string endUserErrorMessage(const core::Error& error)
    
    
 } // namespace r
+} // namespace rstudio

@@ -86,6 +86,8 @@ public class PdfJsWindow extends WindowEx
          }
          
          // make the sidebar open by default
+         win.PDFView.switchSidebarView('thumbs');
+         win.PDFView.preferenceSidebarViewOnLoad = 1;
          var container = win.document.getElementById("outerContainer");
          if (container) {
             container.className += " sidebarOpen";
@@ -113,6 +115,16 @@ public class PdfJsWindow extends WindowEx
          
          // fire the load event
          @org.rstudio.studio.client.pdfviewer.model.PdfJsWindow::fireLoadEvent()();
+         
+         // wire unload event
+         var unloadEvt = forDesktop ? "unload" : "beforeunload";
+         win.addEventListener(unloadEvt, function() {
+            @org.rstudio.studio.client.pdfviewer.model.PdfJsWindow::fireWindowClosedEvent()();
+         });
+         
+         win.addEventListener("click", function(evt) {
+            @org.rstudio.studio.client.pdfviewer.model.PdfJsWindow::firePageClickEvent(Lorg/rstudio/studio/client/pdfviewer/model/PdfJsWindow;Lcom/google/gwt/dom/client/NativeEvent;Lcom/google/gwt/dom/client/Element;)(win, evt, evt.target);
+         });
       };
 
       // starts a timer that initializes the UI when the PDFView object appears
@@ -121,10 +133,10 @@ public class PdfJsWindow extends WindowEx
          var n = 0, t = 0;
          var checkPDFViewAvailable = function() {
             n++;
-            if (typeof(win.PDFView) === "object") {
+            if (typeof(win.PDFView) === "object" && win.PDFView.initialized) {
                // PDFView is available now, initialize it
-               initUi();
                clearInterval(t);
+               initUi();
                return true;
             }
             else if (n > 100) {
@@ -146,29 +158,62 @@ public class PdfJsWindow extends WindowEx
          startInitUiTimer();
       else
          this.addEventListener("load", initUi);
-      
-      var unloadEvt = forDesktop ? "unload" : "beforeunload";
-      this.addEventListener(unloadEvt, function() {
-         @org.rstudio.studio.client.pdfviewer.model.PdfJsWindow::fireWindowClosedEvent()();
-      });
-      
-      this.addEventListener("click", function(evt) {
-         @org.rstudio.studio.client.pdfviewer.model.PdfJsWindow::firePageClickEvent(Lorg/rstudio/studio/client/pdfviewer/model/PdfJsWindow;Lcom/google/gwt/dom/client/NativeEvent;Lcom/google/gwt/dom/client/Element;)(win, evt, evt.target);
-      });
    }-*/;
    
    public final native void openPdf(String path, float scale, 
                                     boolean synctex) /*-{
-      this.PDFView.open(path, scale);
+      this.PDFView.open(path, { "scale": scale });
       var jumpToSource = this.document.getElementById("jumpToSource");
       if (jumpToSource)
       {
          jumpToSource.style.display = synctex ? "inline-block" : "none";
       }
+      
+      var win = this;
+
+      // set the initial view once the pages appear (on Qt this doesn't happen
+      // automatically)
+      var t = window.setInterval(function() 
+      {
+         if (typeof(win) === "undefined" || !win) 
+         {
+            clearInterval(t);
+            return;
+         }
+         if (!win.PDFView.loading) 
+         {
+            clearInterval(t);
+            if (win.PDFView.page === 1) 
+               win.PDFView.setInitialView();
+         }
+      }, 50);
    }-*/;
    
    public final native void goToPage(int page) /*-{
-      this.PDFView.page = page;
+      // sets the page if the page exists; returns false if the page
+      // doesn't exist yet
+      var setPage = function(view, page) 
+      {
+         if (view && view.pagesCount && view.pagesCount >= page)
+         {
+            view.page = page;
+            return true;
+         }
+         return false;
+      };
+      
+      // attempt to set the page; if it fails, keep trying every 50ms until we
+      // succeed or time out
+      var win = this;
+      if (!setPage(win.PDFView, page)) 
+      {
+         var tries = 0;
+         var t = window.setInterval(function() 
+         {
+            if (setPage(win.PDFView, page) || ++tries > 100)
+               clearInterval(t);
+         }, 50);
+      }
    }-*/;
 
    public final native int getCurrentPage () /*-{
@@ -190,7 +235,7 @@ public class PdfJsWindow extends WindowEx
    }-*/;
    
    public final native float getCurrentScale() /*-{
-      return this.PDFView.currentScale;
+      return this.PDFView.pdfViewer.currentScale;
    }-*/;
 
    private static void firePDFLoadEvent()
@@ -321,7 +366,7 @@ public class PdfJsWindow extends WindowEx
       final double y = pdfLocation.getY() * factor;
       final double w = pdfLocation.getWidth() * factor;
       final double h = pdfLocation.getHeight() * factor;
-
+      
       final Value<Integer> retries = new Value<Integer>(0);
 
       // Sometimes pageContainer is null during load, so retry every 100ms

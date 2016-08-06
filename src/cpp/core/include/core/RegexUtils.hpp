@@ -19,9 +19,10 @@
 #include <string>
 #include <vector>
 
-#include <boost/regex_fwd.hpp>
+#include <boost/regex.hpp>
 #include <boost/iostreams/filter/regex.hpp>
 
+namespace rstudio {
 namespace core {
 
 class Error;
@@ -33,6 +34,10 @@ namespace regex_utils {
 // into a regulard expression
 boost::regex wildcardPatternToRegex(const std::string& pattern);
 
+
+// returns a regex if the passed term contains a wildcard (otherwise
+// returns an empty regex)
+boost::regex regexIfWildcardPattern(const std::string& term);
 
 bool textMatches(const std::string& text,
                  const boost::regex& regex,
@@ -49,9 +54,27 @@ core::Error filterString(
                 const boost::iostreams::regex_filter& filter,
                 std::string* pOutput);
 
+// helper functions with slightly more intuitive ordering
+// of arguments
+template <typename StringType, typename MatchType>
+bool match(const boost::regex& rePattern,
+           const StringType& string,
+           MatchType* pMatch)
+{
+   return boost::regex_match(string, *pMatch, rePattern);
+}
+
+template <typename StringType, typename MatchType>
+bool search(const boost::regex& rePattern,
+            const StringType& string,
+            MatchType* pMatch)
+{
+   return boost::regex_search(string, *pMatch, rePattern);
+}
 
 } // namespace regex_utils
 } // namespace core 
+} // namespace rstudio
 
 
 #endif // CORE_REGEX_UTILS_HPP

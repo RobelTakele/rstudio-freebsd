@@ -32,6 +32,7 @@ import com.google.gwt.user.client.ui.Anchor;
 import com.google.gwt.user.client.ui.Composite;
 import com.google.gwt.user.client.ui.FocusPanel;
 import com.google.gwt.user.client.ui.HTMLPanel;
+import com.google.gwt.user.client.ui.Label;
 import com.google.gwt.user.client.ui.Widget;
 
 public class ShortcutInfoPanel extends Composite
@@ -47,14 +48,42 @@ public class ShortcutInfoPanel extends Composite
    public ShortcutInfoPanel(final Command onShowFullDocs)
    {
       initWidget(uiBinder.createAndBindUi(this));
+
+      if (onShowFullDocs == null)
+      {
+         shortcutDocLink.setVisible(false);
+      }
+      else
+      {
+         shortcutDocLink.addClickHandler(new ClickHandler()
+         {
+            @Override
+            public void onClick(ClickEvent event)
+            {
+               onShowFullDocs.execute();
+            }
+         });
+      }
+      
+      headerLabel.setText(getHeaderText());
+      shortcutPanel.add(getShortcutContent());
+   }
+   
+   protected String getHeaderText()
+   {
+      return "Keyboard Shortcut Quick Reference";
+   }
+   
+   protected Widget getShortcutContent()
+   {
       SafeHtmlBuilder sb = new SafeHtmlBuilder();
       List<ShortcutInfo> shortcuts = 
             ShortcutManager.INSTANCE.getActiveShortcutInfo();
       String[][] groupNames = { 
-            new String[] { "Tabs/Panes", "Files", "Console" },
+            new String[] { "Tabs", "Panes", "Files" },
             new String[] { "Source Navigation", "Execute" },
             new String[] { "Source Editor", "Debug" }, 
-            new String[] { "Source Control", "Build", "Other" }
+            new String[] { "Source Control", "Build", "Console", "Other" }
       };
       int pctWidth = 100 / groupNames.length;
       sb.appendHtmlConstant("<table width='100%'><tr>");
@@ -83,21 +112,16 @@ public class ShortcutInfoPanel extends Composite
                sb.appendHtmlConstant("</td></tr>");
             }
             sb.appendHtmlConstant("</table>");
+            if (colGroupName == "Panes")
+            {
+               sb.appendHtmlConstant("<p>Add Shift to zoom (maximize) pane.</p>");
+            }
          }
          sb.appendHtmlConstant("</td>");
       }
       sb.appendHtmlConstant("</td></tr></table>");
       HTMLPanel panel = new HTMLPanel(sb.toSafeHtml());
-      shortcutPanel.add(panel);
-      
-      shortcutDocLink.addClickHandler(new ClickHandler()
-      {
-         @Override
-         public void onClick(ClickEvent event)
-         {
-            onShowFullDocs.execute();
-         }
-      });
+      return panel;
    }
    
    public Element getRootElement()
@@ -108,4 +132,5 @@ public class ShortcutInfoPanel extends Composite
    @UiField HTMLPanel shortcutPanel;
    @UiField FocusPanel focusPanel;
    @UiField Anchor shortcutDocLink;
+   @UiField Label headerLabel;
 }

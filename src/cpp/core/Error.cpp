@@ -27,6 +27,7 @@
 #include <boost/system/windows_error.hpp>
 #endif
 
+namespace rstudio {
 namespace core {
 
 struct Error::Impl
@@ -165,6 +166,14 @@ Error systemError(int value, const ErrorLocation& location)
 {
    using namespace boost::system ;
    return Error(error_code(value, get_system_category()), location);
+}
+
+Error systemError(int value,
+                  const Error& cause,
+                  const ErrorLocation& location)
+{
+   using namespace boost::system ;
+   return Error(error_code(value, get_system_category()), cause, location);
 }
 
 Error systemError(int value,
@@ -312,5 +321,6 @@ std::ostream& operator<<(std::ostream& os, const ErrorLocation& location)
    
 
 } // namespace core 
+} // namespace rstudio
 
 

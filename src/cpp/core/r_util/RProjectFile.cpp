@@ -26,17 +26,28 @@
 #include <core/FilePath.hpp>
 #include <core/FileSerializer.hpp>
 #include <core/SafeConvert.hpp>
+#include <core/StringUtils.hpp>
+#include <core/YamlUtil.hpp>
 #include <core/text/DcfParser.hpp>
 
 #include <core/r_util/RPackageInfo.hpp>
 #include <core/r_util/RVersionInfo.hpp>
 
+namespace rstudio {
 namespace core {
 namespace r_util {
+
+const int kLineEndingsUseDefault = -1;
+
+const char * const kLineEndingPassthough = "None";
+const char * const kLineEndingNative = "Native";
+const char * const kLineEndingWindows = "Windows";
+const char * const kLineEndingPosix = "Posix";
 
 const char * const kBuildTypeNone = "None";
 const char * const kBuildTypePackage = "Package";
 const char * const kBuildTypeMakefile = "Makefile";
+const char * const kBuildTypeWebsite = "Website";
 const char * const kBuildTypeCustom = "Custom";
 
 namespace {
@@ -49,7 +60,9 @@ Error requiredFieldError(const std::string& field,
                          std::string* pUserErrMsg)
 {
    *pUserErrMsg = field + " not correctly specified in project config file";
-   return systemError(boost::system::errc::protocol_error, ERROR_LOCATION);
+   Error error = systemError(boost::system::errc::protocol_error, ERROR_LOCATION);
+   error.addProperty("user-msg", *pUserErrMsg);
+   return error;
 }
 
 std::string yesNoAskValueToString(int value)
@@ -125,9 +138,44 @@ bool interpretBuildTypeValue(const std::string& value, std::string* pValue)
        value == kBuildTypeNone ||
        value == kBuildTypePackage ||
        value == kBuildTypeMakefile ||
+       value == kBuildTypeWebsite ||
        value == kBuildTypeCustom)
    {
       *pValue = value;
+      return true;
+   }
+   else
+   {
+      return false;
+   }
+}
+
+bool interpretLineEndingsValue(std::string value, int* pValue)
+{
+   value = boost::algorithm::trim_copy(value);
+   if (value == "")
+   {
+      *pValue = kLineEndingsUseDefault;
+      return true;
+   }
+   else if (value == kLineEndingPassthough)
+   {
+      *pValue = string_utils::LineEndingPassthrough;
+      return true;
+   }
+   else if (value == kLineEndingNative)
+   {
+      *pValue = string_utils::LineEndingNative;
+      return true;
+   }
+   else if (value == kLineEndingWindows)
+   {
+      *pValue = string_utils::LineEndingWindows;
+      return true;
+   }
+   else if (value == kLineEndingPosix)
+   {
+      *pValue = string_utils::LineEndingPosix;
       return true;
    }
    else
@@ -160,6 +208,34 @@ void setBuildPackageDefaults(const std::string& packagePath,
    pConfig->packageInstallArgs = kPackageInstallArgsDefault;
 }
 
+bool isWebsiteDirectory(const FilePath& projectDir)
+{
+   // look for an index.Rmd or index.md
+   FilePath indexFile = projectDir.childPath("index.Rmd");
+   if (!indexFile.exists())
+      indexFile = projectDir.childPath("index.md");
+   if (indexFile.exists())
+   {
+      // look for _site.yml
+      FilePath siteFile = projectDir.childPath("_site.yml");
+      if (siteFile.exists())
+      {
+         return true;
+      }
+      // no _site.yml, is there a custom site generator?
+      else
+      {
+         static const boost::regex reSite("^site:.*$");
+         std::string yaml = yaml::extractYamlHeader(indexFile);
+         return boost::regex_search(yaml.begin(), yaml.end(), reSite);
+      }
+   }
+   else
+   {
+      return false;
+   }
+}
+
 std::string detectBuildType(const FilePath& projectFilePath,
                             const RProjectBuildDefaults& buildDefaults,
                             RProjectConfig* pConfig)
@@ -177,7 +253,11 @@ std::string detectBuildType(const FilePath& projectFilePath,
    {
       pConfig->buildType = kBuildTypeMakefile;
       pConfig->makefilePath = "";
-
+   }
+   else if (isWebsiteDirectory(projectDir))
+   {
+      pConfig->buildType = kBuildTypeWebsite;
+      pConfig->websitePath = "";
    }
    else
    {
@@ -435,6 +515,18 @@ Error readProjectFile(const FilePath& projectFilePath,
       pConfig->stripTrailingWhitespace = false;
    }
 
+   it = dcfFields.find("LineEndingConversion");
+   if (it != dcfFields.end())
+   {
+      if (!interpretLineEndingsValue(it->second, &(pConfig->lineEndings)))
+         return requiredFieldError("LineEndingConversion", pUserErrMsg);
+   }
+   else
+   {
+      pConfig->lineEndings = kLineEndingsUseDefault;
+   }
+
+
    // extract encoding
    it = dcfFields.find("Encoding");
    if (it != dcfFields.end())
@@ -583,6 +675,18 @@ Error readProjectFile(const FilePath& projectFilePath,
       pConfig->makefilePath = "";
    }
 
+   // extract websitepath
+   it = dcfFields.find("WebsitePath");
+   if (it != dcfFields.end())
+   {
+      pConfig->websitePath = it->second;
+   }
+   else
+   {
+      pConfig->websitePath = "";
+   }
+
+
    // extract custom script path
    it = dcfFields.find("CustomScriptPath");
    if (it != dcfFields.end())
@@ -673,7 +777,8 @@ Error writeProjectFile(const FilePath& projectFilePath,
    }
 
    // additional editor settings
-   if (config.autoAppendNewline || config.stripTrailingWhitespace)
+   if (config.autoAppendNewline || config.stripTrailingWhitespace ||
+       (config.lineEndings != kLineEndingsUseDefault) )
    {
       contents.append("\n");
 
@@ -685,6 +790,28 @@ Error writeProjectFile(const FilePath& projectFilePath,
       if (config.stripTrailingWhitespace)
       {
          contents.append("StripTrailingWhitespace: Yes\n");
+      }
+
+      if (config.lineEndings != kLineEndingsUseDefault)
+      {
+         std::string value;
+         switch(config.lineEndings)
+         {
+            case string_utils::LineEndingPassthrough:
+               value = kLineEndingPassthough;
+               break;
+            case string_utils::LineEndingNative:
+               value = kLineEndingNative;
+               break;
+            case string_utils::LineEndingPosix:
+               value = kLineEndingPosix;
+               break;
+            case string_utils::LineEndingWindows:
+               value = kLineEndingWindows;
+               break;
+         }
+         if (!value.empty())
+            contents.append("LineEndingConversion: " + value + "\n");
       }
    }
 
@@ -755,6 +882,14 @@ Error writeProjectFile(const FilePath& projectFilePath,
                build.append(boost::str(makefileFmt % config.makefilePath));
             }
          }
+         else if (config.buildType == kBuildTypeWebsite)
+         {
+            if (!config.websitePath.empty())
+            {
+               boost::format websiteFmt("WebsitePath: %1%\n");
+               build.append(boost::str(websiteFmt % config.websitePath));
+            }
+         }
          else if (config.buildType == kBuildTypeCustom)
          {
             boost::format customFmt("CustomScriptPath: %1%\n");
@@ -783,10 +918,13 @@ FilePath projectFromDirectory(const FilePath& directoryPath)
 {
    // first use simple heuristic of a case sentitive match between
    // directory name and project file name
-   FilePath projectFile = directoryPath.childPath(
-                                       directoryPath.filename() + ".Rproj");
-   if (projectFile.exists())
-      return projectFile;
+   std::string dirName = directoryPath.filename();
+   if (!FilePath::isRootPath(dirName))
+   {
+      FilePath projectFile = directoryPath.childPath(dirName + ".Rproj");
+      if (projectFile.exists())
+         return projectFile;
+   }
 
    // didn't satisfy it with simple check so do scan of directory
    std::vector<FilePath> children;
@@ -799,7 +937,7 @@ FilePath projectFromDirectory(const FilePath& directoryPath)
 
    // build a vector of children with .rproj extensions. at the same
    // time allow for a case insensitive match with dir name and return that
-   std::string projFileLower = string_utils::toLower(projectFile.filename());
+   std::string projFileLower = string_utils::toLower(dirName);
    std::vector<FilePath> rprojFiles;
    for (std::vector<FilePath>::const_iterator it = children.begin();
         it != children.end();
@@ -822,7 +960,7 @@ FilePath projectFromDirectory(const FilePath& directoryPath)
    // more than one, take most recent
    else if (rprojFiles.size() > 1 )
    {
-      projectFile = rprojFiles.at(0);
+      FilePath projectFile = rprojFiles.at(0);
       for (std::vector<FilePath>::const_iterator it = rprojFiles.begin();
            it != rprojFiles.end();
            ++it)
@@ -855,6 +993,7 @@ bool updateSetPackageInstallArgsDefault(RProjectConfig* pConfig)
 
 } // namespace r_util
 } // namespace core 
+} // namespace rstudio
 
 
 

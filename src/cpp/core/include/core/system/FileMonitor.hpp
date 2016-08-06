@@ -23,6 +23,7 @@
 #include <boost/function.hpp>
 
 #include <core/FilePath.hpp>
+#include <core/ScheduledCommand.hpp>
 #include <core/collection/Tree.hpp>
 
 #include <core/system/System.hpp>
@@ -34,6 +35,7 @@
 // both extremely large trees and or self-referential (and thus infinitely
 // recursive) trees.
 
+namespace rstudio {
 namespace core {   
 namespace system {
 namespace file_monitor {
@@ -133,6 +135,9 @@ void unregisterMonitor(Handle handle);
 void checkForChanges();
 
 
+// create a ScheduledCommand that periodically checks for changes
+boost::shared_ptr<ScheduledCommand> checkForChangesCommand(
+                       const boost::posix_time::time_duration& interval);
 
 // convenience functions for creating filters that are useful in
 // file monitoring scenarios
@@ -154,6 +159,7 @@ boost::function<bool(const FileInfo&)> excludeHiddenFilter();
 } // namespace file_monitor
 } // namespace system
 } // namespace core 
+} // namespace rstudio
 
 #endif // CORE_SYSTEM_FILE_MONITOR_HPP
 

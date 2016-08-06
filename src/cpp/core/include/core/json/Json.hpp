@@ -20,10 +20,15 @@
 #include <vector>
 #include <iosfwd>
 
+#include <core/Error.hpp>
+#include <core/Log.hpp>
+
 #include <boost/type_traits/is_same.hpp>
+#include <boost/optional.hpp>
 
 #include <core/json/spirit/json_spirit_value.h>
 
+namespace rstudio {
 namespace core {
 namespace json {
    
@@ -41,7 +46,7 @@ typedef json_spirit::Value_impl<json_spirit::mConfig> Value;
 typedef json_spirit::mConfig::Array_type Array;
 typedef json_spirit::mConfig::Object_type Object;
 typedef Object::value_type Member;
-   
+
 template <typename T>
 bool isType(const Value& value) 
 { 
@@ -63,13 +68,124 @@ bool isType(const Value& value)
       return false;
 }
 
-template<typename T>
-json::Value toJsonValue(const T& val)
+inline std::string typeAsString(json_spirit::Value_type type)
+{
+   if (type == ObjectType)
+      return "<Object>";
+   else if (type == ArrayType)
+      return "<Array>";
+   else if (type == StringType)
+      return "<String>";
+   else if (type == BooleanType)
+      return "<Boolean>";
+   else if (type == IntegerType)
+      return "<Integer>";
+   else if (type == RealType)
+      return "<Real>";
+   else
+      return "<unknown>";
+}
+
+namespace detail {
+
+template <typename T>
+json_spirit::Value_type asJsonType(const T& object,
+                                   boost::true_type)
+{
+   return object.type();
+}
+
+template <typename T>
+json_spirit::Value_type asJsonType(const T& object,
+                                   boost::false_type)
+{
+   if (boost::is_same<T, bool>::value)
+      return BooleanType;
+   else if (boost::is_same<T, int>::value)
+      return IntegerType;
+   else if (boost::is_same<T, double>::value)
+      return RealType;
+   else if (boost::is_same<T, std::string>::value)
+      return StringType;
+   
+   LOG_ERROR_MESSAGE("Unexpected type");
+   return NullType;
+}
+
+template <typename T>
+struct is_json_type : public boost::is_same<T, json_spirit::Value_type>
+{
+};
+
+} // namespace detail
+
+template <typename T>
+json_spirit::Value_type asJsonType(const T& object)
+{
+   return detail::asJsonType(
+            object,
+            detail::is_json_type<T>());
+}
+
+inline std::string typeAsString(const Value& value)
+{
+   if (value.is_null())
+      return "<null>";
+   return typeAsString(value.type());
+}
+
+inline void logIncompatibleTypes(const Value& value,
+                                 const json_spirit::Value_type expectedType,
+                                 const ErrorLocation& location)
+{
+   if (value.type() != expectedType)
+   {
+      log::logErrorMessage("Invalid JSON type: expected '" +
+                           typeAsString(expectedType) + "', got '" +
+                           typeAsString(value.type()) + "'",
+                           location);
+   }
+}
+
+namespace detail {
+
+template <typename T>
+inline json::Value toJsonValue(const T& val)
 {
    return json::Value(val);
 }
 
+template <typename T>
+inline json::Value toJsonValue(const boost::optional<T>& val)
+{
+   return val ? json::Value(*val) : json::Value();
+}
+
+} // namespace detail
+
+template <typename T>
+inline json::Value toJsonValue(const T& val)
+{
+   return detail::toJsonValue(val);
+}
+
+inline json::Value toJsonValue(const boost::optional<std::string>& val)
+{
+   return val ? json::Value(*val) : json::Value();
+}
+
 json::Value toJsonString(const std::string& val);
+
+// NOTE: we can't use the templatized version for bool because
+// some compilers specialize std::vector<bool> such that the
+// concept check for std::copy fails
+inline json::Array toJsonArray(const std::vector<bool>& val)
+{
+   json::Array results;
+   for (size_t i=0; i<val.size(); i++)
+      results.push_back(val[i] ? true : false);
+   return results;
+}
 
 template<typename T>
 json::Array toJsonArray(const std::vector<T>& val)
@@ -79,13 +195,28 @@ json::Array toJsonArray(const std::vector<T>& val)
    return results;
 }
 
+json::Object toJsonObject(
+      const std::vector<std::pair<std::string,std::string> >& options);
+
+std::vector<std::pair<std::string,std::string> > optionsFromJson(
+                                      const json::Object& optionsJson);
+
+
+bool fillVectorString(const Array& array, std::vector<std::string>* pVector);
+bool fillVectorInt(const Array& array, std::vector<int>* pVector);
+bool fillMap(const Object& array, std::map< std::string, std::vector<std::string> >* pMap);
+
 bool parse(const std::string& input, Value* pValue);
 
 void write(const Value& value, std::ostream& os);
 void writeFormatted(const Value& value, std::ostream& os);
-   
+
+std::string write(const Value& value);
+std::string writeFormatted(const Value& value);
+
 } // namespace json
 } // namespace core
+} // namespace rstudio
 
 #endif // CORE_JSON_HPP
 

@@ -19,6 +19,15 @@ import com.google.gwt.core.client.JavaScriptObject;
 public class Range extends JavaScriptObject
 {
    protected Range() {}
+   
+   public static final native Range create(int startRow,
+                                           int startColumn,
+                                           int endRow,
+                                           int endColumn)
+   /*-{
+      var Range = $wnd.require('ace/range').Range;
+      return new Range(startRow, startColumn, endRow, endColumn);
+   }-*/;
 
    public static native Range fromPoints(Position start, Position end) /*-{
       var Range = $wnd.require('ace/range').Range;
@@ -32,6 +41,14 @@ public class Range extends JavaScriptObject
    public final native Position getEnd() /*-{
       return this.end;
    }-*/;
+   
+   public final native Position setStart(Position start) /*-{
+      this.start = start;
+   }-*/;
+   
+   public final native Position setEnd(Position end) /*-{
+      this.end = end;
+   }-*/;
 
    public final native boolean isEmpty() /*-{
       return this.isEmpty();
@@ -40,4 +57,49 @@ public class Range extends JavaScriptObject
    public final native Range extend(int row, int column) /*-{
       return this.extend(row, column);
    }-*/;
+   
+   public final native Range toScreenRange(EditSession session) /*-{
+      return this.toScreenRange(session);
+   }-*/;
+   
+   public final native boolean contains(int row, int column) /*-{
+      return this.contains(row, column);
+   }-*/;
+   
+   public final native boolean contains(Position position) /*-{
+      return this.contains(position.row, position.column);
+   }-*/;
+   
+   public final native boolean contains(Range range) /*-{
+      return this.contains(range);
+   }-*/;
+   
+   public final native boolean containsRightExclusive(Position position)
+   /*-{
+      
+      var row = position.row;
+      var column = position.column;
+      
+      var startRow = this.start.row;
+      var endRow = this.end.row;
+      
+      var startColumn = this.start.column;
+      var endColumn = this.end.column;
+      
+      if (endRow < row) return false;
+      if (startRow > row) return false;
+      
+      if (startRow === row && endRow === row)
+      {
+         return column >= startColumn && 
+                column <  endColumn;
+      }
+      
+      if (startRow === row) return column >= startColumn;
+      if (endRow === row)   return column <  endColumn;
+      
+      // shouldn't get here
+      return false;
+   }-*/;
+   
 }

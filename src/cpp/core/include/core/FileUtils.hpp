@@ -20,8 +20,10 @@
 
 
 
+namespace rstudio {
 namespace core {
 
+class Error;
 class FilePath;
 
 namespace file_utils {
@@ -29,8 +31,17 @@ namespace file_utils {
 FilePath uniqueFilePath(const core::FilePath& parent,
                         const std::string& prefix = "");
 
+std::string readFile(const core::FilePath& filePath);
+
+#ifdef WIN32
+bool isWindowsReservedName(const std::string& name);
+#endif
+
+Error copyDirectory(const FilePath& sourceDirectory,
+                    const FilePath& targetDirectory);
 
 } // namespace file_utils
 } // namespace core
+} // namespace rstudio
 
 #endif // CORE_FILEUTILS_HPP

@@ -50,11 +50,12 @@
 #include "SessionWorkbench.hpp"
 #include "SessionGit.hpp"
 
-using namespace core;
-using namespace core::shell_utils;
-using namespace session::modules::vcs_utils;
-using namespace session::console_process;
+using namespace rstudio::core;
+using namespace rstudio::core::shell_utils;
+using namespace rstudio::session::modules::vcs_utils;
+using namespace rstudio::session::console_process;
 
+namespace rstudio {
 namespace session {
 namespace modules {
 namespace svn {
@@ -159,6 +160,19 @@ core::system::ProcessOptions procOptions()
 {
    return procOptions(s_isSvnSshRepository);
 }
+
+void initEnvironment()
+{
+#ifdef _WIN32
+   r::exec::RFunction sysSetenv("Sys.setenv");
+   sysSetenv.addParam("RSTUDIO_MSYS_SSH",
+                      session::options().msysSshPath().absolutePath());
+   Error error = sysSetenv.call();
+   if (error)
+      LOG_ERROR(error);
+#endif
+}
+
 
 void maybeAttachPasswordManager(boost::shared_ptr<ConsoleProcess> pCP)
 {
@@ -705,6 +719,9 @@ Error svnDelete(const json::JsonRpcRequest& request,
    return Success();
 }
 
+Error status(const FilePath& filePath,
+             std::vector<source_control::FileWithStatus>* pFiles);
+
 Error svnRevert(const json::JsonRpcRequest& request,
                 json::JsonRpcResponse* pResponse)
 {
@@ -719,13 +736,73 @@ Error svnRevert(const json::JsonRpcRequest& request,
    std::transform(files.begin(), files.end(), std::back_inserter(paths),
                   &resolveAliasedJsonPath);
 
-   core::system::ProcessResult result;
-   error = runSvn(ShellArgs() << "revert" << globalArgs() << "-q" <<
-                  "--depth" << "infinity" <<
-                  "--" << paths,
-                  true, &result);
+   // split into two groups -- those for which we desire
+   // a recursive revert, and those for which we desire
+   // a non-recursive revert
+   std::vector<source_control::FileWithStatus> fileStatusVector;
+   error = status(FilePath(), &fileStatusVector);
    if (error)
+   {
+      LOG_ERROR(error);
       return error;
+   }
+   
+   // build map (indexed on file path) for easy lookup
+   std::map<std::string, source_control::FileWithStatus> fileStatusMap;
+   BOOST_FOREACH(const source_control::FileWithStatus& file, fileStatusVector)
+   {
+      fileStatusMap[file.path.absolutePath()] = file;
+   }
+   
+   std::vector<FilePath> recursiveReverts;
+   std::vector<FilePath> nonRecursiveReverts;
+   BOOST_FOREACH(const FilePath& filePath, paths)
+   {
+      if (!filePath.isDirectory())
+      {
+         recursiveReverts.push_back(filePath);
+         continue;
+      }
+      
+      bool shouldRevertRecursively = false;
+      std::string key = filePath.absolutePath();
+      if (fileStatusMap.count(key))
+      {
+         const source_control::FileWithStatus& fileStatus =
+               fileStatusMap[key];
+         
+         shouldRevertRecursively = fileStatus.status.status() == "A";
+      }
+      
+      if (shouldRevertRecursively)
+         recursiveReverts.push_back(filePath);
+      else
+         nonRecursiveReverts.push_back(filePath);
+   }
+   
+   // perform non-recursive reverts
+   core::system::ProcessResult result;
+   if (!nonRecursiveReverts.empty())
+   {
+      error = runSvn(ShellArgs() << "revert" << globalArgs() << "-q" <<
+                     "--" << nonRecursiveReverts,
+                     true,
+                     &result);
+      if (error)
+         return error;
+   }
+   
+   // perform recursive reverts
+   if (!recursiveReverts.empty())
+   {
+      error = runSvn(ShellArgs() << "revert" << globalArgs() << "-q" <<
+                     "--depth" << "infinity" <<
+                     "--" << recursiveReverts,
+                     true,
+                     &result);
+      if (error)
+         return error;
+   }
 
    pResponse->setResult(processResultToJson(result));
 
@@ -1755,6 +1832,7 @@ Error augmentSvnIgnore()
       svnIgnore += ".Rproj.user\n";
       svnIgnore += ".Rhistory\n";
       svnIgnore += ".RData\n";
+      svnIgnore += ".Ruserdata\n";
    }
    else
    {
@@ -1784,6 +1862,8 @@ Error augmentSvnIgnore()
 
 Error initialize()
 {
+   initEnvironment();
+
    initSvnBin();
 
    // initialize password manager
@@ -1839,3 +1919,4 @@ Error initializeSvn(const core::FilePath& workingDir)
 } // namespace svn
 } // namespace modules
 } //namespace session
+} // namespace rstudio

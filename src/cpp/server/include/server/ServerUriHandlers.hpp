@@ -21,6 +21,7 @@
 #include <core/http/UriHandler.hpp>
 #include <core/http/AsyncUriHandler.hpp>
 
+namespace rstudio {
 namespace server {
 namespace uri_handlers {
 
@@ -38,8 +39,12 @@ void setDefault(const core::http::AsyncUriHandlerFunction& handler);
 // set blocking default handler
 void setBlockingDefault(const core::http::UriHandlerFunction& handler);
 
+void setRequestFilter(const core::http::RequestFilter& filter);
+void setResponseFilter(const core::http::ResponseFilter& filter);
+
 } // namespace uri_handlers
 } // namespace server
+} // namespace rstudio
 
 #endif // SERVER_URI_HANDLERS_HPP
 

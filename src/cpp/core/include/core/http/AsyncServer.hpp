@@ -27,6 +27,7 @@
 #include <core/http/UriHandler.hpp>
 #include <core/http/AsyncUriHandler.hpp>
 
+namespace rstudio {
 namespace core {
 namespace http {
 
@@ -58,6 +59,9 @@ public:
                            boost::posix_time::time_duration interval) = 0;
    virtual void addScheduledCommand(boost::shared_ptr<ScheduledCommand> pCmd) = 0;
 
+   virtual void setRequestFilter(RequestFilter requestFilter) = 0;
+   virtual void setResponseFilter(ResponseFilter responseFilter) = 0;
+
    virtual Error runSingleThreaded() = 0;
 
    virtual Error run(std::size_t threadPoolSize = 1) = 0;
@@ -69,6 +73,7 @@ public:
 
 } // namespace http
 } // namespace core
+} // namespace rstudio
 
 #endif // CORE_HTTP_ASYNC_SERVER_HPP
 

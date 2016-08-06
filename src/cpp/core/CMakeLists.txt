@@ -24,6 +24,7 @@ file(GLOB_RECURSE CORE_HEADER_FILES "*.h*")
 # source files
 set (CORE_SOURCE_FILES
    Assert.cpp
+   Backtrace.cpp
    Base64.cpp
    BoostErrors.cpp
    BrowserUtils.cpp
@@ -32,7 +33,6 @@ set (CORE_SOURCE_FILES
    Error.cpp 
    Exec.cpp
    FileInfo.cpp 
-   FileLock.cpp
    FileLogWriter.cpp
    FilePath.cpp
    FileSerializer.cpp
@@ -50,12 +50,28 @@ set (CORE_SOURCE_FILES
    Settings.cpp
    StderrLogWriter.cpp
    StringUtils.cpp
+   ColorUtils.cpp
    Thread.cpp
    Trace.cpp
+   YamlUtil.cpp
    WaitUtils.cpp
+   file_lock/FileLock.cpp
+   file_lock/AdvisoryFileLock.cpp
+   file_lock/LinkBasedFileLock.cpp
    gwt/GwtFileHandler.cpp
    gwt/GwtLogHandler.cpp
    gwt/GwtSymbolMaps.cpp
+   libclang/CodeCompleteResults.cpp
+   libclang/Cursor.cpp
+   libclang/Diagnostic.cpp
+   libclang/LibClang.cpp
+   libclang/SourceIndex.cpp
+   libclang/SourceLocation.cpp
+   libclang/SourceRange.cpp
+   libclang/Token.cpp
+   libclang/TranslationUnit.cpp
+   libclang/UnsavedFiles.cpp
+   libclang/Utils.cpp
    json/Json.cpp
    json/JsonRpc.cpp
    json/spirit/json_spirit_reader.cpp
@@ -82,12 +98,14 @@ set (CORE_SOURCE_FILES
    markdown/sundown/html_smartypants.c
    markdown/sundown/markdown.c
    markdown/sundown/stack.c
+   r_util/RActiveSessions.cpp
    r_util/RPackageInfo.cpp
    r_util/RProjectFile.cpp
    r_util/RSessionContext.cpp
    r_util/RTokenizer.cpp
    r_util/RSourceIndex.cpp
    r_util/RTokenizerTests.cpp
+   r_util/RUserData.cpp
    spelling/HunspellCustomDictionaries.cpp
    spelling/HunspellDictionaryManager.cpp
    spelling/HunspellSpellingEngine.cpp
@@ -160,6 +178,26 @@ if (UNIX)
       ${INOTIFY_LIBRARIES}
    )
 
+   # handle El Capitan moving OpenSSL away
+   if(APPLE)
+      if(${MACOSX_VERSION} VERSION_GREATER "10.10"
+            AND EXISTS "/usr/local/opt/openssl")
+   
+         set(CORE_SYSTEM_LIBRARIES
+            ${CORE_SYSTEM_LIBRARIES}
+            -lssl -lcrypto)
+   
+         set(CORE_INCLUDE_DIRS
+            ${CORE_INCLUDE_DIRS}
+            /usr/local/opt/openssl/include)
+
+         if(NOT DEFINED OPENSSL_ROOT_DIR)
+            set(OPENSSL_ROOT_DIR
+               /usr/local/opt/openssl)
+         endif()
+      endif()
+   endif()
+
    if(RSTUDIO_SERVER)
       find_package(OpenSSL REQUIRED QUIET)
       find_package(PAM REQUIRED)
@@ -187,6 +225,7 @@ if (UNIX)
       system/PosixEnvironment.cpp
       system/PosixFileScanner.cpp
       system/PosixLibraryLoader.cpp
+      system/PosixNfs.cpp
       system/PosixParentProcessMonitor.cpp
       system/PosixOutputCapture.cpp
       system/PosixSched.cpp
@@ -269,6 +308,7 @@ endif()
 include_directories(
    ${CORE_INCLUDE_DIRS}
    ${CMAKE_CURRENT_BINARY_DIR}
+   ${TESTS_INCLUDE_DIR}
 )
 
 # define shared library
@@ -280,3 +320,24 @@ target_link_libraries(
    ${Boost_LIBRARIES}
    ${CORE_SYSTEM_LIBRARIES}
 )
+
+# define executable (for running unit tests)
+if (RSTUDIO_UNIT_TESTS_ENABLED)
+
+   file(GLOB_RECURSE CORE_TEST_FILES "*Tests.cpp")
+
+   add_executable(rstudio-core-tests
+      TestMain.cpp
+      ${CORE_TEST_FILES}
+      ${CORE_HEADER_FILES}
+   )
+
+   target_link_libraries(rstudio-core-tests
+      rstudio-core
+      rstudio-core-synctex
+      rstudio-core-hunspell
+      ${Boost_LIBRARIES}
+      ${CORE_SYSTEM_LIBRARIES}
+   )
+
+endif()

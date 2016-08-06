@@ -14,9 +14,11 @@
  */
 
 #include <core/Thread.hpp>
+#include <core/Macros.hpp>
 
 #include <core/system/System.hpp>
 
+namespace rstudio {
 namespace core {
 namespace thread {
 
@@ -35,7 +37,7 @@ void safeLaunchThread(boost::function<void()> threadMain,
       boost::thread t(threadMain);
 
       if (pThread)
-         *pThread = t.move();
+         *pThread = MOVE_THREAD(t);
    }
    catch(const boost::thread_resource_error& e)
    {
@@ -46,6 +48,7 @@ void safeLaunchThread(boost::function<void()> threadMain,
 
 } // namespace core
 } // namespace thread
+} // namespace rstudio
 
 
 // dummy function to satisfy boost linking requirement (fixed in 1.45)

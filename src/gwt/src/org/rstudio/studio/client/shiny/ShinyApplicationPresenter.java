@@ -23,6 +23,7 @@ import org.rstudio.studio.client.shiny.model.ShinyApplicationParams;
 import org.rstudio.studio.client.shiny.events.ShinyApplicationStatusEvent;
 import org.rstudio.studio.client.workbench.commands.Commands;
 import org.rstudio.studio.client.workbench.model.Session;
+import org.rstudio.studio.client.workbench.prefs.model.UIPrefs;
 
 import com.google.gwt.core.client.JavaScriptObject;
 import com.google.gwt.user.client.ui.IsWidget;
@@ -43,7 +44,7 @@ public class ShinyApplicationPresenter implements
       String getDocumentTitle();
       String getUrl();
       String getAbsoluteUrl();
-      void showApp(ShinyApplicationParams params, boolean showDeploy);
+      void showApp(ShinyApplicationParams params);
       void reloadApp();
    }
    
@@ -54,7 +55,8 @@ public class ShinyApplicationPresenter implements
                                final Commands commands,
                                EventBus eventBus,
                                Satellite satellite,
-                               Session session)
+                               Session session,
+                               UIPrefs prefs)
    {
       view_ = view;
       satellite_ = satellite;
@@ -62,6 +64,7 @@ public class ShinyApplicationPresenter implements
       globalDisplay_ = globalDisplay;
       disconnect_ = new ShinyDisconnectNotifier(this);
       session_ = session;
+      prefs_ = prefs;
       
       binder.bind(commands, this);  
       
@@ -93,6 +96,7 @@ public class ShinyApplicationPresenter implements
    public void onShinyDisconnect()
    {
       appStopped_ = true;
+      notifyShinyAppDisconnected(params_);
       closeShinyApp();
    }
 
@@ -111,7 +115,7 @@ public class ShinyApplicationPresenter implements
    public void loadApp(ShinyApplicationParams params) 
    {
       params_ = params;
-      view_.showApp(params, session_.getSessionInfo().getShinyappsAvailable());
+      view_.showApp(params);
    }
    
    private native void initializeEvents() /*-{  
@@ -149,12 +153,18 @@ public class ShinyApplicationPresenter implements
       $wnd.opener.notifyShinyAppClosed(params);
    }-*/;
 
+   private final native void notifyShinyAppDisconnected(JavaScriptObject params) /*-{
+      if ($wnd.opener)
+         $wnd.opener.notifyShinyAppDisconnected(params);
+   }-*/;
+
    private final Display view_;
    private final Satellite satellite_;
    private final EventBus events_;
    private final GlobalDisplay globalDisplay_;
    private final ShinyDisconnectNotifier disconnect_;
    private final Session session_;
+   private final UIPrefs prefs_;
    
    private ShinyApplicationParams params_;
    private boolean appStopped_ = false;

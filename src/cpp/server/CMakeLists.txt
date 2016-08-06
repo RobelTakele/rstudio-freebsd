@@ -37,6 +37,7 @@ set(SERVER_SOURCE_FILES
    ServerPAMAuthOverlay.cpp
    ServerProcessSupervisor.cpp
    ServerREnvironment.cpp
+   ServerSecureKeyFile.cpp
    ServerSessionProxy.cpp
    ServerSessionManager.cpp
    auth/ServerAuthHandler.cpp
@@ -108,7 +109,6 @@ endif()
 # include directories and libraries
 set(SERVER_SYSTEM_LIBRARIES ${DL_LIBRARIES})
 
-
 # set include directories
 include_directories(
    include
@@ -123,8 +123,15 @@ include_directories(
 # define executable
 add_executable(rserver ${SERVER_SOURCE_FILES} ${SERVER_HEADER_FILES})
 
+# add origin rpath for suse/sles
+if(RSTUDIO_PACKAGE_BUILD_SLES)
+   set(CMAKE_BUILD_WITH_INSTALL_RPATH TRUE)
+   set_target_properties(rserver PROPERTIES
+                         INSTALL_RPATH \$ORIGIN)
+endif()
+
 # set link dependencies
-target_link_libraries(rserver 
+target_link_libraries(rserver
    rstudio-core
    rstudio-monitor
    ${SERVER_SYSTEM_LIBRARIES}
@@ -194,6 +201,36 @@ if (UNIX AND NOT APPLE)
                   ${CMAKE_CURRENT_BINARY_DIR}/${RSERVER_UPSTART_PROFILE_REDHAT})
    install(FILES ${CMAKE_CURRENT_BINARY_DIR}/${RSERVER_UPSTART_PROFILE_REDHAT}
            DESTINATION ${RSERVER_UPSTART_DIR})
+
+    # install configured systemd profile
+   set(RSERVER_SYSTEMD_DIR "extras/systemd")
+   set(RSERVER_SYSTEMD_PROFILE "${RSERVER_SYSTEMD_DIR}/rstudio-server.service")
+   configure_file(${CMAKE_CURRENT_SOURCE_DIR}/${RSERVER_SYSTEMD_PROFILE}.in
+                  ${CMAKE_CURRENT_BINARY_DIR}/${RSERVER_SYSTEMD_PROFILE})
+   install(FILES ${CMAKE_CURRENT_BINARY_DIR}/${RSERVER_SYSTEMD_PROFILE}
+           DESTINATION ${RSERVER_SYSTEMD_DIR})
+   set(RSERVER_SYSTEMD_PROFILE_REDHAT "${RSERVER_SYSTEMD_DIR}/rstudio-server.redhat.service")
+   configure_file(${CMAKE_CURRENT_SOURCE_DIR}/${RSERVER_SYSTEMD_PROFILE_REDHAT}.in
+                  ${CMAKE_CURRENT_BINARY_DIR}/${RSERVER_SYSTEMD_PROFILE_REDHAT})
+   install(FILES ${CMAKE_CURRENT_BINARY_DIR}/${RSERVER_SYSTEMD_PROFILE_REDHAT}
+           DESTINATION ${RSERVER_SYSTEMD_DIR})
+
+elseif(APPLE)
+
+   # install configured admin script
+  set(RSERVER_ADMIN_SCRIPT "extras/admin/rstudio-server")
+  configure_file(${CMAKE_CURRENT_SOURCE_DIR}/${RSERVER_ADMIN_SCRIPT}.mac.in
+                 ${CMAKE_CURRENT_BINARY_DIR}/${RSERVER_ADMIN_SCRIPT})
+  install(PROGRAMS ${CMAKE_CURRENT_BINARY_DIR}/${RSERVER_ADMIN_SCRIPT}
+                   DESTINATION ${RSTUDIO_INSTALL_BIN})
+
+  # install configured launchd plist for mac
+  set(RSERVER_LAUNCHD_DIR "extras/launchd")
+  set(RSERVER_LAUNCHD_PLIST "${RSERVER_LAUNCHD_DIR}/com.rstudio.launchd.rserver.plist")
+  configure_file(${CMAKE_CURRENT_SOURCE_DIR}/${RSERVER_LAUNCHD_PLIST}.in
+                 ${CMAKE_CURRENT_BINARY_DIR}/${RSERVER_LAUNCHD_PLIST})
+  install(PROGRAMS ${CMAKE_CURRENT_BINARY_DIR}/${RSERVER_LAUNCHD_PLIST}
+          DESTINATION ${RSERVER_LAUNCHD_DIR})
 
 endif()
 

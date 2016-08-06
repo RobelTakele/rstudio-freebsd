@@ -14,6 +14,8 @@
  */
 package org.rstudio.core.client.widget;
 
+import org.rstudio.core.client.Debug;
+
 import com.google.gwt.event.dom.client.ClickEvent;
 import com.google.gwt.event.dom.client.ClickHandler;
 import com.google.gwt.user.client.Command;
@@ -32,6 +34,7 @@ public abstract class ModalDialog<T> extends ModalDialogBase
                       Operation cancelOperation)
    {
       super();
+      progressIndicator_ = null;
     
       ThemedButton okButton = new ThemedButton("OK", new ClickHandler() {
          public void onClick(ClickEvent event) {
@@ -70,7 +73,7 @@ public abstract class ModalDialog<T> extends ModalDialogBase
    {
       super();
 
-      final ProgressIndicator progressIndicator = addProgressIndicator();
+      progressIndicator_ = addProgressIndicator();
       
       ThemedButton okButton = new ThemedButton("OK", new ClickHandler() {
          public void onClick(ClickEvent event) {
@@ -80,7 +83,7 @@ public abstract class ModalDialog<T> extends ModalDialogBase
                @Override
                public void execute()
                {
-                  operation.execute(input, progressIndicator);
+                  operation.execute(input, progressIndicator_);
                   onSuccess();
                }
             });
@@ -112,12 +115,51 @@ public abstract class ModalDialog<T> extends ModalDialogBase
    
    protected abstract T collectInput();
 
-   protected void validateAndGo(T input, Command executeOnSuccess)
+   protected void validateAndGo(T input, final Command executeOnSuccess)
    {
-      if (validate(input))
-         executeOnSuccess.execute();
+      // prevent re-entrancy 
+      if (validating_)
+         return; 
+      
+      validating_ = true;
+      try
+      {
+         validateAsync(input, new OperationWithInput<Boolean>()
+         {
+            @Override
+            public void execute(Boolean valid)
+            {
+               validating_ = false;
+               if (valid)
+               {
+                  executeOnSuccess.execute();
+               }
+            }
+         });
+      }
+      catch (Exception e)
+      {
+         validating_ = false;
+         Debug.logException(e);
+      }
+   }
+   
+   protected ProgressIndicator getProgressIndicator()
+   {
+      return progressIndicator_;
    }
 
-   protected abstract boolean validate(T input);
+   protected boolean validate(T input) 
+   {
+      return true;
+   }
+   
+   protected void validateAsync(T input, 
+         OperationWithInput<Boolean> onValidated)
+   {
+      onValidated.execute(validate(input));
+   }
   
+   private final ProgressIndicator progressIndicator_;
+   private boolean validating_ = false;
 }

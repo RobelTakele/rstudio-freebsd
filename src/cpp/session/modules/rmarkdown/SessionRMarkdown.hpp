@@ -16,20 +16,34 @@
 #ifndef SESSION_SESSION_RMARKDOWN_HPP
 #define SESSION_SESSION_RMARKDOWN_HPP
 
+#include <string>
+
+#define kRenderTypeStatic   0
+#define kRenderTypeShiny    1
+#define kRenderTypeNotebook 2
+
+namespace rstudio {
 namespace core {
    class Error;
 }
+}
  
+namespace rstudio {
 namespace session {
 namespace modules {      
 namespace rmarkdown {
 
 bool rmarkdownPackageAvailable();
 
+bool knitParamsAvailable();
+
+core::Error evaluateRmdParams(const std::string& docId);
+
 core::Error initialize();
 
 } // namespace rmarkdown
 } // namepace handlers
 } // namesapce session
+} // namespace rstudio
 
 #endif // SESSION_SESSION_RMARKDOWN_HPP

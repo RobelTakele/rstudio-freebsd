@@ -18,7 +18,9 @@
 
 #include <string>
 #include <vector>
+#include <boost/algorithm/string/replace.hpp>
 
+namespace rstudio {
 namespace core {
 namespace text {
 
@@ -41,9 +43,12 @@ incomplete CSV data that do not end with a line break, the
 returned iterator will never move past the beginning of the
 last line.)
 */
-template<typename InputIterator>
-std::pair<std::vector<std::string>, InputIterator> parseCsvLine(InputIterator begin,
-                                                                InputIterator end)
+
+template <typename InputIterator>
+std::pair<std::vector<std::string>, InputIterator> parseCsvLine(
+      InputIterator begin,
+      InputIterator end,
+      bool allowMissingEOL = false)
 {
    std::vector<std::string> line;
 
@@ -121,12 +126,40 @@ std::pair<std::vector<std::string>, InputIterator> parseCsvLine(InputIterator be
       if (!noIncrement)
          ++pos;
    }
-
+   
+   // if we got here, we failed to find a (terminating) newline
+   if (allowMissingEOL)
+   {
+      line.push_back(element);
+      return std::pair<std::vector<std::string>, InputIterator>(line, end);
+   }
+   
    return std::pair<std::vector<std::string>, InputIterator>(
          std::vector<std::string>(), begin);
 }
 
+// Encodes a vector of string values to a line of RFC4180 CSV.
+//
+// Note that it's the caller's responsibility to add a terminating newline.
+inline std::string encodeCsvLine(const std::vector<std::string>& values) 
+{
+   std::string line;
+   for (unsigned i = 0; i < values.size(); i++)
+   {
+      // escape quotes if needed
+      std::string val(values[i]);
+      boost::algorithm::replace_all(val, "\"", "\"\"");
+
+      // add to the line, with a comma if there are additional values
+      line.append("\"" + val + "\"");
+      if (i < values.size() - 1)
+         line.append(",");
+   }
+   return line;
+}
+
 } // namespace text
 } // namespace core
+} // namespace rstudio
 
 #endif // CSV_PARSER_HPP

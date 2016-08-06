@@ -25,9 +25,9 @@ import org.rstudio.core.client.files.FileSystemItem;
 import org.rstudio.core.client.js.JsObject;
 import org.rstudio.core.client.jsonrpc.RpcObjectList;
 import org.rstudio.studio.client.application.events.*;
+import org.rstudio.studio.client.application.model.RVersionsInfo;
 import org.rstudio.studio.client.application.model.SaveAction;
 import org.rstudio.studio.client.application.model.SessionSerializationAction;
-import org.rstudio.studio.client.common.compile.CompileError;
 import org.rstudio.studio.client.common.compile.CompileOutput;
 import org.rstudio.studio.client.common.compilepdf.events.CompilePdfCompletedEvent;
 import org.rstudio.studio.client.common.compilepdf.events.CompilePdfErrorsEvent;
@@ -46,39 +46,71 @@ import org.rstudio.studio.client.common.debugging.model.ErrorHandlerType;
 import org.rstudio.studio.client.common.debugging.model.UnhandledError;
 import org.rstudio.studio.client.common.dependencies.events.InstallShinyEvent;
 import org.rstudio.studio.client.common.rpubs.events.RPubsUploadStatusEvent;
+import org.rstudio.studio.client.common.sourcemarkers.SourceMarker;
 import org.rstudio.studio.client.common.synctex.events.SynctexEditFileEvent;
 import org.rstudio.studio.client.common.synctex.model.SourceLocation;
+import org.rstudio.studio.client.events.EditorCommandDispatchEvent;
+import org.rstudio.studio.client.events.EditorCommandEvent;
 import org.rstudio.studio.client.htmlpreview.events.HTMLPreviewCompletedEvent;
 import org.rstudio.studio.client.htmlpreview.events.HTMLPreviewOutputEvent;
 import org.rstudio.studio.client.htmlpreview.events.HTMLPreviewStartedEvent;
 import org.rstudio.studio.client.htmlpreview.model.HTMLPreviewResult;
+import org.rstudio.studio.client.projects.events.FollowUserEvent;
 import org.rstudio.studio.client.projects.events.OpenProjectErrorEvent;
+import org.rstudio.studio.client.projects.events.ProjectAccessRevokedEvent;
+import org.rstudio.studio.client.projects.events.ProjectUserChangedEvent;
 import org.rstudio.studio.client.projects.model.OpenProjectError;
+import org.rstudio.studio.client.projects.model.ProjectUser;
+import org.rstudio.studio.client.rmarkdown.events.ChunkExecStateChangedEvent;
+import org.rstudio.studio.client.rmarkdown.events.ChunkPlotRefreshFinishedEvent;
+import org.rstudio.studio.client.rmarkdown.events.ChunkPlotRefreshedEvent;
+import org.rstudio.studio.client.rmarkdown.events.NotebookRangeExecutedEvent;
+import org.rstudio.studio.client.rmarkdown.events.PreviewRmdEvent;
+import org.rstudio.studio.client.rmarkdown.events.ShinyGadgetDialogEvent;
+import org.rstudio.studio.client.rmarkdown.events.RmdChunkOutputEvent;
+import org.rstudio.studio.client.rmarkdown.events.RmdChunkOutputFinishedEvent;
+import org.rstudio.studio.client.rmarkdown.events.RmdParamsReadyEvent;
 import org.rstudio.studio.client.rmarkdown.events.RmdRenderCompletedEvent;
 import org.rstudio.studio.client.rmarkdown.events.RmdRenderOutputEvent;
 import org.rstudio.studio.client.rmarkdown.events.RmdRenderStartedEvent;
 import org.rstudio.studio.client.rmarkdown.events.RmdShinyDocStartedEvent;
 import org.rstudio.studio.client.rmarkdown.events.RmdTemplateDiscoveredEvent;
 import org.rstudio.studio.client.rmarkdown.events.RmdTemplateDiscoveryCompletedEvent;
+import org.rstudio.studio.client.rmarkdown.events.WebsiteFileSavedEvent;
+import org.rstudio.studio.client.rmarkdown.model.RmdChunkOutput;
 import org.rstudio.studio.client.rmarkdown.model.RmdDiscoveredTemplate;
 import org.rstudio.studio.client.rmarkdown.model.RmdRenderResult;
 import org.rstudio.studio.client.rmarkdown.model.RmdShinyDocInfo;
+import org.rstudio.studio.client.rsconnect.events.EnableRStudioConnectUIEvent;
+import org.rstudio.studio.client.rsconnect.events.RSConnectDeploymentCompletedEvent;
+import org.rstudio.studio.client.rsconnect.events.RSConnectDeploymentFailedEvent;
+import org.rstudio.studio.client.rsconnect.events.RSConnectDeploymentOutputEvent;
 import org.rstudio.studio.client.server.Bool;
 import org.rstudio.studio.client.shiny.events.ShinyApplicationStatusEvent;
-import org.rstudio.studio.client.shiny.events.ShinyAppsDeploymentCompletedEvent;
-import org.rstudio.studio.client.shiny.events.ShinyAppsDeploymentOutputEvent;
 import org.rstudio.studio.client.shiny.model.ShinyApplicationParams;
+import org.rstudio.studio.client.workbench.addins.Addins.RAddins;
+import org.rstudio.studio.client.workbench.addins.events.AddinRegistryUpdatedEvent;
+import org.rstudio.studio.client.workbench.codesearch.model.SearchPathFunctionDefinition;
 import org.rstudio.studio.client.workbench.events.*;
 import org.rstudio.studio.client.workbench.model.*;
 import org.rstudio.studio.client.workbench.prefs.events.UiPrefsChangedEvent;
+import org.rstudio.studio.client.workbench.snippets.model.SnippetsChangedEvent;
 import org.rstudio.studio.client.workbench.views.buildtools.events.BuildCompletedEvent;
 import org.rstudio.studio.client.workbench.views.buildtools.events.BuildErrorsEvent;
 import org.rstudio.studio.client.workbench.views.buildtools.events.BuildOutputEvent;
 import org.rstudio.studio.client.workbench.views.buildtools.events.BuildStartedEvent;
 import org.rstudio.studio.client.workbench.views.choosefile.events.ChooseFileEvent;
+import org.rstudio.studio.client.workbench.views.connections.events.ActiveConnectionsChangedEvent;
+import org.rstudio.studio.client.workbench.views.connections.events.ConnectionListChangedEvent;
+import org.rstudio.studio.client.workbench.views.connections.events.ConnectionOpenedEvent;
+import org.rstudio.studio.client.workbench.views.connections.events.ConnectionUpdatedEvent;
+import org.rstudio.studio.client.workbench.views.connections.events.EnableConnectionsEvent;
+import org.rstudio.studio.client.workbench.views.connections.model.Connection;
+import org.rstudio.studio.client.workbench.views.connections.model.ConnectionId;
 import org.rstudio.studio.client.workbench.views.console.events.*;
 import org.rstudio.studio.client.workbench.views.console.model.ConsolePrompt;
 import org.rstudio.studio.client.workbench.views.console.model.ConsoleResetHistory;
+import org.rstudio.studio.client.workbench.views.console.model.ConsoleText;
 import org.rstudio.studio.client.workbench.views.data.events.ViewDataEvent;
 import org.rstudio.studio.client.workbench.views.data.model.DataView;
 import org.rstudio.studio.client.workbench.views.edit.events.ShowEditorEvent;
@@ -95,6 +127,8 @@ import org.rstudio.studio.client.workbench.views.history.events.HistoryEntriesAd
 import org.rstudio.studio.client.workbench.views.history.model.HistoryEntry;
 import org.rstudio.studio.client.workbench.views.output.find.events.FindOperationEndedEvent;
 import org.rstudio.studio.client.workbench.views.output.find.events.FindResultEvent;
+import org.rstudio.studio.client.workbench.views.output.lint.events.LintEvent;
+import org.rstudio.studio.client.workbench.views.output.markers.events.MarkersChangedEvent;
 import org.rstudio.studio.client.workbench.views.output.sourcecpp.events.SourceCppCompletedEvent;
 import org.rstudio.studio.client.workbench.views.output.sourcecpp.events.SourceCppStartedEvent;
 import org.rstudio.studio.client.workbench.views.output.sourcecpp.model.SourceCppState;
@@ -110,6 +144,13 @@ import org.rstudio.studio.client.workbench.views.plots.model.PlotsState;
 import org.rstudio.studio.client.workbench.views.presentation.events.PresentationPaneRequestCompletedEvent;
 import org.rstudio.studio.client.workbench.views.presentation.events.ShowPresentationPaneEvent;
 import org.rstudio.studio.client.workbench.views.presentation.model.PresentationState;
+import org.rstudio.studio.client.workbench.views.source.editors.profiler.RprofEvent;
+import org.rstudio.studio.client.workbench.views.source.events.CodeBrowserNavigationEvent;
+import org.rstudio.studio.client.workbench.views.source.events.CollabEditEndedEvent;
+import org.rstudio.studio.client.workbench.views.source.events.CollabEditSavedEvent;
+import org.rstudio.studio.client.workbench.views.source.events.CollabEditStartParams;
+import org.rstudio.studio.client.workbench.views.source.events.CollabEditStartedEvent;
+import org.rstudio.studio.client.workbench.views.source.events.DataViewChangedEvent;
 import org.rstudio.studio.client.workbench.views.source.events.FileEditEvent;
 import org.rstudio.studio.client.workbench.views.source.events.ShowContentEvent;
 import org.rstudio.studio.client.workbench.views.source.events.ShowDataEvent;
@@ -171,12 +212,12 @@ public class ClientEventDispatcher
          }
          else if (type.equals(ClientEvent.ConsoleOutput))
          {
-            String output = event.getData();
+            ConsoleText output = event.getData();
             eventBus_.fireEvent(new ConsoleWriteOutputEvent(output));
          }
          else if (type.equals(ClientEvent.ConsoleError))
          {
-            String error = event.getData();
+            ConsoleText error = event.getData();
             eventBus_.fireEvent(new ConsoleWriteErrorEvent(error));
          }
          else if (type.equals(ClientEvent.ConsoleWritePrompt))
@@ -186,7 +227,7 @@ public class ClientEventDispatcher
          }
          else if (type.equals(ClientEvent.ConsoleWriteInput))
          {
-            String input = event.getData();
+            ConsoleText input = event.getData();
             eventBus_.fireEvent(new ConsoleWriteInputEvent(input));
          }
          else if (type.equals(ClientEvent.ConsolePrompt))
@@ -364,7 +405,7 @@ public class ClientEventDispatcher
          }
          else if (type.equals(ClientEvent.CompilePdfErrorsEvent))
          {
-            JsArray<CompileError> data = event.getData();
+            JsArray<SourceMarker> data = event.getData();
             eventBus_.fireEvent(new CompilePdfErrorsEvent(data));
          }
          else if (type.equals(ClientEvent.CompilePdfCompletedEvent))
@@ -473,8 +514,8 @@ public class ClientEventDispatcher
          }
          else if (type.equals(ClientEvent.Quit))
          {
-            boolean switchProjects = event.<Bool>getData().getValue();
-            eventBus_.fireEvent(new QuitEvent(switchProjects));
+            QuitEvent.Data data = event.getData();
+            eventBus_.fireEvent(new QuitEvent(data));
          }
          else if (type.equals(ClientEvent.Suicide))
          {
@@ -542,7 +583,7 @@ public class ClientEventDispatcher
          else if (type.equals(ClientEvent.ShinyViewer))
          {
             ShinyApplicationParams data = event.getData();
-            eventBus_.fireEvent(new ShinyApplicationStatusEvent(data));
+            eventBus_.fireEvent(new ShinyApplicationStatusEvent(data, true));
          }
          else if (type.equals(ClientEvent.DebugSourceCompleted))
          {
@@ -578,15 +619,20 @@ public class ClientEventDispatcher
             RmdShinyDocInfo docInfo = event.getData();
             eventBus_.fireEvent(new RmdShinyDocStartedEvent(docInfo));
          }
-         else if (type.equals(ClientEvent.ShinyAppsDeploymentOutput))
+         else if (type.equals(ClientEvent.RSConnectDeploymentOutput))
          {
             CompileOutput output = event.getData();
-            eventBus_.fireEvent(new ShinyAppsDeploymentOutputEvent(output));
+            eventBus_.fireEvent(new RSConnectDeploymentOutputEvent(output));
          }
-         else if (type.equals(ClientEvent.ShinyAppsDeploymentCompleted))
+         else if (type.equals(ClientEvent.RSConnectDeploymentCompleted))
          {
             String url = event.getData();
-            eventBus_.fireEvent(new ShinyAppsDeploymentCompletedEvent(url));
+            eventBus_.fireEvent(new RSConnectDeploymentCompletedEvent(url));
+         }
+         else if (type.equals(ClientEvent.RSConnectDeploymentFailed))
+         {
+            RSConnectDeploymentFailedEvent.Data data = event.getData();
+            eventBus_.fireEvent(new RSConnectDeploymentFailedEvent(data));
          }
          else if (type.equals(ClientEvent.UserPrompt))
          {
@@ -607,6 +653,198 @@ public class ClientEventDispatcher
          {
             SuspendAndRestartEvent.Data data = event.getData();
             eventBus_.fireEvent(new SuspendAndRestartEvent(data));
+         }
+         else if (type.equals(ClientEvent.DataViewChanged))
+         {
+            DataViewChangedEvent.Data data = event.getData();
+            eventBus_.fireEvent(new DataViewChangedEvent(data));
+         }
+         else if (type.equals(ClientEvent.ViewFunction))
+         {
+            SearchPathFunctionDefinition data = event.getData();
+            eventBus_.fireEvent(new CodeBrowserNavigationEvent(
+                  data, null, false, true));
+         }
+         else if (type.equals(ClientEvent.MarkersChanged))
+         {
+            MarkersChangedEvent.Data data = event.getData();
+            eventBus_.fireEvent(new MarkersChangedEvent(data));
+         }
+         else if (type.equals(ClientEvent.EnableRStudioConnect))
+         {
+            EnableRStudioConnectUIEvent.Data data = event.getData();
+            eventBus_.fireEvent(new EnableRStudioConnectUIEvent(data));
+         }
+         else if (type.equals(ClientEvent.UpdateGutterMarkers))
+         {
+            LintEvent.Data data = event.getData();
+            eventBus_.fireEvent(new LintEvent(data));
+         }
+         else if (type.equals(ClientEvent.SnippetsChanged))
+         {
+            SnippetsChangedEvent.Data data = event.getData();
+            eventBus_.fireEvent(new SnippetsChangedEvent(data));
+         }
+         else if (type.equals(ClientEvent.JumpToFunction))
+         {
+            JumpToFunctionEvent.Data data = event.getData();
+            eventBus_.fireEvent(new JumpToFunctionEvent(data));
+         }
+         else if (type.equals(ClientEvent.CollabEditStarted))
+         {
+            CollabEditStartParams params = event.getData();
+            eventBus_.fireEvent(new CollabEditStartedEvent(params));
+         }
+         else if (type.equals(ClientEvent.SessionCountChanged))
+         {
+            SessionCountChangedEvent.Data data = event.getData();
+            eventBus_.fireEvent(new SessionCountChangedEvent(data));
+         }
+         else if (type.equals(ClientEvent.CollabEditEnded))
+         {
+            CollabEditEndedEvent.Data data = event.getData();
+            eventBus_.fireEvent(new CollabEditEndedEvent(data));
+         }
+         else if (type.equals(ClientEvent.ProjectUsersChanged))
+         {
+            ProjectUserChangedEvent.Data data = event.getData();
+            eventBus_.fireEvent(new ProjectUserChangedEvent(data));
+         }
+         else if (type.equals(ClientEvent.RVersionsChanged))
+         {
+            RVersionsInfo versions = event.getData();
+            eventBus_.fireEvent(new RVersionsChangedEvent(versions));
+         }
+         else if (type.equals(ClientEvent.ShinyGadgetDialog))
+         {
+            ShinyGadgetDialogEvent.Data data = event.getData();
+            eventBus_.fireEvent(new ShinyGadgetDialogEvent(data));
+         }
+         else if (type.equals(ClientEvent.RmdParamsReady))
+         {
+            String paramsFile = event.getData();
+            eventBus_.fireEvent(new RmdParamsReadyEvent(paramsFile));
+         }
+         else if (type.equals(ClientEvent.RegisterUserCommand))
+         {
+            RegisterUserCommandEvent.Data data = event.getData();
+            eventBus_.fireEvent(new RegisterUserCommandEvent(data));
+         }
+         else if (type.equals(ClientEvent.SendToConsole))
+         {
+            SendToConsoleEvent.Data data = event.getData();
+            eventBus_.fireEvent(new SendToConsoleEvent(data));
+         }
+         else if (type.equals(ClientEvent.UserFollowStarted))
+         {
+            ProjectUser user = event.getData();
+            eventBus_.fireEvent(new FollowUserEvent(user, true));
+         }
+         else if (type.equals(ClientEvent.UserFollowEnded))
+         {
+            ProjectUser user = event.getData();
+            eventBus_.fireEvent(new FollowUserEvent(user, false));
+         }
+         else if (type.equals(ClientEvent.ProjectAccessRevoked))
+         {
+            eventBus_.fireEvent(new ProjectAccessRevokedEvent());
+         }
+         else if (type.equals(ClientEvent.CollabEditSaved))
+         {
+            CollabEditSavedEvent.Data data = event.getData();
+            eventBus_.fireEvent(new CollabEditSavedEvent(data));
+         }
+         else if (type.equals(ClientEvent.AddinRegistryUpdated))
+         {
+            RAddins data = event.getData();
+            eventBus_.fireEvent(new AddinRegistryUpdatedEvent(data));
+         }
+         else if (type.equals(ClientEvent.ChunkOutput))
+         {
+            RmdChunkOutput data = event.getData();
+            eventBus_.fireEvent(new RmdChunkOutputEvent(data));
+         }
+         else if (type.equals(ClientEvent.ChunkOutputFinished))
+         {
+            RmdChunkOutputFinishedEvent.Data data = event.getData();
+            eventBus_.fireEvent(new RmdChunkOutputFinishedEvent(data));
+         }
+         else if (type.equals(ClientEvent.RprofStarted))
+         {
+            eventBus_.fireEvent(new RprofEvent(RprofEvent.RprofEventType.START, null));
+         }
+         else if (type.equals(ClientEvent.RprofStopped))
+         {
+            eventBus_.fireEvent(new RprofEvent(RprofEvent.RprofEventType.STOP, null));
+         }
+         else if (type.equals(ClientEvent.RprofCreated))
+         {
+            RprofEvent.Data data = event.getData();
+            eventBus_.fireEvent(new RprofEvent(RprofEvent.RprofEventType.CREATE, data));
+         }
+         else if (type.equals(ClientEvent.EditorCommand))
+         {
+            EditorCommandEvent.Data data = event.getData();
+            EditorCommandEvent payload = new EditorCommandEvent(data);
+            eventBus_.fireEvent(new EditorCommandDispatchEvent(payload));
+         }
+         else if (type.equals(ClientEvent.PreviewRmd))
+         {
+            PreviewRmdEvent.Data data = event.getData();
+            eventBus_.fireEvent(new PreviewRmdEvent(data));
+         }
+         else if (type.equals(ClientEvent.WebsiteFileSaved))
+         {
+            FileSystemItem fsi = event.getData();
+            eventBus_.fireEvent(new WebsiteFileSavedEvent(fsi));
+         }
+         else if (type.equals(ClientEvent.ChunkPlotRefreshed))
+         {
+            ChunkPlotRefreshedEvent.Data data = event.getData();
+            eventBus_.fireEvent(new ChunkPlotRefreshedEvent(data));
+         }
+         else if (type.equals(ClientEvent.ChunkPlotRefreshFinished))
+         {
+            ChunkPlotRefreshFinishedEvent.Data data = event.getData();
+            eventBus_.fireEvent(new ChunkPlotRefreshFinishedEvent(data));
+         }
+         else if (type.equals(ClientEvent.ReloadWithLastChanceSave))
+         {
+            eventBus_.fireEvent(new ReloadWithLastChanceSaveEvent());
+         }
+         else if (type.equals(ClientEvent.ConnectionUpdated))
+         {
+            ConnectionUpdatedEvent.Data data = event.getData();
+            eventBus_.fireEvent(new ConnectionUpdatedEvent(data));
+         }
+         else if (type.equals(ClientEvent.EnableConnections))
+         {
+            eventBus_.fireEvent(new EnableConnectionsEvent());
+         }
+         else if (type.equals(ClientEvent.ConnectionListChanged))
+         {
+            JsArray<Connection> connections = event.getData();
+            eventBus_.fireEvent(new ConnectionListChangedEvent(connections));
+         }
+         else if (type.equals(ClientEvent.ActiveConnectionsChanged))
+         {
+            JsArray<ConnectionId> connections = event.getData();
+            eventBus_.fireEvent(new ActiveConnectionsChangedEvent(connections));
+         }
+         else if (type.equals(ClientEvent.ConnectionOpened))
+         {
+            Connection connection = event.getData();
+            eventBus_.fireEvent(new ConnectionOpenedEvent(connection));
+         }
+         else if (type.equals(ClientEvent.NotebookRangeExecuted))
+         {
+            NotebookRangeExecutedEvent.Data data = event.getData();
+            eventBus_.fireEvent(new NotebookRangeExecutedEvent(data));
+         }
+         else if (type.equals(ClientEvent.ChunkExecStateChanged))
+         {
+            ChunkExecStateChangedEvent.Data data = event.getData();
+            eventBus_.fireEvent(new ChunkExecStateChangedEvent(data));
          }
          else
          {

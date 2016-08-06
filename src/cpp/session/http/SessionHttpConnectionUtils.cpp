@@ -33,8 +33,9 @@
 #include <core/r_util/RSessionContext.hpp>
 
 #include <session/SessionOptions.hpp>
+#include <session/projects/ProjectsSettings.hpp>
 
-
+namespace rstudio {
 namespace session {
 
 void HttpConnection::sendJsonRpcError(const core::Error& error)
@@ -106,20 +107,9 @@ void handleAbortNextProjParam(
 
       if (!nextProj.empty())
       {
-         // NOTE: this must be synchronized with the implementation of
-         // ProjectContext::setNextSessionProject -- we do this using
-         // constants rather than code so that this code (which runs in
-         // a background thread) don't call into the projects module (which
-         // is designed to be foreground and single-threaded)
          core::FilePath userScratch = session::options().userScratchPath();
-         core::FilePath settings = userScratch.complete(kProjectsSettings);
-         error = settings.ensureDirectory();
-         if (error)
-            LOG_ERROR(error);
-         core::FilePath writePath = settings.complete(kNextSessionProject);
-         core::Error error = core::writeStringToFile(writePath, nextProj);
-         if (error)
-            LOG_ERROR(error);
+         projects::ProjectsSettings settings(userScratch);
+         settings.setNextSessionProject(nextProj);
       }
    }
    else
@@ -185,7 +175,7 @@ bool checkForSuspend(boost::shared_ptr<HttpConnection> ptrConnection)
 
 bool checkForSuspend(boost::shared_ptr<HttpConnection> ptrConnection)
 {
-   using namespace core::json;
+   using namespace rstudio::core::json;
    if (isMethod(ptrConnection, "suspend_session"))
    {
       bool force = false;
@@ -203,7 +193,7 @@ bool checkForSuspend(boost::shared_ptr<HttpConnection> ptrConnection)
       else
       {
          // send a signal to this process to suspend
-         using namespace core::system;
+         using namespace rstudio::core::system;
          sendSignalToSelf(force ? SigUsr2 : SigUsr1);
 
          // send response
@@ -232,5 +222,6 @@ bool authenticate(boost::shared_ptr<HttpConnection> ptrConnection,
 
 } // namespace connection
 } // namespace session
+} // namespace rstudio
 
 

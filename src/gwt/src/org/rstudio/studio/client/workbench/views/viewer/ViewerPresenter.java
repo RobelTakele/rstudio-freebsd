@@ -16,7 +16,6 @@ import com.google.gwt.user.client.Command;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 
-import org.rstudio.core.client.CommandWithArg;
 import org.rstudio.core.client.Size;
 import org.rstudio.core.client.command.AppCommand;
 import org.rstudio.core.client.command.CommandBinder;
@@ -35,9 +34,6 @@ import org.rstudio.studio.client.common.GlobalDisplay;
 import org.rstudio.studio.client.common.SimpleRequestCallback;
 import org.rstudio.studio.client.common.GlobalDisplay.NewWindowOptions;
 import org.rstudio.studio.client.common.dependencies.DependencyManager;
-import org.rstudio.studio.client.common.rpubs.RPubsHtmlGenerator;
-import org.rstudio.studio.client.common.rpubs.RPubsPresenter;
-import org.rstudio.studio.client.common.rpubs.ui.RPubsUploadDialog;
 import org.rstudio.studio.client.common.zoom.ZoomUtils;
 import org.rstudio.studio.client.rmarkdown.model.RmdPreviewParams;
 import org.rstudio.studio.client.server.ServerError;
@@ -54,6 +50,7 @@ import org.rstudio.studio.client.workbench.exportplot.model.SavePlotAsImageConte
 import org.rstudio.studio.client.workbench.model.RemoteFileSystemContext;
 import org.rstudio.studio.client.workbench.prefs.model.UIPrefs;
 import org.rstudio.studio.client.workbench.views.BasePresenter;
+import org.rstudio.studio.client.workbench.views.source.Source;
 import org.rstudio.studio.client.workbench.views.source.SourceShim;
 import org.rstudio.studio.client.workbench.views.viewer.events.ViewerClearedEvent;
 import org.rstudio.studio.client.workbench.views.viewer.events.ViewerNavigateEvent;
@@ -65,8 +62,8 @@ import org.rstudio.studio.client.workbench.views.viewer.model.ViewerServerOperat
 public class ViewerPresenter extends BasePresenter 
                              implements ViewerNavigateEvent.Handler, 
                                         ViewerPreviewRmdEvent.Handler,
-                                        ShinyApplicationStatusEvent.Handler,
-                                        RPubsPresenter.Context
+                                        ViewerClearedEvent.Handler,
+                                        ShinyApplicationStatusEvent.Handler
 {
    public interface Binder extends CommandBinder<Commands, ViewerPresenter> {}
    
@@ -75,6 +72,7 @@ public class ViewerPresenter extends BasePresenter
       void navigate(String url);
       void setExportEnabled(boolean exportEnabled);
       void previewRmd(RmdPreviewParams params);
+      void previewShiny(ShinyApplicationParams params);
       String getUrl();
       String getTitle();
       void popout();
@@ -94,7 +92,6 @@ public class ViewerPresenter extends BasePresenter
                           Binder binder,
                           ViewerServerOperations server,
                           SourceShim sourceShim,
-                          RPubsPresenter rpubsPresenter,
                           Provider<UIPrefs> pUIPrefs)
    {
       super(display);
@@ -109,7 +106,6 @@ public class ViewerPresenter extends BasePresenter
       globalDisplay_ = globalDisplay;
       sourceShim_ = sourceShim;
       pUIPrefs_ = pUIPrefs;
-      rpubsPresenter.setContext(this);
       
       binder.bind(commands, this);
       
@@ -134,6 +130,14 @@ public class ViewerPresenter extends BasePresenter
       initializeEvents();
    }
    
+
+   @Override
+   public void onViewerCleared(ViewerClearedEvent event)
+   {
+      if (!event.isForStop())
+         navigate(ViewerPane.ABOUT_BLANK);
+   }
+
    @Override
    public void onViewerNavigate(ViewerNavigateEvent event)
    { 
@@ -169,7 +173,7 @@ public class ViewerPresenter extends BasePresenter
    {
       manageCommands(true);
       display_.bringToFront();
-      if (!event.isRefresh())
+      if (event.getMaximize())
          display_.maximize();
       rmdPreviewParams_ = event.getParams();
       if (Desktop.isDesktop())
@@ -187,7 +191,9 @@ public class ViewerPresenter extends BasePresenter
       {
          manageCommands(true);
          display_.bringToFront();
-         navigate(event.getParams().getUrl());
+         if (Desktop.isDesktop())
+            Desktop.getFrame().setViewerUrl(event.getParams().getUrl());
+         display_.previewShiny(event.getParams());
          runningShinyAppParams_ = event.getParams();
       }
    }
@@ -338,47 +344,10 @@ public class ViewerPresenter extends BasePresenter
    }
    
    @Handler
-   public void onViewerPublishToRPubs()
-   {
-      dependencyManager_.withRMarkdown("Publishing to RPubs", 
-        new Command() {
-         @Override
-         public void execute()
-         {
-            RPubsUploadDialog dlg = new RPubsUploadDialog(
-               "Viewer",
-               "",
-               new RPubsHtmlGenerator() {
-
-                  @Override
-                  public void generateRPubsHtml(
-                        String title, 
-                        String comment,
-                        final CommandWithArg<String> onCompleted)
-                  {
-                     server_.viewerCreateRPubsHtml(
-                           title, comment, new SimpleRequestCallback<String>(){
-
-                        @Override
-                        public void onResponseReceived(String rpubsHtmlFile)
-                        {
-                           onCompleted.execute(rpubsHtmlFile);
-                        }
-                     });
-                  }
-               },
-               false);
-            dlg.showModal();  
-         }
-      });
-   }
-   
-   
-   @Handler
    public void onViewerSaveAllAndRefresh()
    {
       sourceShim_.handleUnsavedChangesBeforeExit(
-         sourceShim_.getUnsavedChanges(),
+         sourceShim_.getUnsavedChanges(Source.TYPE_FILE_BACKED),
          new Command() {
             @Override
             public void execute()
@@ -424,51 +393,6 @@ public class ViewerPresenter extends BasePresenter
       stop(true);
    }
    
-   @Override
-   public String getContextId()
-   {
-      return "RMarkdownPreview";
-   }
-
-   @Override
-   public String getTitle()
-   {
-      String title = display_.getTitle();
-      if (title != null && !title.isEmpty())
-         return title;
-      
-      String htmlFile = null;
-      if (rmdPreviewParams_ != null)
-         htmlFile = rmdPreviewParams_.getOutputFile();
-      if (htmlFile != null)
-      {
-         FileSystemItem fsi = FileSystemItem.createFile(htmlFile);
-         return fsi.getStem();
-      }
-      else
-      {
-         return "(Untitled)";
-      }
-   }
-
-   @Override
-   public String getHtmlFile()
-   {
-      if (rmdPreviewParams_ != null)
-         return rmdPreviewParams_.getOutputFile();
-      else
-         return "";
-   }
-
-   @Override
-   public boolean isPublished()
-   {
-      if (rmdPreviewParams_ != null)
-         return rmdPreviewParams_.getResult().getRpubsPublished();
-      else
-         return false;
-   }
-
    private void navigate(String url)
    {
       if (Desktop.isDesktop())
@@ -513,7 +437,7 @@ public class ViewerPresenter extends BasePresenter
       }
       runningShinyAppParams_ = null;
       
-      events_.fireEvent(new ViewerClearedEvent());
+      events_.fireEvent(new ViewerClearedEvent(true));
       
       // if this was a static widget then clear the current widget
       if (clearAll)
@@ -556,15 +480,13 @@ public class ViewerPresenter extends BasePresenter
       commands_.viewerZoom().setEnabled(enable);
       commands_.viewerZoom().setVisible(isHTMLWidget);
       
-      boolean canSnapshot = Desktop.isDesktop();     
+      boolean canSnapshot = Desktop.isDesktop();
       commands_.viewerSaveAsImage().setEnabled(enable && canSnapshot);
       commands_.viewerSaveAsImage().setVisible(isHTMLWidget && canSnapshot);
       commands_.viewerCopyToClipboard().setEnabled(enable && canSnapshot);
       commands_.viewerCopyToClipboard().setVisible(isHTMLWidget && canSnapshot);
       commands_.viewerSaveAsWebPage().setEnabled(enable);
       commands_.viewerSaveAsWebPage().setVisible(isHTMLWidget);
-      commands_.viewerPublishToRPubs().setEnabled(enable);
-      commands_.viewerPublishToRPubs().setVisible(isHTMLWidget);
       
       display_.setExportEnabled(isHTMLWidget);
    }
@@ -591,6 +513,8 @@ public class ViewerPresenter extends BasePresenter
       $wnd.addEventListener(
             "message",
             $entry(function(e) {
+               if (typeof e.data != 'string')
+                  return;
                thiz.@org.rstudio.studio.client.workbench.views.viewer.ViewerPresenter::onMessage(Ljava/lang/String;Ljava/lang/String;)(e.data, e.origin);
             }),
             true);

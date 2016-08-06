@@ -21,6 +21,7 @@
 
 #include <boost/utility.hpp>
 
+namespace rstudio {
 namespace core {
 namespace system {
 
@@ -76,12 +77,13 @@ private:
 
    void freeArgs()
    {
-      if (argCount_ > 0)
+      if (args_ && argCount_ > 0)
       {
          for (std::size_t i = 0; i<argCount_; ++i)
             delete [] args_[i] ;
-         delete [] args_ ;
       }
+
+      delete [] args_ ;
    }
    
 private:
@@ -91,6 +93,7 @@ private:
 
 } // namespace system 
 } // namespace core
+} // namespace rstudio
 
 #endif // CORE_SYSTEM_PROCESS_ARGS_HPP
 

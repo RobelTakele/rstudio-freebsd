@@ -22,6 +22,9 @@
 
 #include "DesktopGwtCallback.hpp"
 
+#define SOURCE_WINDOW_PREFIX "_rstudio_satellite_source_window_"
+
+namespace rstudio {
 namespace desktop {
 
 class MainWindow;
@@ -30,7 +33,7 @@ class SatelliteWindow : public GwtWindow
 {
     Q_OBJECT
 public:
-    SatelliteWindow(MainWindow* pMainWindow);
+    SatelliteWindow(MainWindow* pMainWindow, QString name);
 
 signals:
 
@@ -59,5 +62,6 @@ private:
 };
 
 } // namespace desktop
+} // namespace rstudio
 
 #endif // DESKTOP_SATELLITE_WINDOW_HPP

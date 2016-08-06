@@ -14,6 +14,8 @@
  */
 package org.rstudio.core.client.widget;
 
+import java.util.ArrayList;
+
 import com.google.gwt.dom.client.Style.Unit;
 import com.google.gwt.resources.client.ImageResource;
 import com.google.gwt.user.client.ui.Composite;
@@ -56,22 +58,24 @@ public abstract class WizardPage<I,T> extends Composite
          
          LayoutPanel layoutPanel = new LayoutPanel();
          
-         Image pageImage = new Image(largeImage_);
-         layoutPanel.add(pageImage);
-         layoutPanel.setWidgetLeftWidth(pageImage,
-                                        8, Unit.PX, 
-                                        pageImage.getWidth(), Unit.PX);
-         layoutPanel.setWidgetTopHeight(pageImage,
-                                        10, Unit.PX, 
-                                        pageImage.getHeight(), Unit.PX);
-         
-         
-         
+         if (largeImage_ != null)
+         {
+            Image pageImage = new Image(largeImage_);
+            layoutPanel.add(pageImage);
+            layoutPanel.setWidgetLeftWidth(pageImage,
+                                           8, Unit.PX, 
+                                           pageImage.getWidth(), Unit.PX);
+            layoutPanel.setWidgetTopHeight(pageImage,
+                                           10, Unit.PX, 
+                                           pageImage.getHeight(), Unit.PX);
+         }
+            
          Widget pageWidget = createWidget();
      
          layoutPanel.add(pageWidget);
          layoutPanel.setWidgetLeftRight(pageWidget,
-                                        133, Unit.PX, 
+                                        largeImage_ != null ? 133 : 15, 
+                                        Unit.PX, 
                                         15, Unit.PX);
          layoutPanel.setWidgetTopBottom(pageWidget, 
                                         10, Unit.PX, 
@@ -108,13 +112,39 @@ public abstract class WizardPage<I,T> extends Composite
       return largeImage_;
    }
    
+   public ArrayList<WizardPage<I,T>> getSubPages()
+   {
+      return null;
+   }
+   
+   public void setIntermediateResult(T result)
+   {
+   }
+   
+   public void onActivate(ProgressIndicator indicator)
+   {
+   }
+   
+   public void onWizardClosing()
+   {
+   }
+   
    abstract protected Widget createWidget();
    
    abstract protected void initialize(I initData);
       
    abstract protected T collectInput();
    
-   abstract protected boolean validate(T input);
+   protected boolean validate(T input)
+   {
+      return true;
+   }
+   
+   protected void validateAsync(T input, 
+         OperationWithInput<Boolean> onValidated)
+   {
+      onValidated.execute(validate(input));
+   }
   
    protected boolean acceptNavigation()
    {

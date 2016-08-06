@@ -20,32 +20,89 @@
 
 #include <session/SessionModuleContext.hpp>
 
-using namespace core;
+#include <core/Error.hpp>
+#include <core/Exec.hpp>
 
+#include <r/RSexp.hpp>
+#include <r/RRoutines.hpp>
+#include <r/RUtil.hpp>
+#include <r/ROptions.hpp>
+
+using namespace rstudio::core;
+
+namespace rstudio {
 namespace session {
 namespace modules { 
 namespace profiler {
 
 namespace {
-      
 
+#define kProfilesCacheDir "profiles-cache"
+#define kProfilesUrlPath "profiles"
 
+std::string profilesCacheDir() 
+{
+   return module_context::scopedScratchPath().childPath(kProfilesCacheDir)
+      .absolutePath();
+}
 
-   
+SEXP rs_profilesPath()
+{
+	r::sexp::Protect rProtect;
+	return r::sexp::create(profilesCacheDir(), &rProtect);
+}
+
 } // anonymous namespace
-   
+
+void handleProfilerResReq(const http::Request& request,
+                            http::Response* pResponse)
+{
+   std::string resourceName = http::util::pathAfterPrefix(request, "/" kProfilesUrlPath "/");
+
+   core::FilePath profilesPath = core::FilePath(profilesCacheDir());
+   core::FilePath profileResource = profilesPath.childPath(resourceName);
+
+   pResponse->setCacheableFile(profileResource, request);
+}
+
+void onDocPendingRemove(
+        boost::shared_ptr<source_database::SourceDocument> pDoc)
+{
+   // check to see if there is cached data
+   std::string path = pDoc->getProperty("path");
+   std::string htmlLocalPath = pDoc->getProperty("htmlLocalPath");
+   if (htmlLocalPath.empty() && path.empty())
+      return;
+
+   r::exec::RFunction rFunction(".rs.rpc.clear_profile");
+   rFunction.addParam(path);
+   rFunction.addParam(htmlLocalPath);
+
+   Error error = rFunction.call();
+   if (error)
+   {
+      LOG_ERROR(error);
+      return;
+   }
+}
+
 Error initialize()
 {  
    ExecBlock initBlock ;
-   initBlock.addFunctions()
-      (boost::bind(module_context::sourceModuleRFile, "SessionProfiler.R"));
-   return initBlock.execute();
-
-}
    
+   source_database::events().onDocPendingRemove.connect(onDocPendingRemove);
 
+   initBlock.addFunctions()
+      (boost::bind(module_context::sourceModuleRFile, "SessionProfiler.R"))
+      (boost::bind(module_context::registerUriHandler, "/" kProfilesUrlPath "/", handleProfilerResReq));
+
+   RS_REGISTER_CALL_METHOD(rs_profilesPath, 0);
+
+   return initBlock.execute();
+}
 
 } // namespace profiler
 } // namespace modules
 } // namesapce session
+} // namespace rstudio
 

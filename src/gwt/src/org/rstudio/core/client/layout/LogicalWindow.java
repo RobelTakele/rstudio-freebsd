@@ -99,7 +99,7 @@ public class LogicalWindow implements HasWindowStateChangeHandlers,
          newState = NORMAL;
       if (newState == state_)
          newState = NORMAL;
-      events_.fireEvent(new WindowStateChangeEvent(newState));
+      events_.fireEvent(new WindowStateChangeEvent(newState, event.skipFocusChange()));
    }
 
    public void transitionToState(WindowState newState)
@@ -132,6 +132,11 @@ public class LogicalWindow implements HasWindowStateChangeHandlers,
       {
          if (getState() != WindowState.MAXIMIZE)
             events_.fireEvent(new WindowStateChangeEvent(WindowState.MAXIMIZE));
+      }
+      else if (event.getHeight() == EnsureHeightEvent.NORMAL)
+      {
+         if (getState() != WindowState.NORMAL)
+            events_.fireEvent(new WindowStateChangeEvent(WindowState.NORMAL));
       }
       else
       {
