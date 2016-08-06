@@ -2743,7 +2743,7 @@ and setting of LANG.
 */
 void ensureLang()
 {
-#if !defined(_WIN32) && !defined(__APPLE__)
+#if !defined(_WIN32) && !defined(__APPLE__) && !defined(__FreeBSD__)
    // if no LANG environment variable is already defined
    if (core::system::getenv("LANG").empty())
    {

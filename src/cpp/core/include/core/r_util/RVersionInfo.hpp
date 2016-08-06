@@ -75,25 +75,25 @@ public:
 public:
    bool empty() const { return major_ != 0; }
 
-   int major() const { return major_; }
-   int minor() const { return minor_; }
-   int patch() const { return patch_; }
+   int major_version() const { return major_; }
+   int minor_version() const { return minor_; }
+   int patch_version() const { return patch_; }
 
    bool operator<(const RVersionNumber& other) const
    {
-      if (major() == other.major() && minor() == other.minor())
-         return patch() < other.patch();
-      else if (major() == other.major())
-         return minor() < other.minor();
+      if (major_version() == other.major_version() && minor_version() == other.minor_version())
+         return patch_version() < other.patch_version();
+      else if (major_version() == other.major_version())
+         return minor_version() < other.minor_version();
       else
-         return major() < other.major();
+         return major_version() < other.major_version();
    }
 
    bool operator==(const RVersionNumber& other) const
    {
-      return major() == other.major() &&
-             minor() == other.minor() &&
-             patch() == other.patch();
+      return major_version() == other.major_version() &&
+             minor_version() == other.minor_version() &&
+             patch_version() == other.patch_version();
    }
 
    bool operator!=(const RVersionNumber& other) const
@@ -109,7 +109,7 @@ private:
 
 inline std::ostream& operator<<(std::ostream& os, const RVersionNumber& ver)
 {
-   os << ver.major() << "." << ver.minor() << "." << ver.patch();
+   os << ver.major_version() << "." << ver.minor_version() << "." << ver.patch_version();
    return os;
 }
 

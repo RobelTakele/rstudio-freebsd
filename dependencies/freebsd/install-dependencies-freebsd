@@ -22,9 +22,9 @@ then
   ./install-overlay
 fi
 
-for package in apache-ant boost-libs cmake e2fsprogs-libuuid libinotify R
+for package in apache-ant boost-libs cmake e2fsprogs-libuuid hs-pandoc libinotify R
 do
-  pkg_info -E "${package}-*" > /dev/null || pkg_add -r ${package}
+  pkg install ${package}
 done
 
 cd ../common

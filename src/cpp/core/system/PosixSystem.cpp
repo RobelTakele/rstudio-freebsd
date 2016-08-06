@@ -36,6 +36,7 @@
 #include <ifaddrs.h>
 #include <sys/socket.h>
 #include <netdb.h>
+#include <netinet/in.h>
 
 #include <uuid/uuid.h>
 
@@ -46,7 +47,7 @@
 #include <sys/sysctl.h>
 #endif
 
-#ifndef __APPLE__
+#if !defined(__APPLE__) && !defined(__FreeBSD__)
 #include <sys/prctl.h>
 #include <sys/sysinfo.h>
 #include <linux/kernel.h>
@@ -793,7 +794,7 @@ Error osResourceLimit(ResourceLimit limit, int* pLimit)
       case CpuLimit:
          *pLimit = RLIMIT_CPU;
          break;
-#ifndef __APPLE__
+#if !defined(__APPLE__) && !defined(__FreeBSD__)
       case NiceLimit:
          *pLimit = RLIMIT_NICE;
          break;
@@ -866,7 +867,7 @@ Error systemInformation(SysInfo* pSysInfo)
 {
    pSysInfo->cores = boost::thread::hardware_concurrency();
 
-#ifndef __APPLE__
+#if !defined(__APPLE__) && !defined(__FreeBSD__)
    struct sysinfo info;
    if (::sysinfo(&info) == -1)
       return systemError(errno, ERROR_LOCATION);
@@ -899,7 +900,7 @@ void toPids(const std::vector<std::string>& lines, std::vector<PidType>* pPids)
 
 } // anonymous namespace
 
-#ifndef __APPLE__
+#if !defined(__APPLE__) && !defined(__FreeBSD__)
 core::Error pidof(const std::string& process, std::vector<PidType>* pPids)
 {
    // use pidof to capture pids
@@ -1101,7 +1102,7 @@ Error restrictCoreDumps()
       return error;
 
    // no ptrace core dumps permitted
-#ifndef __APPLE__
+#if !defined(__APPLE__) && !defined(__FreeBSD__)
    int res = ::prctl(PR_SET_DUMPABLE, 0);
    if (res == -1)
       return systemError(errno, ERROR_LOCATION);
@@ -1127,7 +1128,7 @@ void printCoreDumpable(const std::string& context)
    ostr << "  hard limit: " << rLimitHard << std::endl;
 
    // ptrace
-#ifndef __APPLE__
+#if !defined(__APPLE__) && !defined(__FreeBSD__)
    int dumpable = ::prctl(PR_GET_DUMPABLE, NULL, NULL, NULL, NULL);
    if (dumpable == -1)
       LOG_ERROR(systemError(errno, ERROR_LOCATION));
@@ -1199,7 +1200,7 @@ void setProcessLimits(ProcessLimits limits)
    }
 
    // cpu affinity
-#ifndef __APPLE__
+#if !defined(__APPLE__) && !defined(__FreeBSD__)
    if (!isCpuAffinityEmpty(limits.cpuAffinity))
    {
       Error error = setCpuAffinity(limits.cpuAffinity);
