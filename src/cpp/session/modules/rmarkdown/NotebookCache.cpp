@@ -204,6 +204,10 @@ Error removeStaleSavedChunks(FilePath& docPath, FilePath& cachePath)
 
 void onDocPendingRemove(boost::shared_ptr<source_database::SourceDocument> pDoc)
 {
+   // ignore if doc is unsaved (no path)
+   if (pDoc->path().empty())
+      return;
+
    // check for a contextual (uncommitted) chunk definitions file
    FilePath chunkDefsFile = chunkDefinitionsPath(pDoc->path(), pDoc->id(),
          notebookCtxId());
@@ -218,10 +222,35 @@ void onDocPendingRemove(boost::shared_ptr<source_database::SourceDocument> pDoc)
       LOG_ERROR(error);
    if (matches)
    {
-      error = chunkDefsFile.copy(chunkDefinitionsPath(
-               pDoc->path(), pDoc->id(), kSavedCtx));
-      if (error)
-         LOG_ERROR(error);
+      FilePath target = chunkDefinitionsPath(
+               pDoc->path(), pDoc->id(), kSavedCtx);
+
+      // only perform the copy if the saved branch is stale (older than the
+      // uncomitted branch)
+      if (target.lastWriteTime() < chunkDefsFile.lastWriteTime())
+      {
+         // remove the old chunk definition file to make way for the new one 
+         error = target.remove();
+         if (error)
+         {
+            // can't remove the old definition file, so leave it alone
+            LOG_ERROR(error);
+         }
+         else
+         {
+            error = chunkDefsFile.copy(target);
+            if (error)
+            {
+               // removed the old file, but could not copy the new one; this
+               // should never happen. ideally we'd back up the old file and
+               // restore it if we can't copy the new one, but since restoring
+               // the backup and copying the new file are effectively the same
+               // operation it's unlikely to offer any true improvements in
+               // robustness.
+               LOG_ERROR(error);
+            }
+         }
+      }
    }
 }
 

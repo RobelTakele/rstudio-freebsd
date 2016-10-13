@@ -1,10 +1,18 @@
-## v0.99c - Release Notes
+## v1.0 - Release Notes
+
+### R Notebooks
+
+* Authoring tools for [R Notebooks](http://rmarkdown.rstudio.com/r_notebooks.html)
+* Inline display for text, latex, tabular data, graphics, and htmlwidgets in source editor
+* All code and output saved within a single notebook HTML file (.nb.html)
+* Multiple language engines including Python, Bash, SQL, Rcpp, and Stan
+* Tools for running various combinations of chunks (current, next, previous, remaining)
 
 ### Data Import
 
-* Import dataset from text via readr
-* Import dataset from Excel via readxl
-* Import dataset from SAS, SPSS, and Stata via haven
+* Import dataset from text via [readr](https://github.com/hadley/readr)
+* Import dataset from Excel via [readxl](https://github.com/hadley/readxl)
+* Import dataset from SAS, SPSS, and Stata via [haven](https://github.com/hadley/haven)
 * Preview data while importing datasets
 * Explicitly set column types while importing datasets
 * Preview and copy code while importing datasets
@@ -16,9 +24,24 @@
 * Profile menu enables easy stop/start of profiling or profiling of selected lines.
 * Save and load of previous profiling sessions
 
+### RStudio Connect
+
+* Publish reports, applications, and plots to [RStudio Connect](https://www.rstudio.com/products/connect/)
+* One-click deployment of Shiny applications
+* Publish and schedule periodic execution of R Markdown reports 
+* Set which users and/or groups have permission to view content
+
+### Spark 
+
+* Integrated support for the [sparklyr](http://spark.rstudio.com) package
+* Create and manage connections to Spark clusters and local Spark instances
+* Browse tables and columns of Spark DataFrames
+* Preview the first 1,000 rows of Spark DataFrames
+
 ### Source Editor
 
 * Ctrl+Enter now executes current R statement when selection is empty
+* Use Shift+Click to open web links in source editor (Command+Click on OS X)
 * Enabled auto-pairing of backticks (\`\`) in R documents
 * Fixed regression re: folding of unnamed sections, e.g. '#####'
 * Implemented folding for sub-sections in R documents
@@ -32,9 +55,11 @@
 * The various 'yank' commands are now rebindable (Ctrl + Y, Ctrl + K, Ctrl + U)
 * Insert assignment operator (Alt+-, '<-') is now rebindable
 * Insert pipe operator (Cmd+Shift+M, '%>%') is now rebindable
+* Enable implementors of .DollarNames to provide custom types
 
 ### R Markdown
 
+* Inline preview for MathJax equations
 * Show custom formats in Knit menu
 * Show options menu and Knit w/ Params for custom formats
 * Use "Run Document" for custom formats with runtime: shiny
@@ -42,13 +67,13 @@
 * Add R Markdown pane to global options dialog
 * Build tab and preview support for R Markdown websites
 * Various enhancements for authoring with the bookdown package
-* Update pandoc to 1.17.0.3
+* Add command to clear knitr cache
+* Update pandoc to 1.17.2
 * Update MathJax to 2.6.1
 
 ### C/C++
 
 * Provide autocompletion of header paths
-* Update C++ unit testing library (catch) to v1.3.3 (fix gcc >=5 compilation errors)
 * Syntax highlighting of raw, wide, unicode string literals (e.g R"hello")
 
 ### Server
@@ -65,6 +90,7 @@
 * Improved performance of 'Find in Files' tool
 * Attempting to cut or copy with an empty selection no longer clears the clipboard
 * Files pane now has a fixed header row
+* Attempting to check out remote git branch now checks out local copy tracking remote
 * Published plots are larger and responsive to changes in browser size
 * Implement gt/gT bindings in Vim mode to switch to next/previous tab
 * Always provide file completions for top-level current directory
@@ -74,6 +100,8 @@
 * Added option to limit length of lines in console history
 * Improved performance when many lines of code sent to console
 * 'save()' warnings no longer emitted when saving session state
+* Update C++ unit testing library (catch) to v1.3.3 (fix gcc >=5 compilation errors)
+* Change default max.print to 1000 (was 10000)
 
 ### Bug Fixes
 
@@ -128,6 +156,8 @@
 * Fix blank screen on log-in when PAM username capitalization doesn't match system
 * Prompt to save untitled (never saved) documents when closing source windows
 * Don't depend on number of call frames when detecting install.packages call
+* Fix failure to install packages with long install.packages commands after restart
+* Server Pro: Fix issue causing sporadic session launch failures when using PAM sessions
 
 
 

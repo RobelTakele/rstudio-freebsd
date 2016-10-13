@@ -193,7 +193,7 @@ void reportStanExecutionError(const std::string& docId,
                               const FilePath& targetPath)
 {
    std::string message =
-         "engine.opts$x must be a character string providing a "
+         "engine.opts$output.var must be a character string providing a "
          "name for the returned `stanmodel` object";
    reportChunkExecutionError(docId, chunkId, nbCtxId, message, targetPath);
 }
@@ -241,7 +241,8 @@ Error executeStanEngineChunk(const std::string& docId,
    }
    RemoveOnExitScope removeOnExitScope(tempFile, ERROR_LOCATION);
    
-   // ensure existence of 'engine.opts' with 'x' parameter
+   // ensure existence of 'engine.opts' with 'output.var' parameter
+   // ('x' also allowed for backwards compatibility)
    if (!options.count("engine.opts"))
    {
       reportStanExecutionError(docId, chunkId, nbCtxId, targetPath);
@@ -276,9 +277,9 @@ Error executeStanEngineChunk(const std::string& docId,
    std::string modelName;
    for (std::size_t i = 0, n = r::sexp::length(engineOptsSEXP); i < n; ++i)
    {
-      // skip 'x' engine option (this is the variable we wish to assign to
+      // skip 'output.var' engine option (this is the variable we wish to assign to
       // after evaluating the stan model)
-      if (engineOptsNames[i] == "x")
+      if (engineOptsNames[i] == "output.var" || engineOptsNames[i] == "x")
       {
          modelName = r::sexp::asString(VECTOR_ELT(engineOptsSEXP, i));
          continue;
@@ -298,7 +299,7 @@ Error executeStanEngineChunk(const std::string& docId,
    
    // if the 'file' option was not set, set it explicitly
    if (!core::algorithm::contains(engineOptsNames, "file"))
-      fStanEngine.addParam("file", tempFile.absolutePath());
+      fStanEngine.addParam("file", string_utils::utf8ToSystem(tempFile.absolutePath()));
    
    // evaluate stan_model call
    SEXP stanModelSEXP = R_NilValue;
@@ -338,6 +339,91 @@ Error executeStanEngineChunk(const std::string& docId,
    return Success();
 }
 
+Error executeSqlEngineChunk(const std::string& docId,
+                             const std::string& chunkId,
+                             const std::string& nbCtxId,
+                             const std::string& code,
+                             const json::Object& options)
+{
+   Error error;
+   
+   // ensure we always emit an execution complete event on exit
+   ChunkExecCompletedScope execScope(docId, chunkId);
+
+      // prepare console output file -- use tempfile on failure
+   FilePath consolePath = module_context::tempFile("data-console-", "");
+   error = prepareCacheConsoleOutputFile(docId, chunkId, nbCtxId, &consolePath);
+   if (error)
+      LOG_ERROR(error);
+   
+   // capture console output, error
+   boost::signals::scoped_connection consoleHandler =
+         module_context::events().onConsoleOutput.connect(
+            boost::bind(chunkConsoleOutputHandler,
+                        _1,
+                        _2,
+                        consolePath)); 
+
+   FilePath parentPath = notebook::chunkOutputPath(
+       docId, chunkId, nbCtxId, ContextSaved);
+   error = parentPath.ensureDirectory();
+   if (error)
+   {
+      std::string message = "Failed to create SQL chunk directory";
+      reportChunkExecutionError(docId, chunkId, nbCtxId, message, parentPath);
+        
+      return Success();
+   }
+    
+   FilePath dataPath =
+         notebook::chunkOutputFile(docId, chunkId, nbCtxId, ChunkOutputData);
+
+   // check package dependencies
+   if (!module_context::isPackageVersionInstalled("DBI", "0.4"))
+   {
+      std::string message = "Executing SQL chunks requires version 0.4 or "
+                            "later of the DBI package";
+      reportChunkExecutionError(docId, chunkId, nbCtxId, message, consolePath);
+      return Success();
+   }
+
+   // run sql and save result
+   error = r::exec::RFunction(
+               ".rs.runSqlForDataCapture",
+               code,
+               string_utils::utf8ToSystem(dataPath.absolutePath()),
+               options).call();
+   if (error)
+   {
+      std::string message = "Failed to execute SQL chunk";
+      reportChunkExecutionError(docId, chunkId, nbCtxId, message, consolePath);
+
+      return Success();
+   }
+
+   if (dataPath.exists()) {
+      // forward success / failure to chunk
+      enqueueChunkOutput(
+               docId,
+               chunkId,
+               notebookCtxId(),
+               0, // no ordinal needed
+               ChunkOutputData,
+               dataPath);
+   }
+
+   // forward console output
+   enqueueChunkOutput(
+            docId,
+            chunkId,
+            notebookCtxId(),
+            0, // no ordinal needed
+            ChunkOutputText,
+            consolePath);
+
+   return Success();
+}
+
 Error interruptEngineChunk(const json::JsonRpcRequest& request,
                            json::JsonRpcResponse* pResponse)
 {
@@ -374,13 +460,15 @@ Error executeAlternateEngineChunk(const std::string& docId,
          options[it->first] = it->second.get_str();
    }
    
-   // handle Rcpp specially
+   // handle some engines with their own custom routines
    if (engine == "Rcpp")
       return executeRcppEngineChunk(docId, chunkId, nbCtxId, code, options);
    else if (engine == "stan")
       return executeStanEngineChunk(docId, chunkId, nbCtxId, code, options);
-   
-   runChunk(docId, chunkId, nbCtxId, engine, code);
+   else if (engine == "sql")
+      return executeSqlEngineChunk(docId, chunkId, nbCtxId, code, jsonChunkOptions);
+
+   runChunk(docId, chunkId, nbCtxId, engine, code, options);
    return Success();
 }
 

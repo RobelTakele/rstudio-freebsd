@@ -1,5 +1,5 @@
 /*
- * NotebookMessages.hpp
+ * NotebookFrameMetadata.java
  *
  * Copyright (C) 2009-16 by RStudio, Inc.
  *
@@ -12,37 +12,26 @@
  * AGPL (http://www.gnu.org/licenses/agpl-3.0.txt) for more details.
  *
  */
+package org.rstudio.studio.client.rmarkdown.model;
 
-#ifndef SESSION_NOTEBOOK_MESSAGES_HPP
-#define SESSION_NOTEBOOK_MESSAGES_HPP
+import com.google.gwt.core.client.JavaScriptObject;
+import com.google.gwt.core.client.JsArrayString;
 
-#include "NotebookCapture.hpp"
-
-#include <r/RSexp.hpp>
-
-namespace rstudio {
-namespace core {
-   class Error;
-}
-}
-
-namespace rstudio {
-namespace session {
-namespace modules {
-namespace rmarkdown {
-namespace notebook {
-
-class MessageCapture : public NotebookCapture
+public class NotebookFrameMetadata extends JavaScriptObject
 {
-public:
-   void connect();
-   void disconnect();
-};
+   protected NotebookFrameMetadata()
+   {
+   }
+   
+   public final native JsArrayString getClasses() /*-{
+      return this.classes || [];
+   }-*/;
 
-} // namespace notebook
-} // namespace rmarkdown
-} // namespace modules
-} // namespace session
-} // namespace rstudio
+   public final native int numRows() /*-{
+      return this.nrow || 0;
+   }-*/;
 
-#endif
+   public final native int numCols() /*-{
+      return this.ncol || 0;
+   }-*/;
+}

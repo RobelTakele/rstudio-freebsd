@@ -19,9 +19,10 @@
 #include "NotebookPlots.hpp"
 #include "NotebookHtmlWidgets.hpp"
 #include "NotebookCache.hpp"
+#include "NotebookData.hpp"
 #include "NotebookErrors.hpp"
 #include "NotebookWorkingDir.hpp"
-#include "NotebookMessages.hpp"
+#include "NotebookConditions.hpp"
 
 #include <boost/foreach.hpp>
 
@@ -62,11 +63,12 @@ FilePath getNextOutputFile(const std::string& docId, const std::string& chunkId,
 
 ChunkExecContext::ChunkExecContext(const std::string& docId, 
       const std::string& chunkId, const std::string& nbCtxId, 
-      ExecScope execScope, const ChunkOptions& options, int pixelWidth, 
-      int charWidth):
+      ExecScope execScope, const core::FilePath& workingDir, 
+      const ChunkOptions& options, int pixelWidth, int charWidth):
    docId_(docId), 
    chunkId_(chunkId),
    nbCtxId_(nbCtxId),
+   workingDir_(workingDir),
    options_(options),
    pixelWidth_(pixelWidth),
    charWidth_(charWidth),
@@ -110,26 +112,33 @@ void ChunkExecContext::connect()
    if (execScope_ == ExecScopeChunk)
       initializeOutput();
 
-   // suppress messages if requested
-   if (!options_.getOverlayOption("message", true))
-   {
-      boost::shared_ptr<MessageCapture> pMessageCapture = 
-         boost::make_shared<MessageCapture>();
-      pMessageCapture->connect();
-      captures_.push_back(pMessageCapture);
-   }
+   // capture conditions
+   boost::shared_ptr<ConditionCapture> pConditionCapture = 
+      boost::make_shared<ConditionCapture>();
+   pConditionCapture->connect();
+   captures_.push_back(pConditionCapture);
+   connections_.push_back(events().onCondition.connect(
+         boost::bind(&ChunkExecContext::onCondition, this, _1, _2)));
 
-   // extract knitr figure options if present (currently supported at the 
-   // chunk level only)
-   double figWidth = 0;
-   double figHeight = 0;
-   json::readObject(options_.chunkOptions(), "fig.width",  &figWidth);
-   json::readObject(options_.chunkOptions(), "fig.height", &figHeight);
+   // extract knitr figure options if present
+   double figWidth = options_.getOverlayOption("fig.width", 0.0);
+   double figHeight = options_.getOverlayOption("fig.height", 0.0);
+   
+   // if 'fig.asp' is set, then use that to override 'fig.height'
+   double figAsp = options_.getOverlayOption("fig.asp", 0.0);
+   if (figAsp != 0.0)
+   {
+      // if figWidth is unset, default to 7.0
+      if (figWidth == 0.0)
+         figWidth = 7.0;
+      
+      figHeight = figWidth * figAsp;
+   }
 
    // begin capturing plots 
    connections_.push_back(events().onPlotOutput.connect(
-         boost::bind(&ChunkExecContext::onFileOutput, this, _1, _2,
-                     ChunkOutputPlot, _3)));
+         boost::bind(&ChunkExecContext::onFileOutput, this, _1, _2, 
+                     _3, ChunkOutputPlot, _4)));
 
    boost::shared_ptr<PlotCapture> pPlotCapture = 
       boost::make_shared<PlotCapture>();
@@ -152,7 +161,7 @@ void ChunkExecContext::connect()
 
    // begin capturing HTML input
    connections_.push_back(events().onHtmlOutput.connect(
-         boost::bind(&ChunkExecContext::onFileOutput, this, _1, _2,
+         boost::bind(&ChunkExecContext::onFileOutput, this, _1, _2, _3, 
                      ChunkOutputHtml, 0)));
 
    boost::shared_ptr<HtmlCapture> pHtmlCapture = 
@@ -188,7 +197,7 @@ void ChunkExecContext::connect()
    r::options::setOptionWidth(charWidth_);
 
    boost::shared_ptr<DirCapture> pDirCapture = boost::make_shared<DirCapture>();
-   error = pDirCapture->connectDir(docId_);
+   error = pDirCapture->connectDir(docId_, workingDir_);
    if (error)
       LOG_ERROR(error);
    else
@@ -209,11 +218,57 @@ void ChunkExecContext::connect()
    connections_.push_back(module_context::events().onConsoleInput.connect(
          boost::bind(&ChunkExecContext::onConsoleInput, this, _1)));
 
+   // begin capturing data
+   connections_.push_back(events().onDataOutput.connect(
+         boost::bind(&ChunkExecContext::onFileOutput, this, _1, _2, _3, 
+                     ChunkOutputData, 0)));
+
+   boost::shared_ptr<DataCapture> pDataCapture = 
+      boost::make_shared<DataCapture>();
+   captures_.push_back(pDataCapture);
+
+   error = pDataCapture->connectDataCapture(
+            outputPath_,
+            options_.chunkOptions());
+   if (error)
+      LOG_ERROR(error);
+
    NotebookCapture::connect();
 }
 
+bool ChunkExecContext::onCondition(Condition condition,
+      const std::string& message)
+{
+   // skip if the user has asked us to suppress this kind of condition
+   if (condition == ConditionMessage && 
+       !options_.getOverlayOption("message", true))
+   {
+      return false;
+   }
+   if (condition == ConditionWarning && 
+       !options_.getOverlayOption("warning", true))
+   {
+      return false;
+   }
+
+   // give each capturing module a chance to handle the condition
+   BOOST_FOREACH(boost::shared_ptr<NotebookCapture> pCapture, captures_)
+   {
+      if (pCapture->onCondition(condition, message))
+         return true;
+   }
+
+   // none of them did; treat it as ordinary output
+   onConsoleOutput(module_context::ConsoleOutputError, message);
+   module_context::enqueClientEvent(
+      ClientEvent(client_events::kConsoleWriteError, message));
+
+   return true;
+}
+
 void ChunkExecContext::onFileOutput(const FilePath& file, 
-      const FilePath& metadata, ChunkOutputType outputType, unsigned ordinal)
+      const FilePath& sidecar, const core::json::Value& metadata, 
+      ChunkOutputType outputType, unsigned ordinal)
 {
    // set up folder to receive output if necessary
    initializeOutput();
@@ -233,6 +288,10 @@ void ChunkExecContext::onFileOutput(const FilePath& file,
       OutputPair pair(outputType, ordinal);
       target = chunkOutputFile(docId_, chunkId_, nbCtxId_, pair);
    }
+
+   // preserve original extension; some output types, such as plots, don't
+   // have a canonical extension
+   target = target.parent().complete(target.stem() + file.extension());
 
    Error error = file.move(target);
    if (error)
@@ -257,14 +316,24 @@ void ChunkExecContext::onFileOutput(const FilePath& file,
          LOG_ERROR(error);
    }
 
-   // if output metadata was provided, write it out
-   if (!metadata.empty())
+   // if output sidecar file was provided, write it out
+   if (!sidecar.empty())
    {
-      metadata.move(target.parent().complete(
-               target.stem() + metadata.extension()));
+      sidecar.move(target.parent().complete(
+               target.stem() + sidecar.extension()));
    }
 
-   enqueueChunkOutput(docId_, chunkId_, nbCtxId_, ordinal, outputType, target);
+   // serialize metadata if provided
+   if (!metadata.is_null())
+   {
+      std::ostringstream oss;
+      json::write(metadata, oss);
+      error = writeStringToFile(target.parent().complete(
+               target.stem() + ".metadata"), oss.str());
+   }
+
+   enqueueChunkOutput(docId_, chunkId_, nbCtxId_, ordinal, outputType, target,
+         metadata);
 }
 
 void ChunkExecContext::onError(const core::json::Object& err)

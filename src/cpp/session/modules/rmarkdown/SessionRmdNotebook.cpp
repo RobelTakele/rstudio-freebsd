@@ -18,12 +18,14 @@
 #include "NotebookPlotReplay.hpp"
 #include "NotebookCache.hpp"
 #include "NotebookChunkDefs.hpp"
+#include "NotebookData.hpp"
 #include "NotebookOutput.hpp"
 #include "NotebookHtmlWidgets.hpp"
 #include "NotebookExec.hpp"
 #include "NotebookErrors.hpp"
 #include "NotebookQueue.hpp"
 #include "NotebookAlternateEngines.hpp"
+#include "NotebookConditions.hpp"
 
 #include <iostream>
 
@@ -62,21 +64,31 @@ std::string s_activeConsole;
 boost::shared_ptr<ChunkExecContext> s_execContext;
 
 void replayChunkOutputs(const std::string& docPath, const std::string& docId,
-      const std::string& requestId, const json::Array& chunkOutputs) 
+      const std::string& requestId, const std::string& singleChunkId,
+      const json::Array& chunkOutputs) 
 {
    std::vector<std::string> chunkIds;
    extractChunkIds(chunkOutputs, &chunkIds);
 
-   // find all the chunks and play them back to the client
-   BOOST_FOREACH(const std::string& chunkId, chunkIds)
+   if (singleChunkId.empty())
    {
-      enqueueChunkOutput(docPath, docId, chunkId, notebookCtxId(), requestId);
+      // find all the chunks and play them back to the client
+      BOOST_FOREACH(const std::string& chunkId, chunkIds)
+      {
+         enqueueChunkOutput(docPath, docId, chunkId, notebookCtxId(), requestId);
+      }
+   }
+   else
+   {
+      // play back a specific chunk
+      enqueueChunkOutput(docPath, docId, singleChunkId, notebookCtxId(), 
+            requestId);
    }
 
    json::Object result;
    result["doc_id"] = docId;
    result["request_id"] = requestId;
-   result["chunk_id"] = "";
+   result["chunk_id"] = singleChunkId.empty() ? "" : singleChunkId;
    result["type"] = kFinishedReplay;
    ClientEvent event(client_events::kChunkOutputFinished, result);
    module_context::enqueClientEvent(event);
@@ -87,9 +99,9 @@ Error refreshChunkOutput(const json::JsonRpcRequest& request,
                          json::JsonRpcResponse* pResponse)
 {
    // extract path to doc to be refreshed
-   std::string docPath, docId, nbCtxId, requestId;
+   std::string docPath, docId, nbCtxId, requestId, chunkId;
    Error error = json::readParams(request.params, &docPath, &docId, &nbCtxId,
-         &requestId);
+         &requestId, &chunkId);
    if (error)
       return error;
 
@@ -106,7 +118,7 @@ Error refreshChunkOutput(const json::JsonRpcRequest& request,
    if (!error) 
    {
       pResponse->setAfterResponse(
-            boost::bind(replayChunkOutputs, docPath, docId, requestId, 
+            boost::bind(replayChunkOutputs, docPath, docId, requestId, chunkId, 
                         chunkDefs));
    }
 
@@ -168,12 +180,15 @@ Error initialize()
       (bind(module_context::sourceModuleRFile, "SessionRmdNotebook.R"))
       (bind(initOutput))
       (bind(initCache))
+      (bind(initData))
       (bind(initHtmlWidgets))
       (bind(initErrors))
       (bind(initPlots))
       (bind(initPlotReplay))
       (bind(initQueue))
-      (bind(initAlternateEngines));
+      (bind(initAlternateEngines))
+      (bind(initChunkDefs))
+      (bind(initConditions));
 
    return initBlock.execute();
 }

@@ -1,7 +1,7 @@
 #
 # SessionRSConnect.R
 #
-# Copyright (C) 2009-15 by RStudio, Inc.
+# Copyright (C) 2009-16 by RStudio, Inc.
 #
 # Unless you have received this program directly from RStudio pursuant
 # to the terms of a commercial license agreement with RStudio, then
@@ -334,7 +334,7 @@
 })
 
 
-.rs.addJsonRpcHandler("get_rmd_publish_details", function(target) {
+.rs.addFunction("getRmdPublishDetails", function(target, encoding) {
   # check for multiple R Markdown documents in the directory 
   rmds <- list.files(path = dirname(target), pattern = glob2rx("*.Rmd"),
                      all.files = FALSE, recursive = FALSE, ignore.case = TRUE,
@@ -343,7 +343,7 @@
   # see if this format is self-contained (defaults to true for HTML-based 
   # formats)
   selfContained <- TRUE
-  lines <- readLines(target, warn = FALSE)
+  lines <- readLines(target, encoding = encoding, warn = FALSE)
   outputFormat <- rmarkdown:::output_format_from_yaml_front_matter(lines)
   if (is.list(outputFormat$options) &&
       identical(outputFormat$options$self_contained, FALSE)) {
@@ -399,4 +399,25 @@
     }
   }
   .rs.scalarListFromFrame(servers)
+})
+
+.rs.addJsonRpcHandler("generate_app_name", function(appTitle, appPath, account) {
+  name  <- ""
+  valid <- TRUE
+  error <- ""
+
+  # attempt to generate a name from the title
+  tryCatch({
+    name <- rsconnect::generateAppName(appTitle = appTitle, 
+                                       appPath  = appPath, 
+                                       account  = account)
+  }, error = function(e) {
+    valid <<- FALSE
+    error <<- e$message
+  })
+  
+  # report result
+  list(name  = .rs.scalar(name),
+       valid = .rs.scalar(valid),
+       error = .rs.scalar(error))
 })

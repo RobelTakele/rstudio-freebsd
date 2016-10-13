@@ -144,6 +144,7 @@ set (SESSION_SOURCE_FILES
    modules/environment/EnvironmentMonitor.cpp
    modules/environment/EnvironmentUtils.cpp
    modules/environment/SessionEnvironment.cpp
+   modules/mathjax/SessionMathJax.cpp
    modules/overlay/SessionOverlay.cpp
    modules/presentation/SessionPresentation.cpp
    modules/presentation/PresentationLog.cpp
@@ -164,11 +165,12 @@ set (SESSION_SOURCE_FILES
    modules/rmarkdown/NotebookCapture.cpp
    modules/rmarkdown/NotebookChunkDefs.cpp
    modules/rmarkdown/NotebookChunkOptions.cpp
+   modules/rmarkdown/NotebookConditions.cpp
+   modules/rmarkdown/NotebookData.cpp
    modules/rmarkdown/NotebookDocQueue.cpp
    modules/rmarkdown/NotebookErrors.cpp
    modules/rmarkdown/NotebookExec.cpp
    modules/rmarkdown/NotebookHtmlWidgets.cpp
-   modules/rmarkdown/NotebookMessages.cpp
    modules/rmarkdown/NotebookOutput.cpp
    modules/rmarkdown/NotebookPaths.cpp
    modules/rmarkdown/NotebookPlotReplay.cpp
@@ -430,7 +432,7 @@ if (NOT RSTUDIO_SESSION_WIN64)
       # static Pandoc binaries (see dependencies/common/install-pandoc)
       set(PANDOC_EXTENSION_DIR "/static")
    endif()
-   set(PANDOC_BIN "${RSTUDIO_DEPENDENCIES_DIR}/common/pandoc/1.17.0.2${PANDOC_EXTENSION_DIR}")
+   set(PANDOC_BIN "${RSTUDIO_DEPENDENCIES_DIR}/common/pandoc/1.17.2${PANDOC_EXTENSION_DIR}")
    file(GLOB PANDOC_FILES "${PANDOC_BIN}/pandoc*")
    install(FILES ${PANDOC_FILES}
            PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE
@@ -460,6 +462,10 @@ if (NOT RSTUDIO_SESSION_WIN64)
 
    # notebook resources
    install(DIRECTORY "resources/notebook"
+           DESTINATION ${RSTUDIO_INSTALL_SUPPORTING}/resources)
+
+   # install pagedtable
+   install(DIRECTORY "resources/pagedtable"
            DESTINATION ${RSTUDIO_INSTALL_SUPPORTING}/resources)
 
    # install libclang

@@ -32,6 +32,7 @@
 #include <r/RSexp.hpp>
 #include <r/session/RGraphics.hpp>
 #include <r/ROptions.hpp>
+#include <r/RRoutines.hpp>
 
 #define kPlotPrefix "_rs_chunk_plot_"
 #define kGoldenRatio 1.618
@@ -49,6 +50,24 @@ bool isPlotPath(const FilePath& path)
 {
    return path.hasExtensionLowerCase(".png") &&
           string_utils::isPrefixOf(path.stem(), kPlotPrefix);
+}
+
+SEXP rs_recordExternalPlot(SEXP plotFilesSEXP)
+{
+   std::vector<std::string> plotFiles;
+   if (r::sexp::fillVectorString(plotFilesSEXP, &plotFiles))
+   {
+      BOOST_FOREACH(const std::string& plotFile, plotFiles)
+      {
+         if (plotFile.empty())
+            continue;
+         FilePath plot = module_context::resolveAliasedPath(plotFile);
+         if (!plot.exists())
+            continue;
+         events().onPlotOutput(plot, FilePath(), json::Value(), 0);
+      }
+   }
+   return R_NilValue;
 }
 
 } // anonymous namespace
@@ -85,8 +104,25 @@ void PlotCapture::processPlots(bool ignoreEmpty)
          if (ignoreEmpty && path.size() == 0)
             continue;
 
+         // record height/width along with plot
+         json::Object metadata;
+         metadata["height"] = height_;
+         metadata["width"] = width_;
+         metadata["size_behavior"] = static_cast<int>(sizeBehavior_);
+
+         // use cached conditions if we have them; otherwise, check accumulator
+         if (conditions_.empty())
+         {
+            metadata["conditions"] = endConditionCapture();
+         }
+         else
+         {
+            metadata["conditions"] = conditions_.front();
+            conditions_.pop_front();
+         }
+
          // emit the plot and the snapshot file
-         events().onPlotOutput(path, snapshotFile_, lastOrdinal_);
+         events().onPlotOutput(path, snapshotFile_, metadata, lastOrdinal_);
 
          // we've consumed the snapshot file, so clear it
          snapshotFile_ = FilePath();
@@ -117,6 +153,9 @@ void PlotCapture::saveSnapshot()
       LOG_ERROR(error);
    else
       snapshotFile_ = outputFile;
+
+   // clear the display list now that it's been written
+   lastPlot_.releaseNow();
 }
 
 void PlotCapture::onExprComplete()
@@ -130,6 +169,10 @@ void PlotCapture::onExprComplete()
    // no action if nothing on device list (implies no graphics output)
    if (!isGraphicsDeviceActive())
       return;
+
+   // finish capturing the conditions, if any
+   if (capturingConditions())
+      conditions_.push_back(endConditionCapture());
    
    // if we were expecting a new plot to be produced by the previous
    // expression, process the plot folder
@@ -212,12 +255,14 @@ void PlotCapture::onBeforeNewPlot()
       if (sizeBehavior_ == PlotSizeAutomatic)
          saveSnapshot();
    }
+   beginConditionCapture();
    plotPending_ = true;
    hasPlots_ = true;
 }
 
 void PlotCapture::onNewPlot()
 {
+   beginConditionCapture();
    hasPlots_ = true;
    processPlots(true);
 }
@@ -344,6 +389,8 @@ bool PlotCapture::isGraphicsDeviceActive()
 
 core::Error initPlots()
 {
+   RS_REGISTER_CALL_METHOD(rs_recordExternalPlot, 1);
+
    ExecBlock initBlock;
    initBlock.addFunctions()
       (boost::bind(module_context::sourceModuleRFile, "NotebookPlots.R"));

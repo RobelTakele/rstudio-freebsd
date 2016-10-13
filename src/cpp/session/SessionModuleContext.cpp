@@ -33,6 +33,7 @@
 #include <core/Settings.hpp>
 #include <core/DateTime.hpp>
 #include <core/FileSerializer.hpp>
+#include <core/markdown/Markdown.hpp>
 #include <core/system/FileScanner.hpp>
 #include <core/IncrementalCommand.hpp>
 #include <core/PeriodicCommand.hpp>
@@ -345,6 +346,24 @@ SEXP rs_generateShortUuid()
    std::string uuid = core::system::generateShortenedUuid();
    r::sexp::Protect rProtect;
    return r::sexp::create(uuid, &rProtect);
+}
+
+SEXP rs_markdownToHTML(SEXP contentSEXP)
+{
+   std::string content = r::sexp::safeAsString(contentSEXP);
+   std::string htmlContent;
+   Error error = markdown::markdownToHTML(content,
+                                          markdown::Extensions(),
+                                          markdown::HTMLOptions(),
+                                          &htmlContent);
+   if (error)
+   {
+      LOG_ERROR(error);
+      htmlContent = content;
+   }
+
+   r::sexp::Protect rProtect;
+   return r::sexp::create(htmlContent, &rProtect);
 }
 
 } // anonymous namespace
@@ -1936,22 +1955,10 @@ std::string downloadFileMethod(const std::string& defaultMethod)
 
 std::string CRANDownloadOptions()
 {
-   std::string options("options(repos = c(CRAN='" +
-                    module_context::CRANReposURL() + "')");
-   std::string method = module_context::downloadFileMethod();
-   if (!method.empty())
-      options += ", download.file.method = '" + method + "'";
-   if (method == "curl")
-   {
-      std::string extraArgs;
-      Error error = r::exec::RFunction(".rs.downloadFileExtraWithCurlArgs")
-                                                            .call(&extraArgs);
-      if (error)
-         LOG_ERROR(error);
-      options += ", download.file.extra = '" + extraArgs + "'";
-   }
-
-   options += ")";
+   std::string options;
+   Error error = r::exec::RFunction(".rs.CRANDownloadOptionsString").call(&options);
+   if (error)
+      LOG_ERROR(error);
    return options;
 }
 
@@ -2279,6 +2286,12 @@ Error initialize()
    methodDef16.fun = (DL_FUNC) rs_rstudioEdition ;
    methodDef16.numArgs = 0;
    r::routines::addCallMethod(methodDef16);
+
+   R_CallMethodDef methodDef17;
+   methodDef17.name = "rs_markdownToHTML";
+   methodDef17.fun = (DL_FUNC) rs_markdownToHTML;
+   methodDef17.numArgs = 1;
+   r::routines::addCallMethod(methodDef17);
    
    // register rs_isRScriptInPackageBuildTarget
    r::routines::registerCallMethod(

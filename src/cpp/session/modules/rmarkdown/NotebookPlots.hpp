@@ -41,8 +41,8 @@ namespace notebook {
 
 enum PlotSizeBehavior
 {
-   PlotSizeAutomatic,
-   PlotSizeManual
+   PlotSizeAutomatic = 0,
+   PlotSizeManual    = 1
 };
 
 class PlotCapture : public NotebookCapture
@@ -86,6 +86,8 @@ private:
 
    double width_;
    double height_;
+
+   std::list<core::json::Value> conditions_;
 };
 
 

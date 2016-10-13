@@ -508,7 +508,16 @@ public class RCompletionManager implements CompletionManager
             return false ; // bare modifiers should do nothing
          }
          
-         if (modifier == KeyboardShortcut.NONE)
+         if (modifier == KeyboardShortcut.CTRL)
+         {
+            switch (keycode)
+            {
+            case KeyCodes.KEY_P: return popup_.selectPrev();
+            case KeyCodes.KEY_N: return popup_.selectNext();
+            }
+         }
+         
+         else if (modifier == KeyboardShortcut.NONE)
          {
             if (keycode == KeyCodes.KEY_ESCAPE)
             {
@@ -1091,7 +1100,8 @@ public class RCompletionManager implements CompletionManager
    
    private boolean isLineInRoxygenComment(String line)
    {
-      return line.matches("^\\s*#+'\\s*[^\\s].*");
+      Pattern pattern = Pattern.create("^\\s*#+'");
+      return pattern.test(line);
    }
    
    private boolean isLineInComment(String line)
@@ -1144,6 +1154,11 @@ public class RCompletionManager implements CompletionManager
       // we erroneously capture '-' as part of the token name. This is awkward
       // but is effectively a bandaid until the autocompletion revamp.
       if (context.getToken().startsWith("-"))
+         context.setToken(context.getToken().substring(1));
+      
+      // fix up roxygen autocompletion for case where '@' is snug against
+      // the comment marker
+      if (context.getToken().equals("'@"))
          context.setToken(context.getToken().substring(1));
       
       context_ = new CompletionRequestContext(invalidation_.getInvalidationToken(),
@@ -1419,8 +1434,7 @@ public class RCompletionManager implements CompletionManager
       
       // escape early for roxygen
       if (firstLine.matches("\\s*#+'.*"))
-         return new AutocompletionContext(
-               token, AutocompletionContext.TYPE_ROXYGEN);
+         return new AutocompletionContext(token, AutocompletionContext.TYPE_ROXYGEN);
       
       // If the token has '$' or '@', add in the autocompletion context --
       // note that we still need parent contexts to give more information
@@ -2082,7 +2096,9 @@ public class RCompletionManager implements CompletionManager
             editor.moveCursorLeft();
          
          if (RCompletionType.isFunctionType(qualifiedName.type))
-            sigTipManager_.displayToolTip(qualifiedName.name, qualifiedName.source);
+            sigTipManager_.displayToolTip(qualifiedName.name, 
+                                          qualifiedName.source,
+                                          qualifiedName.helpHandler);
       }
       
       private final Invalidation.Token invalidationToken_ ;

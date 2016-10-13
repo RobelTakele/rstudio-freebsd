@@ -33,6 +33,10 @@
 #include <core/json/Json.hpp>
 #include <core/text/CsvParser.hpp>
 
+#include <r/RSexp.hpp>
+#include <r/RJson.hpp>
+#include <r/RExec.hpp>
+
 #include <session/SessionSourceDatabase.hpp>
 #include <session/SessionUserSettings.hpp>
 #include <session/SessionModuleContext.hpp>
@@ -61,14 +65,17 @@ LastChunkOutput s_lastChunkOutputs;
 ChunkOutputType chunkOutputType(const FilePath& outputPath)
 {
    ChunkOutputType outputType = ChunkOutputNone;
-   if (outputPath.extensionLowerCase() == ".csv")
+   std::string ext = outputPath.extensionLowerCase();
+   if (ext == ".csv")
       outputType = ChunkOutputText;
-   else if (outputPath.extensionLowerCase() == ".png")
+   else if (ext == ".png" || ext == ".jpg" || ext == ".jpeg")
       outputType = ChunkOutputPlot;
-   else if (outputPath.extensionLowerCase() == ".html")
+   else if (ext == ".html")
       outputType = ChunkOutputHtml;
-   else if (outputPath.extensionLowerCase() == ".error")
+   else if (ext == ".error")
       outputType = ChunkOutputError;
+   else if (outputPath.extensionLowerCase() == ".rdf")
+      outputType = ChunkOutputData;
    return outputType;
 }
 
@@ -84,6 +91,8 @@ std::string chunkOutputExt(ChunkOutputType outputType)
          return ".html";
       case ChunkOutputError:
          return ".error";
+      case ChunkOutputData:
+         return ".rdf";
       default: 
          return "";
    }
@@ -159,7 +168,7 @@ Error fillOutputObject(const std::string& docId, const std::string& chunkId,
 
       // if this is a plot and it doesn't have a display list, hint to client
       // that plot can't be resized
-      if (outputType == ChunkOutputPlot && path.hasExtensionLowerCase(".png"))
+      if (outputType == ChunkOutputPlot)
       {
          // form the path to where we'd expect the snapshot to be
          FilePath snapshotPath = path.parent().complete(
@@ -169,6 +178,27 @@ Error fillOutputObject(const std::string& docId, const std::string& chunkId,
       }
 
       (*pObj)[kChunkOutputValue] = url;
+   }
+   else if (outputType == ChunkOutputData)
+   {
+      SEXP argsSEXP;
+      r::sexp::Protect rProtect;
+
+      Error error = r::exec::RFunction(
+         ".rs.readDataCapture",
+         string_utils::utf8ToSystem(path.absolutePath())).call(
+            &argsSEXP,
+            &rProtect);
+
+      if (error)
+         return error;
+
+      json::Value valJson;
+      error = r::json::jsonValueFromList(argsSEXP, &valJson);
+      if (error)
+         return error;
+
+      (*pObj)[kChunkOutputValue] = valJson;
    }
 
    return Success();
@@ -271,6 +301,11 @@ Error handleChunkOutputRequest(const http::Request& request,
    {
       // no cache necessary in desktop mode
       pResponse->setFile(target, request, HtmlWidgetFilter());
+   }
+
+   if (options().programMode() != kSessionProgramModeServer)
+   {
+       pResponse->setNoCacheHeaders();
    }
 
    return Success();
@@ -387,6 +422,15 @@ void enqueueChunkOutput(const std::string& docId,
       const std::string& chunkId, const std::string& nbCtxId, unsigned ordinal, 
       ChunkOutputType outputType, const FilePath& path)
 {
+   enqueueChunkOutput(docId, chunkId, nbCtxId, ordinal, outputType, path, 
+         json::Value());
+}
+
+void enqueueChunkOutput(const std::string& docId,
+      const std::string& chunkId, const std::string& nbCtxId, unsigned ordinal, 
+      ChunkOutputType outputType, const FilePath& path, 
+      const core::json::Value& metadata)
+{
    json::Object output;
    Error error = fillOutputObject(docId, chunkId, nbCtxId, ordinal, outputType, 
          path, &output);
@@ -395,6 +439,7 @@ void enqueueChunkOutput(const std::string& docId,
       LOG_ERROR(error);
       return;
    }
+   output[kChunkOutputMetadata] = metadata;
 
    json::Object result;
    result[kChunkId]         = chunkId;
@@ -410,19 +455,19 @@ Error enqueueChunkOutput(
       const std::string& chunkId, const std::string& nbCtxId,
       const std::string& requestId)
 {
-   FilePath outputPath = chunkOutputPath(docPath, docId, chunkId, nbCtxId,
+   FilePath outputDir = chunkOutputPath(docPath, docId, chunkId, nbCtxId,
          ContextSaved);
 
-   std::string ctxId(outputPath.parent().filename());
+   std::string ctxId(outputDir.parent().filename());
    std::vector<FilePath> outputPaths;
    json::Array outputs;
 
    // if there's an output directory at the expected location (there may not be
    // for chunks which don't have any output at all), read it into a JSON
    // object for the client
-   if (outputPath.exists())
+   if (outputDir.exists())
    {
-      Error error = outputPath.children(&outputPaths);
+      Error error = outputDir.children(&outputPaths);
       if (error) 
          LOG_ERROR(error);
 
@@ -443,6 +488,19 @@ Error enqueueChunkOutput(
          // extract ordinal from filename
          unsigned ordinal = ::strtol(outputPath.stem().c_str(), NULL, 16);
 
+         // extract metadata if present
+         json::Value meta;
+         FilePath metadata = outputDir.complete(
+               outputPath.stem() + ".metadata");
+         if (metadata.exists())
+         {
+            std::string contents;
+            error = readStringFromFile(metadata, &contents);
+            if (!contents.empty())
+               json::parse(contents, &meta);
+         }
+         output[kChunkOutputMetadata] = meta;
+         
          // format/parse chunk output for client consumption
          error = fillOutputObject(docId, chunkId, ctxId, ordinal, outputType, 
                outputPath, &output);

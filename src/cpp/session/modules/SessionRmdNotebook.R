@@ -98,7 +98,10 @@ assign(".rs.notebookVersion", envir = .rs.toolsEnv(), "1.0")
    chunkData <- lapply(chunkDirs, function(dir) {
       files <- list.files(dir, full.names = TRUE)
       contents <- lapply(files, function(file) {
-         .rs.readFile(file, binary = .rs.endsWith(file, "png"))
+         .rs.readFile(file, binary = .rs.endsWith(file, "png") || 
+                                     .rs.endsWith(file, "jpg") ||
+                                     .rs.endsWith(file, "jpeg") ||
+                                     .rs.endsWith(file, "rdf"))
       })
       names(contents) <- basename(files)
       contents
@@ -150,6 +153,127 @@ assign(".rs.notebookVersion", envir = .rs.toolsEnv(), "1.0")
       engine)
 })
 
+.rs.addFunction("rnb.outputSourcePng", function(fileName,
+                                                fileContents,
+                                                metadata,
+                                                ...)
+{
+   rmarkdown:::html_notebook_output_png(bytes = fileContents,
+                                        meta = metadata)
+})
+
+.rs.addFunction("rnb.outputSourceJpeg", function(fileName,
+                                                 fileContents,
+                                                 metadata,
+                                                 ...)
+{
+   rmarkdown:::html_notebook_output_img(bytes = fileContents,
+                                        meta = metadata,
+                                        format = "jpeg")
+})
+
+.rs.addFunction("rnb.outputSourceConsole", function(fileName,
+                                                    fileContents,
+                                                    context,
+                                                    includeSource,
+                                                    ...)
+{
+   parsed <- .rs.rnb.readConsoleData(fileContents)
+   
+   # exclude source code if requested
+   if (!includeSource)
+      parsed <- parsed[parsed$type != 0, ]
+   
+   # exclude console output if requested
+   if (identical(context$results, "hide"))
+      parsed <- parsed[parsed$type != 1, ]
+   
+   attributes <- list(class = .rs.rnb.engineToCodeClass(context$engine))
+   rendered <- .rs.rnb.renderConsoleData(parsed,
+                                         attributes = attributes,
+                                         context)
+   return(rendered)
+})
+
+.rs.addFunction("rnb.outputSourceHtml", function(fileName,
+                                                 fileContents,
+                                                 rnbData,
+                                                 chunkId,
+                                                 metadata,
+                                                 ...)
+{
+   # if we have a '.json' sidecar file, this is an HTML widget
+   jsonName <- .rs.withChangedExtension(fileName, ".json")
+   jsonPath <- file.path(rnbData$cache_path, chunkId, jsonName)
+   if (file.exists(jsonPath)) {
+      
+      # read and restore 'html_dependency' class (this may not be
+      # preserved in the serialized JSON file)
+      jsonContents <- .rs.fromJSON(.rs.readFile(jsonPath))
+      for (i in seq_along(jsonContents))
+         class(jsonContents[[i]]) <- "html_dependency"
+      
+      # extract body element (this is effectively what the
+      # widget emitted on print in addition to aforementioned
+      # dependency information)
+      bodyEl <- .rs.extractHTMLBodyElement(fileContents)
+      
+      # annotate widget manually and return asis output
+      annotated <- rmarkdown:::html_notebook_annotated_output(
+         bodyEl,
+         "htmlwidget",
+         list(dependencies = jsonContents,
+              metadata     = metadata)
+      )
+      preserved <- htmltools::htmlPreserve(annotated)
+      widget <- knitr::asis_output(preserved)
+      attr(widget, "knit_meta") <- jsonContents
+      return(widget)
+   }
+   
+   # no .json file; just return HTML as-is
+   annotated <- rmarkdown:::html_notebook_annotated_output(
+      fileContents,
+      "html",
+      list(metadata = metadata)
+   )
+   preserved <- htmltools::htmlPreserve(annotated)
+   knitr::asis_output(preserved)
+})
+
+.rs.addFunction("rnb.pagedTableHtml", function(rdfPath)
+{
+   data <- .rs.readDataCapture(rdfPath)
+   
+   paste(
+      "<div data-pagedtable>",
+      "  <script data-pagedtable-source type=\"application/json\">",
+      jsonlite::toJSON(data),
+      "  </script>",
+      "</div>",
+      sep = "\n"
+   )
+})
+
+.rs.addFunction("rnb.outputSourceRdf", function(fileName,
+                                                fileContents,
+                                                metadata,
+                                                rnbData,
+                                                chunkId,
+                                                ...)
+{
+   rdfName <- .rs.withChangedExtension(fileName, ".rdf")
+   rdfPath <- file.path(rnbData$cache_path, chunkId, rdfName)
+   
+   annotated <- rmarkdown:::html_notebook_annotated_output(
+      .rs.rnb.pagedTableHtml(rdfPath),
+      "frame",
+      list(metadata = metadata, rdf = .rs.base64encode(fileContents))
+   )
+   
+   knitr::asis_output(annotated)
+})
+
 .rs.addFunction("rnb.outputSource", function(rnbData) {
    force(rnbData)
    function(code, context, ...) {
@@ -165,6 +289,14 @@ assign(".rs.notebookVersion", envir = .rs.toolsEnv(), "1.0")
       if (is.null(chunkId)) {
          if (includeSource) {
             attributes <- list(class = .rs.rnb.engineToCodeClass(context$engine))
+            
+            # tidy code if necessary
+            if (isTRUE(context$tidy)) {
+               args <- c(list(text = code, output = FALSE), context$tidy.opts)
+               formatted <- do.call(formatR::tidy_source, args)
+               code <- formatted$text.tidy
+            }
+            
             if (!is.null(context$indent)) {
                return(.rs.rnb.renderVerbatimConsoleInput(code, tolower(context$engine), ""))
             } else {
@@ -175,69 +307,40 @@ assign(".rs.notebookVersion", envir = .rs.toolsEnv(), "1.0")
       }
       
       chunkData <- .rs.coalesceCsvOutput(rnbData$chunk_data[[chunkId]])
+      
+      # map file extensions to handlers
+      outputHandlers <- list(
+         "png"  = .rs.rnb.outputSourcePng,
+         "jpg"  = .rs.rnb.outputSourceJpeg,
+         "jpeg" = .rs.rnb.outputSourceJpeg,
+         "csv"  = .rs.rnb.outputSourceConsole,
+         "html" = .rs.rnb.outputSourceHtml,
+         "rdf"  = .rs.rnb.outputSourceRdf
+      )
 
-      outputList <- .rs.enumerate(chunkData, function(key, val) {
+      outputList <- .rs.enumerate(chunkData, function(fileName, fileContents) {
          
-         # png output: create base64 encoded image
-         if (.rs.endsWith(key, ".png")) {
-            return(rmarkdown::html_notebook_output_png(bytes = val))
-         }
+         # read metadata sidecar if present
+         metadata <- NULL
+         metadataName <- .rs.withChangedExtension(fileName, ".metadata")
+         metadataPath <- file.path(rnbData$cache_path, chunkId, metadataName)
+         if (file.exists(metadataPath))
+            metadata <- .rs.fromJSON(.rs.readFile(metadataPath))
          
-         # console output
-         if (.rs.endsWith(key, ".csv")) {
-            parsed <- .rs.rnb.readConsoleData(val)
-            if (!includeSource)
-               parsed <- parsed[parsed$type != 0, ]
-            if (identical(context$results, "hide"))
-               parsed <- parsed[parsed$type != 1, ]
-            attributes <- list(class = .rs.rnb.engineToCodeClass(context$engine))
-            rendered <- .rs.rnb.renderConsoleData(parsed,
-                                                  attributes = attributes,
-                                                  context)
-            return(rendered)
-         }
-         
-         # html widgets
-         if (.rs.endsWith(key, ".html")) {
-            
-            # if we have a '.json' sidecar file, this is an HTML widget
-            jsonName <- .rs.withChangedExtension(key, ".json")
-            jsonPath <- file.path(rnbData$cache_path, chunkId, jsonName)
-            if (file.exists(jsonPath)) {
-               jsonContents <- .rs.fromJSON(.rs.readFile(jsonPath))
-               for (i in seq_along(jsonContents))
-                  class(jsonContents[[i]]) <- "html_dependency"
-               
-               # extract body element (this is effectively what the
-               # widget emitted on print in addition to aforementioned
-               # dependency information)
-               bodyEl <- .rs.extractHTMLBodyElement(val)
-               
-               # annotate widget manually and return asis output
-               annotated <- rmarkdown:::html_notebook_annotated_output(
-                  bodyEl,
-                  "htmlwidget",
-                  jsonContents
-               )
-               widget <- knitr::asis_output(annotated)
-               attr(widget, "knit_meta") <- jsonContents
-               return(widget)
-            }
-            
-            # no .json file; just return HTML as-is
-            annotated <- rmarkdown:::html_notebook_annotated_output(
-               val,
-               "html"
-            )
-            
-            return(knitr::asis_output(annotated))
-         }
-         
-         # json files handled as pairs to HTML above
-         if (.rs.endsWith(key, "json"))
+         # find and execute handler for extension (return NULL if no handler defined)
+         ext <- tools::file_ext(fileName)
+         handler <- outputHandlers[[ext]]
+         if (!is.function(handler))
             return(NULL)
          
-         return(knitr::asis_output("<!-- unknown-chunk-output -->"))
+         handler(code = code,
+                 context = context,
+                 fileName = fileName,
+                 fileContents = fileContents,
+                 metadata = metadata,
+                 rnbData = rnbData,
+                 chunkId = chunkId,
+                 includeSource = includeSource)
       })
       
       # remove nulls and return
@@ -343,15 +446,24 @@ assign(".rs.notebookVersion", envir = .rs.toolsEnv(), "1.0")
       type <- csvData$type[[range$start]]
       text <- csvData$text[range$start:range$end]
       collapse <- if (type == 0) "\n" else ""
-      pasted <- paste(text, collapse = collapse)
+      code <- paste(text, collapse = collapse)
+      
       if (type == 0) {
+         
+         # tidy code if necessary
+         if (isTRUE(context$tidy)) {
+            args <- c(list(text = code, output = FALSE), context$tidy.opts)
+            formatted <- do.call(formatR::tidy_source, args)
+            code <- paste(formatted$text.tidy, collapse = "\n")
+         }
+         
          if (is.null(context$indent)) {
-            return(rmarkdown::html_notebook_output_code(pasted, attributes = attributes))
+            return(rmarkdown::html_notebook_output_code(code, attributes = attributes))
          } else {
-            return(.rs.rnb.renderVerbatimConsoleInput(pasted, tolower(context$engine), context$indent))
+            return(.rs.rnb.renderVerbatimConsoleInput(code, tolower(context$engine), context$indent))
          }
       } else {
-         return(pasted)
+         return(code)
       }
    })
    
@@ -599,7 +711,8 @@ assign(".rs.notebookVersion", envir = .rs.toolsEnv(), "1.0")
    
    # Plot Handling ----
    plotRange <- list(start = NULL, end = NULL)
-   writePlot <- function(source, range) {
+   plotMeta <- NULL
+   writePlot <- function(source, range, meta) {
       
       # get html plot output
       html <- paste(source[`:`(
@@ -609,14 +722,23 @@ assign(".rs.notebookVersion", envir = .rs.toolsEnv(), "1.0")
       
       # extract base64 encoded content
       scraped <- .rs.scrapeHtmlAttributes(html)
-      pngDataEncoded <- substring(scraped$src, nchar("data:image/png;base64,") + 1)
-      pngData <- .rs.base64decode(pngDataEncoded, binary = TRUE)
+      ext <- if (.rs.startsWith(scraped$src, "data:image/jpeg;"))
+                 "jpeg" else "png"
+      imgDataEncoded <- substring(scraped$src, 
+         nchar(paste("data:image/", ext, ";base64,", sep = "")) + 1)
+      imgData <- .rs.base64decode(imgDataEncoded, binary = TRUE)
       
       # write to file
-      path <- outputPath(cachePath, activeChunkId, activeIndex, "png")
+      path <- outputPath(cachePath, activeChunkId, activeIndex, ext)
       .rs.ensureDirectory(dirname(path))
-      writeBin(pngData, path, useBytes = TRUE)
+      writeBin(imgData, path, useBytes = TRUE)
       
+      # write metadata if present
+      if (!is.null(meta) && !is.null(meta$metadata)) {
+        metaPath <- outputPath(cachePath, activeChunkId, activeIndex, "metadata")
+        cat(.rs.toJSON(meta, unbox = TRUE), file = metaPath, sep = "\n")
+      }
+
       # update state
       activeIndex <<- activeIndex + 1
    }
@@ -624,10 +746,45 @@ assign(".rs.notebookVersion", envir = .rs.toolsEnv(), "1.0")
       if (annotation$state == "begin") {
          writeConsoleData(consoleDataBuilder)
          plotRange$start <<- annotation$row
+         plotMeta        <<- annotation$meta
       } else {
          plotRange$end <<- annotation$row
-         writePlot(nbData$source, plotRange)
+         writePlot(nbData$source, plotRange, plotMeta)
          plotRange <<- list(start = NULL, end = NULL)
+         plotMeta  <<- NULL
+      }
+   }
+
+   # Data frame handling ----
+   frameRange <- list(start = NULL, end = NULL)
+   frameMeta <- NULL
+   writeFrame <- function(source, range, meta) {
+      if (is.null(meta))
+        return(NULL);
+
+      # write out frame metadata
+      if (!is.null(meta$metadata)) {
+        metaPath <- outputPath(cachePath, activeChunkId, activeIndex, "metadata")
+        cat(.rs.toJSON(meta$metadata, unbox = TRUE), file = metaPath, sep = "\n")
+      }
+
+      # write out raw frame data
+      if (!is.null(meta$rdf)) {
+        rdfPath <- outputPath(cachePath, activeChunkId, activeIndex, "rdf")
+        writeBin(object = .rs.base64decode(meta$rdf, binary = TRUE), 
+                 con = rdfPath)
+      }
+   }
+   onFrame <- function(annotation) {
+      if (annotation$state == "begin") {
+         writeConsoleData(consoleDataBuilder)
+         frameRange$start <<- annotation$row
+         frameMeta        <<- annotation$meta
+      } else {
+         frameRange$end <<- annotation$row
+         writeFrame(nbData$source, frameRange, frameMeta)
+         frameRange <<- list(start = NULL, end = NULL)
+         frameMeta  <<- NULL
       }
    }
    
@@ -644,7 +801,13 @@ assign(".rs.notebookVersion", envir = .rs.toolsEnv(), "1.0")
       
       htmlPath <- outputPath(cachePath, activeChunkId, activeIndex, "html")
       cat(htmlOutput, file = htmlPath, sep = "\n")
-      
+
+      # write metadata if present
+      if (!is.null(meta) && !is.null(meta$metadata)) {
+        metaPath <- outputPath(cachePath, activeChunkId, activeIndex, "metadata")
+        cat(.rs.toJSON(meta, unbox = TRUE), file = metaPath, sep = "\n")
+      }
+
       # update state
       activeIndex <<- activeIndex + 1
    }
@@ -727,6 +890,7 @@ assign(".rs.notebookVersion", envir = .rs.toolsEnv(), "1.0")
              "output"     = onOutput(annotation),
              "plot"       = onPlot(annotation),
              "html"       = onHtml(annotation),
+             "frame"      = onFrame(annotation),
              "htmlwidget" = onHtmlWidget(annotation))
       
       lastActiveAnnotation <- annotation
@@ -755,8 +919,28 @@ assign(".rs.notebookVersion", envir = .rs.toolsEnv(), "1.0")
    grepl("^\\s*```{[Rr]\\s+setup[\\s,}]", lines[[1]], perl = TRUE)
 })
 
+.rs.addFunction("setDefaultChunkOptions", function()
+{
+   # cache the current set of chunk options
+   chunkOptions <- knitr::opts_chunk$get()
+   assign(".rs.knitr.chunkOptions", chunkOptions, envir = .rs.toolsEnv())
+   
+   # unset the chunk options (so we know what options
+   # were actually specified in setup chunk later)
+   defaults <- list(error = FALSE)
+   knitr::opts_chunk$restore(defaults)
+})
+
 .rs.addFunction("defaultChunkOptions", function()
 {
-   .rs.scalarListFromList(knitr::opts_chunk$get())
+   # get current set of options
+   defaultOptions <- knitr::opts_chunk$get()
+   
+   # restore the previously cached knitr options
+   chunkOptions <- get(".rs.knitr.chunkOptions", envir = .rs.toolsEnv())
+   knitr::opts_chunk$restore(chunkOptions)
+   
+   # return current set
+   .rs.scalarListFromList(defaultOptions)
 })
 

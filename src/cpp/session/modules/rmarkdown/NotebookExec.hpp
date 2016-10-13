@@ -49,7 +49,8 @@ public:
    // initialize a new execution context
    ChunkExecContext(const std::string& docId, const std::string& chunkId,
          const std::string& nbCtxId, ExecScope execScope, 
-         const ChunkOptions& options, int pixelWidth, int charWidth);
+         const core::FilePath& workingDir, const ChunkOptions& options, 
+         int pixelWidth, int charWidth);
 
    // return execution context from events
    std::string chunkId();
@@ -73,9 +74,11 @@ private:
          const std::string& output);
    void onConsoleText(int type, const std::string& output, bool truncate);
    void onConsolePrompt(const std::string&);
-   void onFileOutput(const core::FilePath& file, const core::FilePath& metadata,
-        ChunkOutputType outputType, unsigned ordinal);
+   void onFileOutput(const core::FilePath& file, const core::FilePath& sidecar,
+        const core::json::Value& metadata, ChunkOutputType outputType, 
+        unsigned ordinal);
    void onError(const core::json::Object& err);
+   bool onCondition(Condition condition, const std::string &message);
    void initializeOutput();
 
    std::string docId_;
@@ -83,6 +86,7 @@ private:
    std::string nbCtxId_;
    std::string pendingInput_;
    core::FilePath outputPath_;
+   core::FilePath workingDir_;
    ChunkOptions options_;
 
    int pixelWidth_;

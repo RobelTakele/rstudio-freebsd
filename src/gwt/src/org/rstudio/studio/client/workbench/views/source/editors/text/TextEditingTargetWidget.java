@@ -64,6 +64,7 @@ import org.rstudio.studio.client.workbench.commands.Commands;
 import org.rstudio.studio.client.workbench.model.Session;
 import org.rstudio.studio.client.workbench.model.SessionUtils;
 import org.rstudio.studio.client.workbench.prefs.model.UIPrefs;
+import org.rstudio.studio.client.workbench.prefs.model.UIPrefsAccessor;
 import org.rstudio.studio.client.workbench.views.edit.ui.EditDialog;
 import org.rstudio.studio.client.workbench.views.source.DocumentOutlineWidget;
 import org.rstudio.studio.client.workbench.views.source.PanelWithToolbars;
@@ -215,8 +216,11 @@ public class TextEditingTargetWidget
    {
       if (target_.getPreferredOutlineWidgetVisibility())
       {
-         double size = target_.getPreferredOutlineWidgetSize();
+         double editorSize = editorPanel_.getOffsetWidth();
+         double widgetSize = target_.getPreferredOutlineWidgetSize();
+         double size = Math.min(editorSize, widgetSize);
          editorPanel_.setWidgetSize(docOutlineWidget_, size);
+         toggleDocOutlineButton_.setLatched(true);
       }
    }
    
@@ -280,7 +284,27 @@ public class TextEditingTargetWidget
       toolbar.addLeftSeparator();
       toolbar.addLeftWidget(commands_.synctexSearch().createToolbarButton());
 
-      toolbar.addRightWidget(insertChunkButton_ = commands_.insertChunk().createToolbarButton());
+      ToolbarPopupMenu insertChunksMenu = new ToolbarPopupMenu();
+      insertChunksMenu.addItem(commands_.insertChunkR().createMenuItem(false));
+      insertChunksMenu.addSeparator();
+
+      if (!BrowseCap.isWindowsDesktop()) {
+         insertChunksMenu.addItem(commands_.insertChunkBash().createMenuItem(false));
+      }
+
+      insertChunksMenu.addItem(commands_.insertChunkPython().createMenuItem(false));
+      insertChunksMenu.addItem(commands_.insertChunkRCPP().createMenuItem(false));
+      insertChunksMenu.addItem(commands_.insertChunkSQL().createMenuItem(false));
+      insertChunksMenu.addItem(commands_.insertChunkStan().createMenuItem(false));
+
+      insertChunkButton_ = new ToolbarButton(
+                       "Insert",
+                       commands_.insertChunk().getImageResource(),
+                       insertChunksMenu,
+                       true);
+
+      toolbar.addRightWidget(insertChunkButton_);
+
       toolbar.addRightWidget(runButton_ = commands_.executeCode().createToolbarButton(false));
       toolbar.addRightSeparator();
       toolbar.addRightWidget(runLastButton_ = commands_.executeLastCode().createToolbarButton(false));
@@ -387,7 +411,7 @@ public class TextEditingTargetWidget
                   // animate to that position for a slightly nicer visual treatment.
                   final double destination = docOutlineWidget_.getOffsetWidth() > 5
                         ? 0
-                        : target_.getPreferredOutlineWidgetSize();
+                        : Math.min(editorPanel_.getOffsetWidth(), target_.getPreferredOutlineWidgetSize());
                   
                   // Update tooltip ('Show'/'Hide' depending on current visibility)
                   String title = toggleDocOutlineButton_.getTitle();
@@ -847,6 +871,21 @@ public class TextEditingTargetWidget
       
       }
       
+      final AppCommand clearKnitrCache = commands_.clearKnitrCache();
+      rmdFormatButton_.addSeparator();
+      ScheduledCommand cmd = new ScheduledCommand()
+      {
+         @Override
+         public void execute()
+         {
+            clearKnitrCache.execute();
+         }
+      };
+      MenuItem item = new MenuItem(clearKnitrCache.getMenuHTML(false),
+                                   true,
+                                   cmd); 
+      rmdFormatButton_.addMenuItem(item, clearKnitrCache.getMenuLabel(false));
+      
       
       showRmdViewerMenuItems(true, canEditFormatOptions, fileType.isRmd(), 
             RmdOutput.TYPE_STATIC);
@@ -1072,6 +1111,25 @@ public class TextEditingTargetWidget
          menu.addSeparator();
       }
       
+      menu.addSeparator();
+
+      String pref = uiPrefs_.showLatexPreviewOnCursorIdle().getValue();
+      menu.addItem(new DocPropMenuItem(
+            "Preview Images and Equations", docUpdateSentinel_, 
+            docUpdateSentinel_.getBoolProperty(
+               TextEditingTargetNotebook.CONTENT_PREVIEW_ENABLED, 
+               pref != UIPrefsAccessor.LATEX_PREVIEW_SHOW_NEVER),
+            TextEditingTargetNotebook.CONTENT_PREVIEW_ENABLED, 
+            DocUpdateSentinel.PROPERTY_TRUE));
+      menu.addItem(new DocPropMenuItem(
+            "Show Previews Inline", docUpdateSentinel_, 
+            docUpdateSentinel_.getBoolProperty(
+               TextEditingTargetNotebook.CONTENT_PREVIEW_INLINE, 
+                 pref == UIPrefsAccessor.LATEX_PREVIEW_SHOW_ALWAYS),
+            TextEditingTargetNotebook.CONTENT_PREVIEW_INLINE, 
+            DocUpdateSentinel.PROPERTY_TRUE));
+      menu.addSeparator();
+      
       if (uiPrefs_.showRmdChunkOutputInline().getValue() &&
           type != RmdOutput.TYPE_SHINY)
       {
@@ -1090,6 +1148,8 @@ public class TextEditingTargetWidget
             menu.addSeparator();
          }
          
+         menu.addSeparator();
+
          menu.addItem(commands_.notebookExpandAllOutput().createMenuItem(false));
          menu.addItem(commands_.notebookCollapseAllOutput().createMenuItem(false));
          menu.addSeparator();
@@ -1097,6 +1157,8 @@ public class TextEditingTargetWidget
          menu.addItem(commands_.notebookClearAllOutput().createMenuItem(false));
          menu.addSeparator();
       }
+      
+      menu.addSeparator();
            
       if (showOutputOptions)
          menu.addItem(commands_.editRmdFormatOptions().createMenuItem(false));

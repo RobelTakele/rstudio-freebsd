@@ -460,7 +460,7 @@ public class DocUpdateSentinel
                         // can use them for change detection the next
                         // time around
                         sourceDoc_.setFoldSpec(foldSpec);
-                        sourceDoc_.setChunkDefs(newChunkDefs);
+                        sourceDoc_.getNotebookDoc().setChunkDefs(newChunkDefs);
                         
                         onSuccessfulUpdate(newContents,
                                            newHash,
@@ -577,6 +577,18 @@ public class DocUpdateSentinel
    {
       JsObject properties = sourceDoc_.getProperties();
       return properties.getString(propertyName);
+   }
+   
+   public boolean getBoolProperty(String propertyName, boolean defaultValue)
+   {
+      if (hasProperty(propertyName))
+         return getProperty(propertyName) == PROPERTY_TRUE;
+      return defaultValue;
+   }
+   
+   public void setBoolProperty(String propertyName, boolean value)
+   {
+      setProperty(propertyName, value ? PROPERTY_TRUE : PROPERTY_FALSE);
    }
    
    public void setProperty(String name,
@@ -756,4 +768,7 @@ public class DocUpdateSentinel
    private HandlerRegistration lastChanceSaveHandlerReg_;
    private final HashMap<String, ValueChangeHandlerManager<String>> 
                  propertyChangeHandlers_;
+   
+   public final static String PROPERTY_TRUE = "true";
+   public final static String PROPERTY_FALSE = "false";
 }

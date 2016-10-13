@@ -36,6 +36,7 @@
 #define kChunkDocWriteTime   "doc_write_time"
 #define kChunkId             "chunk_id"
 #define kChunkDefaultOptions "default_chunk_options"
+#define kChunkWorkingDir     "working_dir"
 
 
 namespace rstudio {
@@ -154,6 +155,8 @@ core::Error setChunkValue(const std::string& docPath,
    core::json::write(defs, oss);
    return core::writeStringToFile(defFile, oss.str());
 }
+
+core::Error initChunkDefs();
 
 } // namespace notebook
 } // namespace rmarkdown

@@ -60,6 +60,13 @@ public class TextEditingTargetChunks
    }
 
    @Override
+   public void onLineWidgetAdded(LineWidget widget)
+   {
+      // no action necessary; this just lets us know that a chunk toolbar has
+      // been attached to the DOM
+   }
+
+   @Override
    public void onLineWidgetRemoved(LineWidget widget)
    {
       // remove the widget from our internal list
@@ -239,7 +246,7 @@ public class TextEditingTargetChunks
    
    // runnable engines within the R Notebook mode
    private static final String RE_RUNNABLE_ENGINES =
-         "r|rscript|rcpp|python|ruby|perl|bash|sh|stan|";
+         "r|rscript|rcpp|python|ruby|perl|bash|sh|stan|sql|";
    
    // renderPass_ need only be unique from one pass through the scope tree to
    // the next; we wrap it at 255 to avoid the possibility of overflow

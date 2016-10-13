@@ -537,7 +537,7 @@ public class UIPrefsAccessor extends Prefs
 
    public PrefValue<Boolean> enableRStudioConnect()
    {
-      return bool("enable_rstudio_connect", false);
+      return bool("enable_rsconnect_publish_ui", true);
    }
    
    public PrefValue<RSConnectAccount> preferredPublishAccount()
@@ -588,6 +588,15 @@ public class UIPrefsAccessor extends Prefs
    public PrefValue<String> shownSectionsInDocumentOutline()
    {
       return string("doc_outline_show", DOC_OUTLINE_SHOW_SECTIONS_ONLY);
+   }
+   
+   public static final String LATEX_PREVIEW_SHOW_NEVER       = "never";
+   public static final String LATEX_PREVIEW_SHOW_INLINE_ONLY = "inline_only";
+   public static final String LATEX_PREVIEW_SHOW_ALWAYS      = "always";
+   
+   public PrefValue<String> showLatexPreviewOnCursorIdle()
+   {
+      return string("latex_preview_on_cursor_idle", LATEX_PREVIEW_SHOW_ALWAYS);
    }
    
    private String getDefaultPdfPreview()

@@ -106,7 +106,9 @@ import org.rstudio.studio.client.rmarkdown.model.RmdOutputInfo;
 import org.rstudio.studio.client.rmarkdown.model.RmdTemplateContent;
 import org.rstudio.studio.client.rmarkdown.model.RmdYamlData;
 import org.rstudio.studio.client.rmarkdown.model.RmdYamlResult;
+import org.rstudio.studio.client.rsconnect.RSConnect;
 import org.rstudio.studio.client.rsconnect.model.RSConnectAccount;
+import org.rstudio.studio.client.rsconnect.model.RSConnectAppName;
 import org.rstudio.studio.client.rsconnect.model.RSConnectApplicationInfo;
 import org.rstudio.studio.client.rsconnect.model.RSConnectAuthUser;
 import org.rstudio.studio.client.rsconnect.model.RSConnectDeploymentFiles;
@@ -740,11 +742,13 @@ public class RemoteServer implements Server
    
    public void getArgs(String name,
                        String source,
+                       String helpHandler,
                        ServerRequestCallback<String> requestCallback)
    {
       JSONArray params = new JSONArray();
       params.set(0, new JSONString(name));
       params.set(1, new JSONString(source));
+      params.set(2,  new JSONString(StringUtil.notNull(helpHandler)));
       sendRequest(
             RPC_SCOPE,
             GET_ARGS,
@@ -1002,6 +1006,29 @@ public class RemoteServer implements Server
       sendRequest(RPC_SCOPE, GET_HELP, params, requestCallback);
    }
    
+   public void getCustomHelp(String helpHandler,
+                             String topic, 
+                             String source,
+                             ServerRequestCallback<HelpInfo.Custom> requestCallback)
+   {
+      JSONArray params = new JSONArray();
+      params.set(0, new JSONString(helpHandler));
+      params.set(1, new JSONString(topic));
+      params.set(2, new JSONString(source));
+      sendRequest(RPC_SCOPE, GET_CUSTOM_HELP, params, requestCallback);
+   }
+   
+   public void getCustomParameterHelp(String helpHandler,
+                                      String source,
+                                      ServerRequestCallback<HelpInfo.Custom> requestCallback)
+   {
+      JSONArray params = new JSONArray();
+      params.set(0, new JSONString(helpHandler));
+      params.set(1, new JSONString(source));
+      sendRequest(RPC_SCOPE, GET_CUSTOM_PARAMETER_HELP, params, requestCallback);
+   }
+
+   
    public void showHelpTopic(String what, String from, int type)
    {
       JSONArray params = new JSONArray() ;
@@ -1015,6 +1042,20 @@ public class RemoteServer implements Server
                   SHOW_HELP_TOPIC,
                   params,
                   null) ;
+   }
+   
+   public void showCustomHelpTopic(String helpHandler, 
+                                   String topic, 
+                                   String source)
+   {
+      JSONArray params = new JSONArray();
+      params.set(0, new JSONString(helpHandler));
+      params.set(1, new JSONString(topic));
+      params.set(2, new JSONString(source));
+      sendRequest(RPC_SCOPE, 
+                  SHOW_CUSTOM_HELP_TOPIC, 
+                  params, 
+                  null);
    }
    
    public void search(String query, 
@@ -3918,7 +3959,7 @@ public class RemoteServer implements Server
    @Override
    public void publishContent(
          RSConnectPublishSource source, String account, 
-         String server, String appName, 
+         String server, String appName, String appTitle,
          RSConnectPublishSettings settings,
          ServerRequestCallback<Boolean> requestCallback)
    {
@@ -3927,17 +3968,21 @@ public class RemoteServer implements Server
       params.set(1, JSONUtils.toJSONStringArray(settings.getDeployFiles()));
       params.set(2, new JSONString(source.isDocument() ||
             source.isSingleFileShiny() ? source.getDeployFileName() : ""));
-      params.set(3, new JSONString(source.isDocument() && source.getSourceFile() != null ? 
-            source.getSourceFile() : ""));
+      params.set(3, new JSONString(
+            source.isDocument() && 
+            source.getSourceFile() != null && 
+            source.getContentCategory() != RSConnect.CONTENT_CATEGORY_SITE ?
+               source.getSourceFile() : ""));
       params.set(4, new JSONString(account));
       params.set(5, new JSONString(server));
       params.set(6, new JSONString(appName));
-      params.set(7, new JSONString(source.getContentCategory() == null ? "" :
+      params.set(7, new JSONString(appTitle == null ? "": appTitle));
+      params.set(8, new JSONString(source.getContentCategory() == null ? "" :
             source.getContentCategory()));
-      params.set(8, JSONUtils.toJSONStringArray(settings.getAdditionalFiles()));
-      params.set(9, JSONUtils.toJSONStringArray(settings.getIgnoredFiles()));
-      params.set(10, JSONBoolean.getInstance(settings.getAsMultiple()));
-      params.set(11, JSONBoolean.getInstance(settings.getAsStatic()));
+      params.set(9, JSONUtils.toJSONStringArray(settings.getAdditionalFiles()));
+      params.set(10, JSONUtils.toJSONStringArray(settings.getIgnoredFiles()));
+      params.set(11, JSONBoolean.getInstance(settings.getAsMultiple()));
+      params.set(12, JSONBoolean.getInstance(settings.getAsStatic()));
       sendRequest(RPC_SCOPE,
             RSCONNECT_PUBLISH,
             params,
@@ -4058,6 +4103,18 @@ public class RemoteServer implements Server
             requestCallback);
    }
    
+   @Override
+   public void generateAppName(String title, String appPath, String accountName,
+         ServerRequestCallback<RSConnectAppName> resultCallback)
+   {
+      JSONArray params = new JSONArray();
+      params.set(0, new JSONString(title));
+      params.set(1, new JSONString(StringUtil.isNullOrEmpty(appPath) ? 
+            "" : appPath));
+      params.set(2, new JSONString(accountName));
+      sendRequest(RPC_SCOPE, "generate_app_name", params, resultCallback);
+   }
+
    @Override
    public void getEditPublishedDocs(String appPath,
          ServerRequestCallback<JsArrayString> resultCallback)
@@ -4209,7 +4266,7 @@ public class RemoteServer implements Server
    
    @Override
    public void refreshChunkOutput(String docPath, String docId, 
-         String contextId, String requestId, 
+         String contextId, String requestId, String chunkId,
          ServerRequestCallback<NotebookDocQueue> requestCallback)
    {
       JSONArray params = new JSONArray();
@@ -4217,6 +4274,7 @@ public class RemoteServer implements Server
       params.set(1, new JSONString(docId));
       params.set(2, new JSONString(contextId));
       params.set(3, new JSONString(requestId));
+      params.set(4, new JSONString(chunkId));
       sendRequest(RPC_SCOPE,
             "refresh_chunk_output",
             params,
@@ -4257,13 +4315,36 @@ public class RemoteServer implements Server
 
    @Override
    public void replayNotebookPlots(String docId, String initialChunkId,
-         int pixelWidth, ServerRequestCallback<Boolean> requestCallback)
+         int pixelWidth, int pixelHeight, ServerRequestCallback<String> requestCallback)
    {
       JSONArray params = new JSONArray();
       params.set(0, new JSONString(docId));
       params.set(1, new JSONString(initialChunkId));
       params.set(2, new JSONNumber(pixelWidth));
+      params.set(3, new JSONNumber(pixelHeight));
       sendRequest(RPC_SCOPE, "replay_notebook_plots", params, requestCallback);
+   }
+
+   @Override
+   public void replayNotebookChunkPlots(String docId, String chunkId,
+         int pixelWidth, int pixelHeight, ServerRequestCallback<String> requestCallback)
+   {
+      JSONArray params = new JSONArray();
+      params.set(0, new JSONString(docId));
+      params.set(1, new JSONString(chunkId));
+      params.set(2, new JSONNumber(pixelWidth));
+      params.set(3, new JSONNumber(pixelHeight));
+      sendRequest(RPC_SCOPE, "replay_notebook_chunk_plots", params, requestCallback);
+   }
+
+   @Override
+   public void cleanReplayNotebookChunkPlots(String docId, String chunkId,
+         ServerRequestCallback<Void> requestCallback)
+   {
+      JSONArray params = new JSONArray();
+      params.set(0, new JSONString(docId));
+      params.set(1, new JSONString(chunkId));
+      sendRequest(RPC_SCOPE, "clean_replay_notebook_chunk_plots", params, requestCallback);
    }
    
    @Override
@@ -4304,7 +4385,7 @@ public class RemoteServer implements Server
       sendRequest(RPC_SCOPE, "update_notebook_exec_queue", params, 
             requestCallback);
    }
-
+   
    @Override
    public void interruptChunk(String docId,
                               String chunkId,
@@ -4762,6 +4843,13 @@ public class RemoteServer implements Server
                   new ConsoleProcessCallbackAdapter(callback));
    }
 
+   @Override
+   public void defaultSqlConnectionName(ServerRequestCallback<String> requestCallback)
+   {
+      JSONArray params = new JSONArray();
+      sendRequest(RPC_SCOPE, SQL_CHUNK_DEFAULT_CONNECTION, params, requestCallback);
+   }
+
    private String clientId_;
    private String clientVersion_ = "";
    private boolean listeningForEvents_;
@@ -4853,6 +4941,9 @@ public class RemoteServer implements Server
    private static final String GET_HELP = "get_help";
    private static final String SHOW_HELP_TOPIC = "show_help_topic" ;
    private static final String SEARCH = "search" ;
+   private static final String GET_CUSTOM_HELP = "get_custom_help";
+   private static final String GET_CUSTOM_PARAMETER_HELP = "get_custom_parameter_help";
+   private static final String SHOW_CUSTOM_HELP_TOPIC = "show_custom_help_topic" ;
 
    private static final String STAT = "stat";
    private static final String IS_TEXT_FILE = "is_text_file";
@@ -5134,4 +5225,6 @@ public class RemoteServer implements Server
    private static final String CONNECTION_PREVIEW_TABLE = "connection_preview_table";
    private static final String GET_NEW_SPARK_CONNECTION_CONTEXT = "get_new_spark_connection_context";
    private static final String INSTALL_SPARK = "install_spark";
+
+   private static final String SQL_CHUNK_DEFAULT_CONNECTION = "default_sql_connection_name";
 }

@@ -265,6 +265,23 @@ public class AceEditor implements DocDisplay,
          }
       });
    }
+   
+   public static final native AceEditor getEditor(Element el)
+   /*-{
+      for (; el != null; el = el.parentElement)
+         if (el.$RStudioAceEditor != null)
+            return el.$RStudioAceEditor;
+   }-*/;
+   
+   private static final native void attachToWidget(Element el, AceEditor editor)
+   /*-{
+      el.$RStudioAceEditor = editor;
+   }-*/;
+   
+   private static final native void detachFromWidget(Element el)
+   /*-{
+      el.$RStudioAceEditor = null;
+   }-*/;
 
    @Inject
    public AceEditor()
@@ -272,8 +289,7 @@ public class AceEditor implements DocDisplay,
       widget_ = new AceEditorWidget();
       snippets_ = new SnippetHelper(this);
       editorEventListeners_ = new ArrayList<HandlerRegistration>();
-      ElementIds.assignElementId(widget_.getElement(),
-                                 ElementIds.SOURCE_TEXT_EDITOR);
+      ElementIds.assignElementId(widget_.getElement(), ElementIds.SOURCE_TEXT_EDITOR);
 
       completionManager_ = new NullCompletionManager();
       diagnosticsBgPopup_ = new DiagnosticsBackgroundPopup(this);
@@ -282,6 +298,7 @@ public class AceEditor implements DocDisplay,
       
       backgroundTokenizer_ = new BackgroundTokenizer(this);
       vim_ = new Vim(this);
+      bgLinkHighlighter_ = new AceEditorBackgroundLinkHighlighter(this);
       
       widget_.addValueChangeHandler(new ValueChangeHandler<Void>()
       {
@@ -329,7 +346,7 @@ public class AceEditor implements DocDisplay,
       addAceClickHandler(new AceClickEvent.Handler()
       {
          @Override
-         public void onClick(AceClickEvent event)
+         public void onAceClick(AceClickEvent event)
          {
             fixVerticalOffsetBug();
             if (DomUtils.isCommandClick(event.getNativeEvent()))
@@ -338,11 +355,8 @@ public class AceEditor implements DocDisplay,
                event.preventDefault();
                event.stopPropagation();
 
-               // set the cursor position
-               setCursorPosition(event.getDocumentPosition());
-
                // go to function definition
-               fireEvent(new CommandClickEvent());
+               fireEvent(new CommandClickEvent(event));
             }
             else
             {
@@ -381,6 +395,11 @@ public class AceEditor implements DocDisplay,
          @Override
          public void onAttachOrDetach(AttachEvent event)
          {
+            if (event.isAttached())
+               attachToWidget(widget_.getElement(), AceEditor.this);
+            else
+               detachFromWidget(widget_.getElement());
+            
             if (!event.isAttached())
             {
                for (HandlerRegistration handler : editorEventListeners_)
@@ -475,10 +494,25 @@ public class AceEditor implements DocDisplay,
          return;
       
       Position cursorPos = getCursorPosition();
-      int lineLength = getLine(cursorPos.getRow()).length();
-      setSelectionRange(Range.fromPoints(
-            cursorPos,
-            Position.create(cursorPos.getRow(), lineLength)));
+      String line = getLine(cursorPos.getRow());
+      int lineLength = line.length();
+      
+      // if the cursor is already at the end of the line
+      // (allowing for trailing whitespace), then eat the
+      // newline as well; otherwise, just eat to end of line
+      String rest = line.substring(cursorPos.getColumn());
+      if (rest.trim().isEmpty())
+      {
+         setSelectionRange(Range.fromPoints(
+               cursorPos,
+               Position.create(cursorPos.getRow() + 1, 0)));
+      }
+      else
+      {
+         setSelectionRange(Range.fromPoints(
+               cursorPos,
+               Position.create(cursorPos.getRow(), lineLength)));
+      }
       
       if (Desktop.isDesktop())
          commands_.cutDummy().execute();
@@ -1365,6 +1399,47 @@ public class AceEditor implements DocDisplay,
    }
    
    @Override
+   public Rectangle getRangeBounds(Range range)
+   {
+      range = Range.toOrientedRange(range);
+      
+      Renderer renderer = widget_.getEditor().getRenderer();
+      if (!range.isMultiLine())
+      {
+         ScreenCoordinates start = documentPositionToScreenCoordinates(range.getStart());
+         ScreenCoordinates end   = documentPositionToScreenCoordinates(range.getEnd());
+         
+         int width  = (end.getPageX() - start.getPageX()) + (int) renderer.getCharacterWidth();
+         int height = (end.getPageY() - start.getPageY()) + (int) renderer.getLineHeight();
+         
+         return new Rectangle(start.getPageX(), start.getPageY(), width, height);
+      }
+      
+      Position startPos = range.getStart();
+      Position endPos   = range.getEnd();
+      int startRow = startPos.getRow();
+      int endRow   = endPos.getRow();
+      
+      // figure out top left coordinates
+      ScreenCoordinates topLeft = documentPositionToScreenCoordinates(Position.create(startRow, 0));
+      
+      // figure out bottom right coordinates (need to walk rows to figure out longest line)
+      ScreenCoordinates bottomRight = documentPositionToScreenCoordinates(Position.create(endPos));
+      for (int row = startRow; row <= endRow; row++)
+      {
+         Position rowEndPos = Position.create(row, getLength(row));
+         ScreenCoordinates coords = documentPositionToScreenCoordinates(rowEndPos);
+         if (coords.getPageX() > bottomRight.getPageX())
+            bottomRight = ScreenCoordinates.create(coords.getPageX(), bottomRight.getPageY());
+      }
+      
+      // construct resulting range
+      int width  = (bottomRight.getPageX() - topLeft.getPageX()) + (int) renderer.getCharacterWidth();
+      int height = (bottomRight.getPageY() - topLeft.getPageY()) + (int) renderer.getLineHeight();
+      return new Rectangle(topLeft.getPageX(), topLeft.getPageY(), width, height);
+   }
+   
+   @Override
    public Rectangle getPositionBounds(InputEditorPosition position)
    {
       Position pos = ((AceInputEditorPosition) position).getValue();
@@ -2026,6 +2101,11 @@ public class AceEditor implements DocDisplay,
    {
       return handlers_.addHandler(SaveFileEvent.TYPE, handler);
    }
+   
+   public HandlerRegistration addAttachHandler(AttachEvent.Handler handler)
+   {
+      return widget_.addAttachHandler(handler);
+   }
 
    public HandlerRegistration addEditorFocusHandler(FocusHandler handler)
    {
@@ -2668,6 +2748,21 @@ public class AceEditor implements DocDisplay,
    {
       return widget_.addBlurHandler(handler);
    }
+   
+   public HandlerRegistration addMouseDownHandler(MouseDownHandler handler)
+   {
+      return widget_.addMouseDownHandler(handler);
+   }
+   
+   public HandlerRegistration addMouseMoveHandler(MouseMoveHandler handler)
+   {
+      return widget_.addMouseMoveHandler(handler);
+   }
+   
+   public HandlerRegistration addMouseUpHandler(MouseUpHandler handler)
+   {
+      return widget_.addMouseUpHandler(handler);
+   }
 
    public HandlerRegistration addClickHandler(ClickHandler handler)
    {
@@ -2688,10 +2783,15 @@ public class AceEditor implements DocDisplay,
    {
       return widget_.addKeyDownHandler(handler);
    }
-
+   
    public HandlerRegistration addKeyPressHandler(KeyPressHandler handler)
    {
       return widget_.addKeyPressHandler(handler);
+   }
+   
+   public HandlerRegistration addKeyUpHandler(KeyUpHandler handler)
+   {
+      return widget_.addKeyUpHandler(handler);
    }
 
    public void autoHeight()
@@ -3208,8 +3308,7 @@ public class AceEditor implements DocDisplay,
       infoBar_.show();
    }
 
-   public Range createAnchoredRange(Position start,
-                                    Position end)
+   public AnchoredRange createAnchoredRange(Position start, Position end)
    {
       return widget_.getEditor().getSession().createAnchoredRange(start, end);
    }
@@ -3243,6 +3342,11 @@ public class AceEditor implements DocDisplay,
    {
       widget_.getEditor().blockOutdent();
    }
+   
+   public ScreenCoordinates documentPositionToScreenCoordinates(Position position)
+   {
+      return widget_.getEditor().getRenderer().textToScreenCoordinates(position);
+   }
 
    public Position screenCoordinatesToDocumentPosition(int pageX, int pageY)
    {
@@ -3254,13 +3358,49 @@ public class AceEditor implements DocDisplay,
       return widget_.getEditor().isRowFullyVisible(position.getRow());
    }
    
-   public TokenIterator getTokenIterator(Position pos)
+   @Override
+   public void tokenizeDocument()
    {
-      if (pos == null)
-         return TokenIterator.create(getSession());
-      else
-         return TokenIterator.create(getSession(),
-               pos.getRow(), pos.getColumn());
+      widget_.getEditor().tokenizeDocument();
+   }
+   
+   @Override
+   public void retokenizeDocument()
+   {
+      widget_.getEditor().retokenizeDocument();
+   }
+   
+   @Override
+   public Token getTokenAt(int row, int column)
+   {
+      return getSession().getTokenAt(row, column);
+   }
+   
+   @Override
+   public Token getTokenAt(Position position)
+   {
+      return getSession().getTokenAt(position);
+   }
+   
+   @Override
+   public JsArray<Token> getTokens(int row)
+   {
+      return getSession().getTokens(row);
+   }
+   
+   @Override
+   public TokenIterator createTokenIterator()
+   {
+      return createTokenIterator(null);
+   }
+   
+   @Override
+   public TokenIterator createTokenIterator(Position position)
+   {
+      TokenIterator it = TokenIterator.create(getSession());
+      if (position != null)
+         it.moveToPosition(position);
+      return it;
    }
 
    @Override
@@ -3326,9 +3466,16 @@ public class AceEditor implements DocDisplay,
    }-*/;
 
    @Override
-   public void addLineWidget(LineWidget widget)
+   public void addLineWidget(final LineWidget widget)
    {
+      // position the element far offscreen if it's above the currently
+      // visible row; Ace does not position line widgets above the viewport
+      // until the document is scrolled there
+      if (widget.getRow() < getFirstVisibleRow())
+         widget.getElement().getStyle().setTop(-10000, Unit.PX);
+      
       widget_.getLineWidgetManager().addLineWidget(widget);
+      adjustScrollForLineWidget(widget);
       fireLineWidgetsChanged();
    }
    
@@ -3349,7 +3496,13 @@ public class AceEditor implements DocDisplay,
    @Override
    public void onLineWidgetChanged(LineWidget widget)
    {
+      // if the widget is above the viewport, this size change might push it
+      // into visibility, so push it offscreen first
+      if (widget.getRow() + 1 < getFirstVisibleRow())
+         widget.getElement().getStyle().setTop(-10000, Unit.PX);
+
       widget_.getLineWidgetManager().onWidgetChanged(widget);
+      adjustScrollForLineWidget(widget);
       fireLineWidgetsChanged();
    }
    
@@ -3363,6 +3516,36 @@ public class AceEditor implements DocDisplay,
    public LineWidget getLineWidgetForRow(int row)
    {
       return widget_.getLineWidgetManager().getLineWidgetForRow(row);
+   }
+   
+
+   @Override
+   public boolean hasLineWidgets()
+   {
+      return widget_.getLineWidgetManager().hasLineWidgets();
+   }
+
+   private void adjustScrollForLineWidget(LineWidget w)
+   {
+      // the cursor is above the line widget, so the line widget is going
+      // to change the cursor position; adjust the scroll position to hold 
+      // the cursor in place
+      if (getCursorPosition().getRow() > w.getRow())
+      {
+         int delta = w.getElement().getOffsetHeight() - w.getRenderedHeight();
+         
+         // skip if no change to report
+         if (delta == 0)
+            return;
+
+         // we adjust the scrolltop on the session since it knows the
+         // currently queued scroll position; the renderer only knows the 
+         // actual scroll position, which may not reflect unrendered changes
+         getSession().setScrollTop(getSession().getScrollTop() + delta);
+      }
+      
+      // mark the current height as rendered
+      w.setRenderedHeight(w.getElement().getOffsetHeight());
    }
    
    @Override
@@ -3539,6 +3722,9 @@ public class AceEditor implements DocDisplay,
    private boolean showChunkOutputInline_ = false;
    private BackgroundTokenizer backgroundTokenizer_;
    private final Vim vim_;
+   private final AceEditorBackgroundLinkHighlighter bgLinkHighlighter_;
+   private int scrollTarget_ = 0;
+   private HandlerRegistration scrollCompleteReg_;
    
    private static final ExternalJavaScriptLoader getLoader(StaticDataResource release)
    {
