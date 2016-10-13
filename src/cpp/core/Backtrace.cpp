@@ -15,7 +15,8 @@
 
 #include <core/Backtrace.hpp>
 
-#ifndef _WIN32
+// weeks: this is just for FreeBSD < 10. FreeBSD >= 10 includes backtrace().
+#if !defined(_WIN32) && !defined(__FreeBSD__)
 # include <core/Algorithm.hpp>
 # include <iostream>
 # include <boost/regex.hpp>
@@ -31,7 +32,7 @@ std::string demangle(const std::string& name)
 {
    std::string result = name;
    
-#ifndef _WIN32
+#if !defined(_WIN32) && !defined(__FreeBSD__)
    int status = -1;
    char* demangled = ::abi::__cxa_demangle(name.c_str(), NULL, NULL, &status);
    if (status == 0) {
@@ -45,7 +46,7 @@ std::string demangle(const std::string& name)
 
 void printBacktrace(std::ostream& os)
 {
-#ifndef _WIN32
+#if !defined(_WIN32) && !defined(__FreeBSD__)
    
    os << "Backtrace (most recent calls first):" << std::endl << std::endl;
    
