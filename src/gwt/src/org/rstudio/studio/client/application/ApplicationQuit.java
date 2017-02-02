@@ -464,18 +464,31 @@ public class ApplicationQuit implements SaveActionChangedHandler,
    @Override
    public void onSuspendAndRestart(final SuspendAndRestartEvent event)
    {
+      // Ignore nested restarts once restart starts
+      if (suspendingAndRestarting_) return;
+      
       // set restart pending for desktop
       setPendinqQuit(DesktopFrame.PENDING_QUIT_AND_RESTART);
       
-      TimedProgressIndicator progress = new TimedProgressIndicator(
+      final TimedProgressIndicator progress = new TimedProgressIndicator(
             globalDisplay_.getProgressIndicator("Error"));
       progress.onTimedProgress("Restarting R", 1000);
+      
+      final Operation onRestartComplete = new Operation() {
+         @Override
+         public void execute()
+         {
+            suspendingAndRestarting_ = false;
+            progress.onCompleted();
+         }
+      };
 
       // perform the suspend and restart
+      suspendingAndRestarting_ = true;
       eventBus_.fireEvent(
                   new RestartStatusEvent(RestartStatusEvent.RESTART_INITIATED));
       server_.suspendForRestart(event.getSuspendOptions(),
-                                new VoidServerRequestCallback(progress) {
+                                new VoidServerRequestCallback() {
          @Override 
          protected void onSuccess()
          { 
@@ -485,6 +498,8 @@ public class ApplicationQuit implements SaveActionChangedHandler,
                @Override
                public void execute()
                {
+                  onRestartComplete.execute();
+                  
                   eventBus_.fireEvent(new RestartStatusEvent(
                                     RestartStatusEvent.RESTART_COMPLETED));
                   
@@ -495,6 +510,8 @@ public class ApplicationQuit implements SaveActionChangedHandler,
          @Override
          protected void onFailure()
          {
+            onRestartComplete.execute();
+            
             eventBus_.fireEvent(
                new RestartStatusEvent(RestartStatusEvent.RESTART_COMPLETED));
             
@@ -773,4 +790,6 @@ public class ApplicationQuit implements SaveActionChangedHandler,
    private final SourceShim sourceShim_;
    
    private SaveAction saveAction_ = SaveAction.saveAsk();
+
+   private boolean suspendingAndRestarting_ = false;
 }

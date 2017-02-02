@@ -274,6 +274,18 @@ public:
       }
    }
 
+   std::string getRuntime(const FilePath& targetFile)
+   {
+      std::string runtime;
+      Error error = r::exec::RFunction(
+         ".rs.getRmdRuntime",
+         string_utils::utf8ToSystem(targetFile.absolutePath())).call(
+                                                               &runtime);
+      if (error)
+         LOG_ERROR(error);
+      return runtime;
+   }
+
 private:
    RenderRmd(const FilePath& targetFile, int sourceLine, bool sourceNavigation,
              bool asShiny) :
@@ -367,45 +379,8 @@ private:
          extraParams += "dir = '" + string_utils::utf8ToSystem(
                      targetFile_.parent().absolutePath()) + "', ";
 
-         std::string rsIFramePath("rsiframe.js");
-
-#ifndef __APPLE__
-         // on Qt platforms, rsiframe.js needs to have its origin specified
-         // explicitly; Qt 5.4 disables document.referrer
-         if (session::options().programMode() == kSessionProgramModeDesktop)
-         {
-             rsIFramePath += "?origin=" +
-                     session::options().wwwAddress() + ":" +
-                     session::options().wwwPort();
-         }
-#endif
-
-         std::string extraDependencies("htmltools::htmlDependency("
-                     "name = 'rstudio-iframe', "
-                     "version = '0.1', "
-                     "src = '" +
-                         session::options().rResourcesPath().absolutePath() +
-                     "', "
-                     "script = '" + rsIFramePath + "')");
-
-         std::string outputOptions("extra_dependencies = list(" + 
-               extraDependencies + ")");
-
-#ifndef __APPLE__
-         // on Qt platforms, use local MathJax: it contains a patch that allows
-         // math to render immediately (otherwise it fails to load due to 
-         // timeouts waiting for font variants to load)
-         if (session::options().programMode() == kSessionProgramModeDesktop) 
-         {
-            outputOptions += ", mathjax = 'local'";
-         }
-#endif
-
-         // inject the RStudio IFrame helper script (for syncing scroll position
-         // and anchor information cross-domain), and wrap the other render
-         // options discovered so far in the render_args parameter
-         renderOptions = "render_args = list(" + renderOptions + ", "
-               "output_options = list(" + outputOptions + "))";
+         // provide render_args in render_args parameter
+         renderOptions = "render_args = list(" + renderOptions + ")";
       }
 
       // render command
@@ -500,6 +475,9 @@ private:
                getPresentationDetails(sourceLine_, &startedJson);
 
                startedJson["url"] = url + targetFile_.filename();
+
+               startedJson["runtime"] = getRuntime(targetFile_);
+
                module_context::enqueClientEvent(ClientEvent(
                            client_events::kRmdShinyDocStarted,
                            startedJson));
@@ -577,6 +555,8 @@ private:
 
       resultJson["is_shiny_document"] = isShiny_;
       resultJson["has_shiny_content"] = hasShinyContent_;
+
+      resultJson["runtime"] = getRuntime(targetFile_);
 
       json::Value websiteDir;
       if (outputFile_.extensionLowerCase() == ".html")

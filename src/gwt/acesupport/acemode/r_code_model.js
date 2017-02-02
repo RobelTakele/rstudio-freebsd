@@ -882,11 +882,9 @@ var RCodeModel = function(session, tokenizer,
             if (label.length === 0)
                label = "(Untitled)";
 
-            // Trim off Markdown IDs from the label. Assume that
-            // anything following a '{' is a label.
-            var braceIdx = label.indexOf("{");
-            if (braceIdx !== -1)
-               label = label.substr(0, braceIdx).trim();
+            // Trim off Markdown IDs from the label.
+            var reBraces = /{.*}\s*$/;
+            label = label.replace(reBraces, "");
 
             this.$scopes.onMarkdownHead(label, labelStartPos, labelEndPos, depth);
          }
@@ -1300,7 +1298,7 @@ var RCodeModel = function(session, tokenizer,
              // Walk over matching braces -- this allows us to
              // e.g. skip function definitions (and hence, any
              // sub-sections within those functions).
-             if (it.fwdToMatchingToken())
+             if (token.value === "{" && it.fwdToMatchingToken())
                 continue;
          }
 

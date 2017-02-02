@@ -228,7 +228,7 @@ public class ChunkOutputUi
    public void onOutputRemoved(ChunkOutputWidget widget)
    {
       RStudioGinjector.INSTANCE.getEventBus().fireEvent(
-              new ChunkChangeEvent(docId_, chunkId_, 0, 
+              new ChunkChangeEvent(docId_, chunkId_, "", 0, 
                                    ChunkChangeEvent.CHANGE_REMOVE));
    }
 
@@ -263,7 +263,8 @@ public class ChunkOutputUi
    public final static int CHUNK_COLLAPSED_HEIGHT = 15;
    public final static int MAX_CHUNK_HEIGHT = 650;
    
-   public final static int MAX_PLOT_WIDTH = 650;
+   public final static int MIN_PLOT_WIDTH = 400;
+   public final static int MAX_PLOT_WIDTH = 700;
    public final static int MAX_HTMLWIDGET_WIDTH = 800;
    
    public final static double OUTPUT_ASPECT = 1.618;

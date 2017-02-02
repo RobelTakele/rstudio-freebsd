@@ -28,9 +28,9 @@ import org.rstudio.core.client.dom.DomUtils;
 import org.rstudio.core.client.layout.FadeOutAnimation;
 import org.rstudio.core.client.widget.Operation;
 import org.rstudio.studio.client.RStudioGinjector;
+import org.rstudio.studio.client.application.events.DeferredInitCompletedEvent;
 import org.rstudio.studio.client.application.events.EventBus;
 import org.rstudio.studio.client.application.events.InterruptStatusEvent;
-import org.rstudio.studio.client.application.events.RestartStatusEvent;
 import org.rstudio.studio.client.common.GlobalDisplay;
 import org.rstudio.studio.client.common.dependencies.DependencyManager;
 import org.rstudio.studio.client.rmarkdown.events.ChunkPlotRefreshFinishedEvent;
@@ -113,7 +113,7 @@ public class TextEditingTargetNotebook
                           ChunkContextChangeEvent.Handler,
                           ResizeHandler,
                           InterruptStatusEvent.Handler,
-                          RestartStatusEvent.Handler,
+                          DeferredInitCompletedEvent.Handler,
                           ScopeTreeReadyEvent.Handler,
                           PinnedLineWidget.Host,
                           SourceDocAddedEvent.Handler,
@@ -145,10 +145,6 @@ public class TextEditingTargetNotebook
       scopeHelper_ = new TextEditingTargetScopeHelper(docDisplay_);
       dependencyManager_ = dependencyManager;
       RStudioGinjector.INSTANCE.injectMembers(this);
-      
-      // initialize the display's default output mode based on 
-      // global and per-document preferences
-      syncOutputMode();
       
       releaseOnDismiss.add(docDisplay_.addEditorFocusHandler(new FocusHandler()
       {
@@ -291,7 +287,7 @@ public class TextEditingTargetNotebook
       releaseOnDismiss_.add(
             events_.addHandler(InterruptStatusEvent.TYPE, this));
       releaseOnDismiss_.add(
-            events_.addHandler(RestartStatusEvent.TYPE, this));
+            events_.addHandler(DeferredInitCompletedEvent.TYPE, this));
       releaseOnDismiss_.add(
             events_.addHandler(SourceDocAddedEvent.TYPE, this));
       releaseOnDismiss_.add(
@@ -453,7 +449,7 @@ public class TextEditingTargetNotebook
       }
 
       events_.fireEvent(new ChunkChangeEvent(docUpdateSentinel_.getId(), 
-            chunkId, 0, ChunkChangeEvent.CHANGE_REMOVE));
+            chunkId, "", 0, ChunkChangeEvent.CHANGE_REMOVE));
    }
    
    public void onNotebookClearAllOutput()
@@ -601,7 +597,8 @@ public class TextEditingTargetNotebook
       if (event.getOutput().isEmpty() && !queue_.isExecuting())
       {
          events_.fireEvent(new ChunkChangeEvent(
-               docUpdateSentinel_.getId(), event.getOutput().getChunkId(), 0, 
+               docUpdateSentinel_.getId(), event.getOutput().getChunkId(), 
+               event.getOutput().getRequestId(), 0, 
                ChunkChangeEvent.CHANGE_REMOVE));
          return;
       }
@@ -776,7 +773,7 @@ public class TextEditingTargetNotebook
                         new ScopeList(docDisplay_))));
             break;
          case ChunkChangeEvent.CHANGE_REMOVE:
-            removeChunk(event.getChunkId());
+            removeChunk(event.getChunkId(), event.getRequestId());
             break;
       }
    }
@@ -915,27 +912,24 @@ public class TextEditingTargetNotebook
    }
 
    @Override
-   public void onRestartStatus(RestartStatusEvent event)
+   public void onDeferredInitCompleted(DeferredInitCompletedEvent event)
    {
-      if (event.getStatus() == RestartStatusEvent.RESTART_COMPLETED)
+      // if we had recorded a run of the setup chunk prior to restart, clear
+      // it
+      if (!StringUtil.isNullOrEmpty(setupCrc32_))
+         writeSetupCrc32("");
+
+      // clean execution state
+      clearChunkExecQueue();
+      cleanCurrentExecChunk();
+
+      // run any queued command
+      if (postRestartCommand_ != null)
       {
-         // if we had recorded a run of the setup chunk prior to restart, clear
-         // it
-         if (!StringUtil.isNullOrEmpty(setupCrc32_))
-            writeSetupCrc32("");
-         
-         // clean execution state
-         clearChunkExecQueue();
-         cleanCurrentExecChunk();
-         
-         // run any queued command
-         if (postRestartCommand_ != null)
-         {
-            if (postRestartCommand_.isEnabled())
-               postRestartCommand_.execute();
-            postRestartCommand_ = null;
-            return;
-         }
+         if (postRestartCommand_.isEnabled())
+            postRestartCommand_.execute();
+         postRestartCommand_ = null;
+         return;
       }
    }
    
@@ -1061,7 +1055,7 @@ public class TextEditingTargetNotebook
              scope.getEnd().getRow() - output.getCurrentRow() > 1)
          {
             events_.fireEvent(new ChunkChangeEvent(
-                  docUpdateSentinel_.getId(), output.getChunkId(), 0, 
+                  docUpdateSentinel_.getId(), output.getChunkId(), "", 0, 
                   ChunkChangeEvent.CHANGE_REMOVE));
          }
       }
@@ -1230,7 +1224,8 @@ public class TextEditingTargetNotebook
       // space outside the element (here, 2 * (10px margin + 1px border)); since
       // we stretch the plot to fit the space it will scale in unpredictable
       // ways if it doesn't fit exactly
-      return Math.min(docDisplay_.getPixelWidth() - 22,
+      return Math.min(Math.max(docDisplay_.getPixelWidth() - 22, 
+                               ChunkOutputUi.MIN_PLOT_WIDTH),
                       ChunkOutputUi.MAX_PLOT_WIDTH);
    }
    
@@ -1251,6 +1246,38 @@ public class TextEditingTargetNotebook
    public void onDismiss()
    {
       closeAllSatelliteChunks();
+   }
+   
+   // set the output mode based on the global pref (or our local 
+   // override of it, if any)
+   public void syncOutputMode()
+   {
+      String outputType = docUpdateSentinel_.getProperty(CHUNK_OUTPUT_TYPE);
+      if (!StringUtil.isNullOrEmpty(outputType) && outputType != "undefined")
+      {
+         // if the document property is set, apply it directly
+         docDisplay_.setShowChunkOutputInline(
+               outputType == CHUNK_OUTPUT_INLINE);
+      }
+      else
+      {
+         // otherwise, use the global preference to set the value
+         docDisplay_.setShowChunkOutputInline(
+            docDisplay_.getModeId() == "mode/rmarkdown" &&
+            RStudioGinjector.INSTANCE.getUIPrefs()
+                                     .showRmdChunkOutputInline().getValue());
+      }
+
+      // watch for scope tree changes if showing output inline
+      if (docDisplay_.showChunkOutputInline() && scopeTreeReg_ == null)
+      {
+         scopeTreeReg_ = docDisplay_.addScopeTreeReadyHandler(this);
+      }
+      else if (!docDisplay_.showChunkOutputInline() && scopeTreeReg_ != null)
+      {
+         scopeTreeReg_.removeHandler();
+         scopeTreeReg_ = null;
+      }
    }
    
    // Private methods --------------------------------------------------------
@@ -1336,7 +1363,7 @@ public class TextEditingTargetNotebook
    // NOTE: this implements chunk removal locally; prefer firing a
    // ChunkChangeEvent if you're removing a chunk so appropriate hooks are
    // invoked elsewhere
-   private void removeChunk(final String chunkId)
+   private void removeChunk(final String chunkId, final String requestId)
    {
       // ignore if this chunk is currently executing
       if (queue_.isChunkExecuting(chunkId))
@@ -1375,8 +1402,9 @@ public class TextEditingTargetNotebook
             output.remove();
             outputs_.remove(chunkId);
 
-            // mark doc dirty if necessary (this is not undoable)
-            setDirtyState();
+            // mark doc dirty if interactive (this is not undoable)
+            if (StringUtil.isNullOrEmpty(requestId))
+               setDirtyState();
          }
       });
       anim.run(400);
@@ -1433,38 +1461,6 @@ public class TextEditingTargetNotebook
             "Remove Output", 
             "Keep Output", 
             false);
-   }
-   
-   // set the output mode based on the global pref (or our local 
-   // override of it, if any)
-   private void syncOutputMode()
-   {
-      String outputType = docUpdateSentinel_.getProperty(CHUNK_OUTPUT_TYPE);
-      if (!StringUtil.isNullOrEmpty(outputType) && outputType != "undefined")
-      {
-         // if the document property is set, apply it directly
-         docDisplay_.setShowChunkOutputInline(
-               outputType == CHUNK_OUTPUT_INLINE);
-      }
-      else
-      {
-         // otherwise, use the global preference to set the value
-         docDisplay_.setShowChunkOutputInline(
-            docDisplay_.getModeId() == "mode/rmarkdown" &&
-            RStudioGinjector.INSTANCE.getUIPrefs()
-                                     .showRmdChunkOutputInline().getValue());
-      }
-
-      // watch for scope tree changes if showing output inline
-      if (docDisplay_.showChunkOutputInline() && scopeTreeReg_ == null)
-      {
-         scopeTreeReg_ = docDisplay_.addScopeTreeReadyHandler(this);
-      }
-      else if (!docDisplay_.showChunkOutputInline() && scopeTreeReg_ != null)
-      {
-         scopeTreeReg_.removeHandler();
-         scopeTreeReg_ = null;
-      }
    }
    
    private void populateChunkDefs(JsArray<ChunkDefinition> defs)

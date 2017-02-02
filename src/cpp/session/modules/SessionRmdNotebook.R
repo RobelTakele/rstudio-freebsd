@@ -21,7 +21,11 @@ assign(".rs.notebookVersion", envir = .rs.toolsEnv(), "1.0")
     return("")
    }
 
-   return(paste(parsed$rmd, collapse = "\n"))
+   # as this string will be eventually written to (and compared with) files
+   # on disk, use native line endings
+   return(paste(parsed$rmd,
+                collapse = ifelse(identical(.Platform$OS.type, "windows"),
+                                  "\r\n", "\n")))
 })
 
 .rs.addFunction("reRmdChunkBegin", function()
@@ -88,20 +92,27 @@ assign(".rs.notebookVersion", envir = .rs.toolsEnv(), "1.0")
    
    # Read the chunk information
    chunkInfoPath <- file.path(cachePath, "chunks.json")
-   chunkInfo <- .rs.fromJSON(.rs.readFile(chunkInfoPath))
+   chunkInfo <- .rs.fromJSON(.rs.readFile(chunkInfoPath, encoding = "UTF-8"))
    names(chunkInfo$chunk_definitions) <-
       unlist(lapply(chunkInfo$chunk_definitions, `[[`, "chunk_id"))
    rnbData[["chunk_info"]] <- chunkInfo
+
+   # Read external chunks (code chunks defined in other files)
+   rnbData[["external_chunks"]] <- chunkInfo$external_chunks
    
    # Read the chunk data
    chunkDirs <- file.path(cachePath, names(chunkInfo$chunk_definitions))
    chunkData <- lapply(chunkDirs, function(dir) {
       files <- list.files(dir, full.names = TRUE)
       contents <- lapply(files, function(file) {
-         .rs.readFile(file, binary = .rs.endsWith(file, "png") || 
-                                     .rs.endsWith(file, "jpg") ||
-                                     .rs.endsWith(file, "jpeg") ||
-                                     .rs.endsWith(file, "rdf"))
+         .rs.readFile(
+            file,
+            encoding = "UTF-8",
+            binary = .rs.endsWith(file, "png")  ||
+                     .rs.endsWith(file, "jpg")  ||
+                     .rs.endsWith(file, "jpeg") ||
+                     .rs.endsWith(file, "rdf")
+         )
       })
       names(contents) <- basename(files)
       contents
@@ -116,7 +127,7 @@ assign(".rs.notebookVersion", envir = .rs.toolsEnv(), "1.0")
    if (file.exists(libDir)) {
       owd <- setwd(libDir)
       libFiles <- list.files(libDir, recursive = TRUE)
-      libData <- lapply(libFiles, .rs.readFile)
+      libData <- lapply(libFiles, .rs.readFile, encoding = "UTF-8")
       names(libData) <- libFiles
       rnbData[["lib"]] <- libData
       setwd(owd)
@@ -178,6 +189,7 @@ assign(".rs.notebookVersion", envir = .rs.toolsEnv(), "1.0")
                                                     includeSource,
                                                     ...)
 {
+   Encoding(fileContents) <- "UTF-8"
    parsed <- .rs.rnb.readConsoleData(fileContents)
    
    # exclude source code if requested
@@ -209,7 +221,7 @@ assign(".rs.notebookVersion", envir = .rs.toolsEnv(), "1.0")
       
       # read and restore 'html_dependency' class (this may not be
       # preserved in the serialized JSON file)
-      jsonContents <- .rs.fromJSON(.rs.readFile(jsonPath))
+      jsonContents <- .rs.fromJSON(.rs.readFile(jsonPath, encoding = "UTF-8"))
       for (i in seq_along(jsonContents))
          class(jsonContents[[i]]) <- "html_dependency"
       
@@ -246,7 +258,7 @@ assign(".rs.notebookVersion", envir = .rs.toolsEnv(), "1.0")
    data <- .rs.readDataCapture(rdfPath)
    
    paste(
-      "<div data-pagedtable>",
+      "<div data-pagedtable=\"false\">",
       "  <script data-pagedtable-source type=\"application/json\">",
       jsonlite::toJSON(data),
       "  </script>",
@@ -284,9 +296,25 @@ assign(".rs.notebookVersion", envir = .rs.toolsEnv(), "1.0")
       # determine whether we include source code (respect chunk options)
       includeSource <- isTRUE(context$echo) && isTRUE(context$include)
       
-      # if we have no chunk outputs, just show source code (respecting
-      # chunk options as appropriate)
-      if (is.null(chunkId)) {
+      if (identical(context$engine, "js") || identical(context$engine, "css")) {
+         # these engines never show code; ensure they're marked for evaluation
+         # and then emit contents literally wrapped in the appropriate tags
+         htmlOutput <- ""
+         if (isTRUE(context$eval)) {
+            if (identical(context$engine, "js")) {
+               htmlOutput <- paste(
+                  c('<script type="text/javascript">', code, '</script>'),
+                    collapse = '\n')
+            } else if (identical(context$engine, "css")) {
+               htmlOutput <- paste(
+                  c('<style type="text/css">', code, '</style>'),
+                    collapse = '\n')
+            }
+         }
+         return(knitr::asis_output(htmlOutput))
+      } else if (is.null(chunkId)) {
+         # if we have no chunk outputs, just show source code (respecting
+         # chunk options as appropriate)
          if (includeSource) {
             attributes <- list(class = .rs.rnb.engineToCodeClass(context$engine))
             
@@ -325,7 +353,7 @@ assign(".rs.notebookVersion", envir = .rs.toolsEnv(), "1.0")
          metadataName <- .rs.withChangedExtension(fileName, ".metadata")
          metadataPath <- file.path(rnbData$cache_path, chunkId, metadataName)
          if (file.exists(metadataPath))
-            metadata <- .rs.fromJSON(.rs.readFile(metadataPath))
+            metadata <- .rs.fromJSON(.rs.readFile(metadataPath, encoding = "UTF-8"))
          
          # find and execute handler for extension (return NULL if no handler defined)
          ext <- tools::file_ext(fileName)
@@ -343,10 +371,22 @@ assign(".rs.notebookVersion", envir = .rs.toolsEnv(), "1.0")
                  includeSource = includeSource)
       })
       
-      # remove nulls and return
-      Filter(Negate(is.null), outputList)
-      
+      # remove nulls
+      filtered <- Filter(Negate(is.null), outputList)
+      lapply(filtered, function(x) {
+         if (!is.list(x)) list(x) else x
+      })
    }
+})
+
+# SessionSourceDatabase.cpp
+.rs.addFunction("getSourceDocumentProperties", function(path, includeContents = FALSE)
+{
+   if (!file.exists(path))
+      return(NULL)
+   
+   path <- normalizePath(path, winslash = "/", mustWork = TRUE)
+   .Call("rs_getDocumentProperties", path, includeContents)
 })
    
 .rs.addFunction("createNotebookFromCacheData", function(rnbData,
@@ -357,14 +397,27 @@ assign(".rs.notebookVersion", envir = .rs.toolsEnv(), "1.0")
    if (is.null(outputFile))
       outputFile <- .rs.withChangedExtension(inputFile, ext = ".nb.html")
 
-   # TODO: pass encoding from frontend
-   encoding <- "UTF-8"
+   # specify default encoding (we'll try to infer + convert to UTF-8
+   # if necessary)
+   encoding <- getOption("encoding")
+   
+   # attempt to get encoding from source database (note: this will only
+   # succeed for files already open in the IDE, but since this operation
+   # is normally called when attempting to preview / create a notebook on
+   # save we generally expect the document to be available)
+   properties <- .rs.getSourceDocumentProperties(inputFile, FALSE)
+   if (!is.null(properties$encoding))
+      encoding <- properties$encoding
    
    # reset the knitr chunk counter (it can be modified as a side effect of
    # parse_params, which is called during notebook execution)
    knitr:::chunk_counter(reset = TRUE)
 
-   # implement output_source
+   # restore external chunks into the knit environment
+   if (!is.null(rnbData$external_chunks)) 
+      knitr:::knit_code$restore(rnbData$external_chunks)
+
+   # set up output_source
    outputOptions <- list(output_source = .rs.rnb.outputSource(rnbData))
    
    # call render with special format hooks
@@ -600,7 +653,7 @@ assign(".rs.notebookVersion", envir = .rs.toolsEnv(), "1.0")
    chunkInfo <- .rs.extractRmdChunkInformation(nbData$rmd)
    
    outputPath <- function(cachePath, chunkId, index, ext) {
-      file.path(cachePath, chunkId, sprintf("%06s.%s", index, ext))
+      file.path(cachePath, chunkId, sprintf("%06i.%s", as.integer(index), ext))
    }
    
    # Text ----
@@ -924,11 +977,21 @@ assign(".rs.notebookVersion", envir = .rs.toolsEnv(), "1.0")
    # cache the current set of chunk options
    chunkOptions <- knitr::opts_chunk$get()
    assign(".rs.knitr.chunkOptions", chunkOptions, envir = .rs.toolsEnv())
+
+   # cache the set of external code
+   knitrCode <- knitr:::knit_code$get()
+   assign(".rs.knitr.code", knitrCode, envir = .rs.toolsEnv())
+
+   # cache default working dir
+   knitrDir <- knitr::opts_knit$get("root.dir")
+   assign(".rs.knitr.root.dir", knitrDir, envir = .rs.toolsEnv())
    
-   # unset the chunk options (so we know what options
+   # unset the chunk options and code (so we know what options/code
    # were actually specified in setup chunk later)
    defaults <- list(error = FALSE)
    knitr::opts_chunk$restore(defaults)
+   knitr:::knit_code$restore(list())
+   knitr::opts_knit$set(root.dir = NULL)
 })
 
 .rs.addFunction("defaultChunkOptions", function()
@@ -936,9 +999,13 @@ assign(".rs.notebookVersion", envir = .rs.toolsEnv(), "1.0")
    # get current set of options
    defaultOptions <- knitr::opts_chunk$get()
    
-   # restore the previously cached knitr options
+   # restore the previously cached knitr options and code
    chunkOptions <- get(".rs.knitr.chunkOptions", envir = .rs.toolsEnv())
    knitr::opts_chunk$restore(chunkOptions)
+   knitrCode <- get(".rs.knitr.code", envir = .rs.toolsEnv())
+   knitr:::knit_code$restore(knitrCode)
+   knitrDir <- get(".rs.knitr.root.dir", envir = .rs.toolsEnv())
+   knitr::opts_knit$set(root.dir = knitrDir)
    
    # return current set
    .rs.scalarListFromList(defaultOptions)

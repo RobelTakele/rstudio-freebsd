@@ -15,7 +15,10 @@
 
 .rs.addFunction("recordHtmlWidget", function(x, htmlfile, depfile)
 {
-   .Call("rs_recordHtmlWidget", htmlfile, depfile, list(classes = class(x)))
+   .Call("rs_recordHtmlWidget", htmlfile, depfile, list(
+      classes = class(x),
+      sizingPolicy = if (is.list(x)) x$sizingPolicy else list()
+   ))
 })
 
 .rs.addFunction("rnb.setHtmlCaptureContext", function(...)
@@ -70,7 +73,7 @@
                         fileext = ".html")
 
    # save contents to temporary file
-   cat(as.character(x), file = mdfile, sep = "\n")
+   writeLines(enc2utf8(x), con = mdfile, useBytes = TRUE)
    
    # render to HTML with pandoc
    rmarkdown::pandoc_convert(input = rmarkdown::pandoc_path_arg(mdfile), 
@@ -130,37 +133,83 @@
    # force a responsive viewer sizing policy
    x$sizingPolicy$viewer.padding <- 0
    x$sizingPolicy$viewer.fill <- TRUE
-   
-   # collect knitr options
-   knitrOptions <- knitr::opts_chunk$get()
-   
-   # infer knitr sizing
-   first_of <- function(...) {
-      for (item in list(...))
-         if (length(item)) return(item)
-      return(NULL)
+
+   # make width dinamic to size correctly non-figured
+   if (!is.null(x$sizingPolicy$knitr) && identical(x$sizingPolicy$knitr$figure, FALSE)) {
+      x$sizingPolicy$defaultWidth <- "auto"
+      x$sizingPolicy$browser$fill <- FALSE
    }
    
-   fig.height <- first_of(
-      chunkOptions$fig.height,
-      knitrOptions$fig.height,
-      7
-   )
+   # collect knitr options
+   knitrOptions <- knitr::opts_current$get()
+   `%||%` <- function(x, y) if (length(x)) x else y
    
-   fig.width <- first_of(
-      chunkOptions$fig.width,
-      knitrOptions$fig.width,
-      fig.height * 5 / 7
-   )
+   defaultDpi <- 96
+   defaultFigWidth  <- 7
+   defaultFigHeight <- 5
    
-   dpi <- first_of(
-      chunkOptions$dpi,
-      knitrOptions$dpi,
-      72
-   )
+   # detect if the default knitr chunk fig.width, fig.height have been set
+   # TODO: could this be made more robust? are we setting these values,
+   # or are they coming from rmarkdown / knitr?
    
-   knitrOptions$out.width.px <- fig.width * dpi
-   knitrOptions$out.height.px <- fig.height * dpi
+   # infer the DPI (be careful to handle fig.retina)
+   if (!is.null(chunkOptions$dpi)) {
+      dpi <- chunkOptions$dpi
+   } else if (!is.null(knitrOptions$dpi)) {
+      dpi <- knitrOptions$dpi
+      if (is.numeric(knitrOptions$fig.retina))
+         dpi <- dpi / knitrOptions$fig.retina
+   } else {
+      dpi <- defaultDpi
+   }
+   
+   isDefaultKnitrSizing <-
+      identical(knitrOptions$fig.width, defaultFigWidth) &&
+      identical(knitrOptions$fig.height, defaultFigHeight) &&
+      identical(dpi, defaultDpi) &&
+      is.null(knitrOptions$fig.asp)
+   
+   # detect if the user has explicitly set fig.width, fig.height for
+   # the currently executing chunk
+   isDefaultChunkSizing <-
+      is.null(chunkOptions$fig.width) &&
+      is.null(chunkOptions$fig.height) &&
+      is.null(chunkOptions$fig.asp)
+   
+   if (isDefaultKnitrSizing && isDefaultChunkSizing) {
+      
+      # if the user has not set any options related to chunk sizing, then
+      # rely on the pre-computed values in 'knitrOptions', which should
+      # have been set based on the htmlwidget sizing policy. (recompute
+      # those values if not set)
+      knitrOptions$out.width.px <- .rs.firstOf(
+         knitrOptions$out.width.px,
+         defaultFigWidth * defaultDpi
+      )
+      
+      knitrOptions$out.height.px <- .rs.firstOf(
+         knitrOptions$out.height.px,
+         defaultFigHeight * defaultDpi
+      )
+      
+   } else {
+      
+      # otherwise, set the figure width + height according to those chunk options
+      
+      # compute fig.width, fig.height
+      figWidth  <- .rs.firstOf(chunkOptions$fig.width,  knitrOptions$fig.width) * dpi
+      figHeight <- .rs.firstOf(chunkOptions$fig.height, knitrOptions$fig.height) * dpi
+      figAsp    <- .rs.firstOf(chunkOptions$fig.asp,    knitrOptions$fig.asp, 1)
+      
+      # if fig.width or fig.height is null, compute from the companion
+      knitrOptions$out.width.px  <- figWidth
+      knitrOptions$out.height.px <- figHeight %||% figWidth * figAsp
+   }
+   
+   # if, for some reason, we don't have an out.width.px or out.height.px
+   # at this point, then just set some sane defaults
+   knitrOptions$out.width.px  <- floor(knitrOptions$out.width.px %||% 500)
+   knitrOptions$out.height.px <- floor(knitrOptions$out.height.px %||% 500)
    
    # save as HTML -- save a modified version of the 'standalone' representation
    # that works effectively the same way as the 'embedded' representation;
@@ -255,4 +304,11 @@
    # construct call to 'rm'
    args <- c(as.list(names(hooks)), envir = .rs.toolsEnv())
    do.call(rm, args)
+})
+
+.rs.addFunction("firstOf", function(...)
+{
+   for (item in list(...))
+      if (length(item)) return(item)
+   return(NULL)
 })

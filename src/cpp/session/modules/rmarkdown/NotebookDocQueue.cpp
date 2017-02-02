@@ -64,16 +64,10 @@ NotebookDocQueue::NotebookDocQueue(const std::string& docId,
    std::string workingDir;
    json::readObject(vals, kChunkWorkingDir, &workingDir);
    if (!workingDir.empty())
-   {
-      // convert to canonical form by expanding path and removing any empty
-      // stem (i.e. ~/foo/bar/ => /Users/smith/foo/bar)
-      core::FilePath dir = module_context::resolveAliasedPath(workingDir);
-      if (dir.stem().empty() || dir.stem() == ".")
-         dir = dir.parent();
+      setWorkingDir(workingDir);
 
-      if (dir.exists())
-         workingDir_ = dir;
-   }
+   // read external code chunk contents
+   json::readObject(vals, kChunkExternals, &externalChunks_);
 }
 
 boost::shared_ptr<NotebookQueueUnit> NotebookDocQueue::firstUnit()
@@ -237,9 +231,79 @@ void NotebookDocQueue::setDefaultChunkOptions(const json::Object& options)
    defaultOptions_ = options;
 }
 
-void NotebookDocQueue::setWorkingDir(const FilePath& workingDir)
+void NotebookDocQueue::setWorkingDir(const std::string& workingDir)
 {
-   workingDir_ = workingDir;
+   core::FilePath dir;
+   if (workingDir.empty())
+   {
+      // no directory specified, use an empty path
+      dir = FilePath();
+   }
+   else if (workingDir.at(0) == '~')
+   {
+      // resolve home directory if necessary
+      dir = module_context::resolveAliasedPath(workingDir);
+   }
+   else if (FilePath::isRootPath(workingDir))
+   {
+      // use absolute paths as-is
+      dir = FilePath(workingDir);
+   }
+   else
+   {
+      // this is a relative path; resolve against the document path if we
+      // have one, and the current directory if we don't
+      core::FilePath docParentPath = docPath_.empty() ? 
+         FilePath::safeCurrentPath(module_context::userHomePath()) :
+         module_context::resolveAliasedPath(docPath_).parent();
+      dir = docParentPath.childPath(workingDir);
+   }
+
+   // remove any trailing / or .
+   if (!dir.empty() && (dir.stem().empty() || dir.stem() == "."))
+      dir = dir.parent();
+
+   // if this is a real directory, use it; otherwise, use an empty path, which
+   // causes use to use the document's path as the working directory
+   if (dir.exists())
+      workingDir_ = dir;
+   else
+      workingDir_ = FilePath();
+}
+
+void NotebookDocQueue::setExternalChunks(const json::Object& chunks)
+{
+   externalChunks_ = chunks;
+}
+
+std::string NotebookDocQueue::externalChunk(const std::string& label) const
+{
+   json::Object::const_iterator it = externalChunks_.find(label);
+   std::string code;
+   if (it == externalChunks_.end())
+   {
+      // no chunk with this label 
+      return code;
+   }
+   else if (it->second.type() != json::ArrayType)
+   {
+      // the JSON object representing the external chunks should contain an
+      // array of strings representing the lines of code in the chunk
+      return code;
+   }
+   else
+   {
+      // extract each line of code
+      json::Array lines = it->second.get_array();
+      for (size_t i = 0; i < lines.size(); i++) 
+      {
+         if (lines.at(i).type() == json::StringType)
+            code.append(lines.at(i).get_str());
+         if (i < lines.size() - 1)
+            code.append("\n");
+      }
+   }
+   return code;
 }
 
 } // namespace notebook

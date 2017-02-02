@@ -461,7 +461,10 @@ public class AceEditor implements DocDisplay,
          return;
       
       if (Desktop.isDesktop())
+      {
          commands_.cutDummy().execute();
+         if (isEmacsModeOn()) clearEmacsMark();
+      }
       else
       {
          yankedText_ = getSelectionValue();
@@ -480,7 +483,10 @@ public class AceEditor implements DocDisplay,
             cursorPos));
       
       if (Desktop.isDesktop())
+      {
          commands_.cutDummy().execute();
+         if (isEmacsModeOn()) clearEmacsMark();
+      }
       else
       {
          yankedText_ = getSelectionValue();
@@ -515,7 +521,10 @@ public class AceEditor implements DocDisplay,
       }
       
       if (Desktop.isDesktop())
+      {
          commands_.cutDummy().execute();
+         if (isEmacsModeOn()) clearEmacsMark();
+      }
       else
       {
          yankedText_ = getSelectionValue();
@@ -1621,6 +1630,7 @@ public class AceEditor implements DocDisplay,
       Position position = getSession().replace(selRange, code);
       Range range = Range.fromPoints(selRange.getStart(), position);
       getSession().getSelection().setSelectionRange(range);
+      if (isEmacsModeOn()) clearEmacsMark();
    }
 
    public boolean moveSelectionToNextLine(boolean skipBlankLines)
@@ -1994,6 +2004,12 @@ public class AceEditor implements DocDisplay,
    public boolean isEmacsModeOn()
    {
       return useEmacsKeybindings_;
+   }
+   
+   @Override
+   public void clearEmacsMark()
+   {
+      widget_.getEditor().clearEmacsMark();
    }
    
    @Override
@@ -2640,6 +2656,7 @@ public class AceEditor implements DocDisplay,
       // However, we do need to resize the gutter
       widget_.getEditor().getRenderer().updateFontSize();
       widget_.forceResize();
+      widget_.getLineWidgetManager().syncLineWidgetHeights();
    }
 
    public HandlerRegistration addValueChangeHandler(
@@ -3167,28 +3184,6 @@ public class AceEditor implements DocDisplay,
          
       } while (false);
       
-      // discover end of current statement
-      while (endRow <= endRowLimit)
-      {
-         // if the row ends with an open bracket, expand to its match
-         if (rowEndsWithOpenBracket(endRow))
-         {
-            c.moveToEndOfRow(endRow);
-            if (c.fwdToMatchingToken())
-            {
-               endRow = c.getRow();
-               continue;
-            }
-         }
-         else if (rowEndsInBinaryOp(endRow) || rowIsEmptyOrComment(endRow))
-         {
-            endRow++;
-            continue;
-         }
-         
-         break;
-      }
-      
       // discover start of current statement
       while (startRow >= startRowLimit)
       {
@@ -3210,6 +3205,56 @@ public class AceEditor implements DocDisplay,
          
          break;
       }
+      
+      // discover end of current statement -- we search from the inferred statement
+      // start, so that we can perform counting of matching pairs of brackets
+      endRow = startRow;
+      
+      // NOTE: '[[' is not tokenized as a single token in our Ace tokenizer,
+      // so it is not included here (this shouldn't cause issues in practice
+      // since balanced pairs of '[' and '[[' would still imply a correct count
+      // of matched pairs of '[' anyhow)
+      int parenCount = 0;   // '(', ')'
+      int braceCount = 0;   // '{', '}'
+      int bracketCount = 0; // '[', ']'
+      
+      while (endRow <= endRowLimit)
+      {
+         // update bracket token counts
+         JsArray<Token> tokens = getTokens(endRow);
+         for (Token token : JsUtil.asIterable(tokens))
+         {
+            String value = token.getValue();
+            
+            parenCount += value.equals("(") ? 1 : 0;
+            parenCount -= value.equals(")") ? 1 : 0;
+            
+            braceCount += value.equals("{") ? 1 : 0;
+            braceCount -= value.equals("}") ? 1 : 0;
+            
+            bracketCount += value.equals("[") ? 1 : 0;
+            bracketCount -= value.equals("]") ? 1 : 0;
+         }
+         
+         // continue search if line ends with binary operator
+         if (rowEndsInBinaryOp(endRow) || rowIsEmptyOrComment(endRow))
+         {
+            endRow++;
+            continue;
+         }
+         
+         // continue search if we have unbalanced brackets
+         if (parenCount > 0 || braceCount > 0 || bracketCount > 0)
+         {
+            endRow++;
+            continue;
+         }
+         
+         // we had balanced brackets and no trailing binary operator; bail
+         break;
+      }
+      
+      
       
       // shrink selection for empty lines at borders
       while (startRow < endRow && rowIsEmptyOrComment(startRow))
@@ -3472,7 +3517,15 @@ public class AceEditor implements DocDisplay,
       // visible row; Ace does not position line widgets above the viewport
       // until the document is scrolled there
       if (widget.getRow() < getFirstVisibleRow())
+      {
          widget.getElement().getStyle().setTop(-10000, Unit.PX);
+         
+         // set left/right values so that the widget consumes space; necessary
+         // to get layout offsets inside the widget while rendering but before
+         // it comes onscreen
+         widget.getElement().getStyle().setLeft(48, Unit.PX);
+         widget.getElement().getStyle().setRight(15, Unit.PX);
+      }
       
       widget_.getLineWidgetManager().addLineWidget(widget);
       adjustScrollForLineWidget(widget);

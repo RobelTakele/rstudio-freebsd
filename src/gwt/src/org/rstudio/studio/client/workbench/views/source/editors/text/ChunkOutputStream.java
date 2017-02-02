@@ -19,7 +19,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-import org.rstudio.core.client.Debug;
 import org.rstudio.core.client.StringUtil;
 import org.rstudio.core.client.VirtualConsole;
 import org.rstudio.core.client.js.JsArrayEx;
@@ -39,13 +38,11 @@ import com.google.gwt.core.client.JavaScriptObject;
 import com.google.gwt.core.client.JsArray;
 import com.google.gwt.dom.client.Element;
 import com.google.gwt.dom.client.Style;
-import com.google.gwt.dom.client.Style.Display;
 import com.google.gwt.dom.client.Style.Overflow;
 import com.google.gwt.dom.client.Style.Position;
 import com.google.gwt.dom.client.Style.Unit;
 import com.google.gwt.user.client.Command;
 import com.google.gwt.user.client.ui.FlowPanel;
-import com.google.gwt.user.client.ui.HTML;
 import com.google.gwt.user.client.ui.Image;
 import com.google.gwt.user.client.ui.Widget;
 
@@ -162,29 +159,18 @@ public class ChunkOutputStream extends FlowPanel
       for (int i = 0; i < getWidgetCount(); i++) 
       {
          Widget w = getWidget(i);
-         String ord = w.getElement().getAttribute(ORDINAL_ATTRIBUTE);
-         if (!StringUtil.isNullOrEmpty(ord))
+         int ordAttr = getOrdinal(w.getElement());
+         if (ordAttr == ordinal)
          {
-            try
-            {
-               int ordAttr = Integer.parseInt(ord);
-               if (ordAttr == ordinal)
-               {
-                  // insert the plot widget after the ordinal 
-                  plot.getElement().setAttribute(
-                        ORDINAL_ATTRIBUTE, "" + ordinal);
-                  if (i < getWidgetCount() - 1)
-                     insert(plot, i + 1);
-                  else
-                     add(plot);
-                  placed = true;
-                  break;
-               }
-            }
-            catch(Exception e)
-            {
-               Debug.logException(e);
-            }
+            // insert the plot widget after the ordinal 
+            plot.getElement().setAttribute(
+                  ORDINAL_ATTRIBUTE, "" + ordinal);
+            if (i < getWidgetCount() - 1)
+               insert(plot, i + 1);
+            else
+               add(plot);
+            placed = true;
+            break;
          }
       }
 
@@ -204,22 +190,38 @@ public class ChunkOutputStream extends FlowPanel
       // persist metadata
       metadata_.put(ordinal, metadata);
       
+      final boolean knitrFigure = metadata.getSizingPolicyKnitrFigure();
+      
       // amend the URL to cause any contained widget to use the RStudio viewer
       // sizing policy
       if (url.indexOf('?') > 0)
          url += "&";
       else
          url += "?";
-      url += "viewer_pane=1";
+
+      if (knitrFigure) {
+         url += "viewer_pane=1";
+      }
 
       final ChunkOutputFrame frame = new ChunkOutputFrame();
 
       if (chunkOutputSize_ == ChunkOutputSize.Default) {
-         final FixedRatioWidget fixedFrame = new FixedRatioWidget(frame, 
-                     ChunkOutputUi.OUTPUT_ASPECT, 
-                     ChunkOutputUi.MAX_HTMLWIDGET_WIDTH);
+         if (knitrFigure) {
+            final FixedRatioWidget fixedFrame = new FixedRatioWidget(frame, 
+                        ChunkOutputUi.OUTPUT_ASPECT, 
+                        ChunkOutputUi.MAX_HTMLWIDGET_WIDTH);
 
-         addWithOrdinal(fixedFrame, ordinal);
+            addWithOrdinal(fixedFrame, ordinal);
+         }
+         else {
+            // reduce size of html widget as much as possible and add scroll,
+            // once it loads, we will adjust the height appropriately.
+            frame.getElement().getStyle().setHeight(25, Unit.PX);
+            frame.getElement().getStyle().setOverflow(Overflow.SCROLL);
+
+            frame.getElement().getStyle().setWidth(100, Unit.PCT);
+            addWithOrdinal(frame, ordinal);
+         }
       }
       else if (chunkOutputSize_ == ChunkOutputSize.Full) {
          frame.getElement().getStyle().setPosition(Position.ABSOLUTE);
@@ -235,20 +237,41 @@ public class ChunkOutputStream extends FlowPanel
       bodyStyle.setPadding(0, Unit.PX);
       bodyStyle.setMargin(0, Unit.PX);
 
-      if (ChunkOutputWidget.getEditorColors() != null)
-      {
-         bodyStyle.setColor(ChunkOutputWidget.getEditorColors().foreground);
-      }
-
       frame.loadUrlDelayed(url, 250, new Command() 
       {
          @Override
          public void execute()
          {
             onRenderComplete.execute();
+            
+            if (!knitrFigure) {
+               int contentHeight = frame.getWindow().getDocument().getBody().getOffsetHeight();
+               frame.getElement().getStyle().setHeight(contentHeight, Unit.PX);
+
+               frame.getElement().getStyle().setOverflow(Overflow.HIDDEN);
+               frame.getWindow().getDocument().getBody().getStyle().setOverflow(Overflow.HIDDEN);
+            }
+            
             onHeightChanged();
          };
       });
+
+      themeColors_ = ChunkOutputWidget.getEditorColors();
+      afterRender_ = new Command()
+      {
+         @Override
+         public void execute()
+         {
+            if (themeColors_ != null) {
+               Element body = frame.getDocument().getBody();
+               
+               Style bodyStyle = body.getStyle();
+               bodyStyle.setColor(themeColors_.foreground);
+            }
+         }
+      };
+
+      frame.runAfterRender(afterRender_);
    }
 
    @Override
@@ -300,9 +323,7 @@ public class ChunkOutputStream extends FlowPanel
    {
       // ordinals are placeholder elements which can be replaced with content
       // later
-      HTML ord = new HTML("");
-      ord.getElement().getStyle().setDisplay(Display.NONE);
-      addWithOrdinal(ord, ordinal);
+      addWithOrdinal(new ChunkOrdinalWidget(), ordinal);
    }
    
    @Override
@@ -376,14 +397,25 @@ public class ChunkOutputStream extends FlowPanel
    @Override
    public void onEditorThemeChanged(EditorThemeListener.Colors colors)
    {
+      themeColors_ = colors;
+      
       // apply the style to any frames in the output
       for (Widget w: this)
       {
          if (w instanceof ChunkOutputFrame)
          {
             ChunkOutputFrame frame = (ChunkOutputFrame)w;
-            Style bodyStyle = frame.getDocument().getBody().getStyle();
-            bodyStyle.setColor(colors.foreground);
+            frame.runAfterRender(afterRender_);
+         }
+         else if (w instanceof FixedRatioWidget)
+         {
+            FixedRatioWidget fixedRatioWidget = (FixedRatioWidget)w;
+            Widget innerWidget = fixedRatioWidget.getWidget();
+            if (innerWidget instanceof ChunkOutputFrame)
+            {
+               ChunkOutputFrame frame = (ChunkOutputFrame)innerWidget;
+               frame.runAfterRender(afterRender_);
+            }
          }
          else if (w instanceof EditorThemeListener)
          {
@@ -457,6 +489,12 @@ public class ChunkOutputStream extends FlowPanel
             remove(w);
             continue;
          }
+         else if (w instanceof ChunkOrdinalWidget)
+         {
+            pages.add(new ChunkOrdinalPage(ordinal));
+            remove(w);
+            continue;
+         }
 
          // extract the inner element if this is a fixed-ratio widget (or just
          // use raw if it's not)
@@ -488,7 +526,13 @@ public class ChunkOutputStream extends FlowPanel
       return pages;
    }
    
-   public boolean hasContent()
+   /**
+    * Gets the ordinal of the content stream (determined by the first ordinal
+    * of output).
+    * 
+    * @return The ordinal of the content stream, or 0 if no ordinal is known
+    */
+   public int getContentOrdinal()
    {
       for (Widget w: this)
       {
@@ -496,11 +540,20 @@ public class ChunkOutputStream extends FlowPanel
          if (w instanceof PreWidget && w.getElement().getChildCount() == 0)
             continue;
          
+         // ignore ordinals
+         if (w instanceof ChunkOrdinalWidget)
+            continue;
+         
          if (w.isVisible() && 
              w.getElement().getStyle().getDisplay() != "none")
-            return true;
+         {
+            int ord = getOrdinal(w.getElement());
+            if (ord > 0)
+               return ord;
+            return 1;
+         }
       }
-      return false;
+      return 0;
    }
    
    public String getAllConsoleText()
@@ -539,6 +592,11 @@ public class ChunkOutputStream extends FlowPanel
    private void addWithOrdinal(Widget w, int ordinal)
    {
       w.getElement().setAttribute(ORDINAL_ATTRIBUTE, "" + ordinal);
+
+      // record max observed ordinal
+      if (ordinal > maxOrdinal_)
+         maxOrdinal_ = ordinal;
+
       add(w);
    }
    
@@ -580,7 +638,7 @@ public class ChunkOutputStream extends FlowPanel
       }
 
       // attach the console
-      add(console_);
+      addWithOrdinal(console_, maxOrdinal_ + 1);
    }
    
    private void renderConsoleOutput(String text, String clazz)
@@ -596,6 +654,24 @@ public class ChunkOutputStream extends FlowPanel
       host_.notifyHeightChanged();
    }
    
+   private int getOrdinal(Element ele)
+   {
+      String ord = ele.getAttribute(ORDINAL_ATTRIBUTE);
+      if (!StringUtil.isNullOrEmpty(ord))
+      {
+         try
+         {
+            int ordAttr = Integer.parseInt(ord);
+            return ordAttr;
+         }
+         catch(Exception e)
+         {
+            return 0;
+         }
+      }
+      return 0;
+   }
+   
    private final ChunkOutputPresenter.Host host_;
    private final Map<Integer, JavaScriptObject> metadata_;
    
@@ -605,6 +681,10 @@ public class ChunkOutputStream extends FlowPanel
    private int lastOutputType_ = RmdChunkOutputUnit.TYPE_NONE;
    private boolean hasErrors_ = false;
    private ChunkOutputSize chunkOutputSize_;
+   private int maxOrdinal_ = 0;
 
    private final static String ORDINAL_ATTRIBUTE = "data-ordinal";
+
+   private Command afterRender_;
+   private Colors themeColors_;
 }

@@ -64,7 +64,34 @@
             return (paste("\"", optionValue, "\"", sep = ""))
          },
          "locale" = {
-            return (paste(ns, "locale(encoding=\"", optionValue, "\")", sep = ""))
+            localeDefaults <- formals(readr::locale)
+
+            localeOrNull <- function(paramName, jsonName) {
+               if (!identical(localeDefaults[[paramName]], optionValue[[jsonName]])) {
+                  if (typeof(localeDefaults[[paramName]]) == "character") {
+                     paste(paramName, " = \"", optionValue[[jsonName]], "\"", sep = "")
+                  }
+                  else {
+                     paste(paramName, " = ", optionValue[[jsonName]])
+                  }
+               }
+               else NULL
+            }
+
+            return (paste(
+               ns, 
+               "locale(",
+               paste(c(
+                  localeOrNull("date_names", "dateName"),
+                  localeOrNull("date_format", "dateFormat"),
+                  localeOrNull("time_format", "timeFormat"),
+                  localeOrNull("decimal_mark", "decimalMark"),
+                  localeOrNull("grouping_mark", "groupingMark"),
+                  localeOrNull("tz", "tz"),
+                  localeOrNull("encoding", "encoding"),
+                  localeOrNull("asciify", "asciify")
+               ), collapse = ", "),
+               ")", sep = ""))
          },
          "columnDefinitionsReadR" = {
             colParams <- c()
@@ -397,9 +424,9 @@
          # load parameters
          options <- list()
 
-         # current version of haven uses "path", next version uses "file"
+         # current version of haven uses "path", next version uses "file" or "data_file"
          options[["path"]] <- options[["file"]] <- cacheOrFileFromOptions(dataImportOptions)
-         options[["b7dat"]] <- cacheOrFileFromOptions(dataImportOptions)
+         options[["b7dat"]] <- options[["data_file"]] <- cacheOrFileFromOptions(dataImportOptions)
          options[["b7cat"]] <- cacheOrFileFromOptions(dataImportOptions, "modelLocation")
 
          havenFunction <- switch(dataImportOptions$format,
@@ -413,7 +440,7 @@
          # set special parameter types
          optionTypes <- list()
          optionTypes[["path"]] <- optionTypes[["file"]] <- cacheTypeOrFileTypeFromOptions(dataImportOptions)
-         optionTypes[["b7dat"]] <- cacheTypeOrFileTypeFromOptions(dataImportOptions)
+         optionTypes[["b7dat"]] <- optionTypes[["data_file"]] <- cacheTypeOrFileTypeFromOptions(dataImportOptions)
          optionTypes[["b7cat"]] <- cacheTypeOrFileTypeFromOptions(dataImportOptions, "modelLocation")
 
          return(list(
